@@ -1,0 +1,21 @@
+[package]
+name = "octopus-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "octopus"
+path = "src/main.rs"
+
+[dependencies]
+octopus-core = { path = "../crates/octopus-core" }
+octopus-runtime = { path = "../crates/octopus-runtime" }
+octopus-config = { path = "../crates/octopus-config" }
+tokio.workspace = true
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true

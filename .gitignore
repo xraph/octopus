@@ -1,0 +1,71 @@
+# Rust
+/target/
+**/*.rs.bk
+*.pdb
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build artifacts
+/dist/
+/build/
+
+# Dependencies
+/node_modules/
+/vendor/
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Test coverage
+*.profraw
+*.profdata
+/coverage/
+tarpaulin-report.html
+cobertura.xml
+
+# Benchmarks
+/criterion/
+
+# Config (keep examples)
+config.yaml
+config.toml
+config.json
+!config.example.*
+
+# Certificates
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Generated files
+/generated/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary files
+/tmp/
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
+
+

@@ -1,0 +1,177 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/octopus-core",
+    "crates/octopus-runtime",
+    "crates/octopus-router",
+    "crates/octopus-proxy",
+    "crates/octopus-farp",
+    "crates/octopus-discovery",
+    "crates/octopus-protocols",
+    "crates/octopus-middleware",
+    "crates/octopus-auth",
+    "crates/octopus-plugins",
+    "crates/octopus-scripting",
+    "crates/octopus-health",
+    "crates/octopus-admin",
+    "crates/octopus-config",
+    "crates/octopus-metrics",
+    "octopus-cli",
+    "plugins/auth-jwt",
+    "plugins/rate-limiter",
+    "plugins/cache-redis",
+    "plugins/kafka-producer",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+authors = ["Rex Raphael <rex@xraph.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/xraph/octopus"
+homepage = "https://octopus.io"
+documentation = "https://docs.octopus.io"
+keywords = ["api-gateway", "proxy", "farp", "kubernetes", "microservices"]
+categories = ["web-programming", "network-programming", "api-bindings"]
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+tokio-util = { version = "0.7", features = ["full"] }
+futures = "0.3"
+async-trait = "0.1"
+
+# HTTP
+hyper = { version = "1.1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["full"] }
+http = "1.0"
+http-body = "1.0"
+http-body-util = "0.1"
+tower = { version = "0.4", features = ["full"] }
+tower-http = { version = "0.5", features = ["full"] }
+axum = { version = "0.7", features = ["ws", "macros"] }
+
+# gRPC
+tonic = { version = "0.11", features = ["gzip", "tls"] }
+tonic-reflection = "0.11"
+prost = "0.12"
+prost-types = "0.12"
+
+# WebSocket
+tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+toml = "0.8"
+
+# Discovery backends
+kube = { version = "0.88", features = ["runtime", "derive"] }
+k8s-openapi = { version = "0.21", features = ["latest"] }
+consul = "0.5"
+etcd-client = "0.13"
+
+# OpenAPI/AsyncAPI
+utoipa = { version = "4.2", features = ["axum_extras"] }
+aide = { version = "0.12", features = ["axum"] }
+
+# Configuration
+config = { version = "0.14", features = ["yaml", "toml", "json"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Logging & Tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-opentelemetry = "0.23"
+opentelemetry = { version = "0.22", features = ["metrics", "trace"] }
+opentelemetry-otlp = { version = "0.15", features = ["grpc-tonic"] }
+opentelemetry-semantic-conventions = "0.14"
+
+# Metrics
+prometheus = { version = "0.13", features = ["process"] }
+metrics = "0.22"
+metrics-exporter-prometheus = "0.14"
+
+# Plugin system
+libloading = "0.8"
+
+# Scripting
+rhai = { version = "1.17", features = ["sync", "serde", "no_std"] }
+
+# Authentication
+jsonwebtoken = "9.2"
+argon2 = "0.5"
+
+# Rate limiting
+governor = "0.6"
+
+# Redis
+redis = { version = "0.24", features = ["tokio-comp", "connection-manager"] }
+
+# Kafka
+rdkafka = { version = "0.36", features = ["cmake-build"] }
+
+# Security
+sha2 = "0.10"
+hmac = "0.12"
+ring = "0.17"
+rustls = "0.22"
+rustls-native-certs = "0.7"
+
+# Data structures
+dashmap = "5.5"
+arc-swap = "1.6"
+parking_lot = "0.12"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# CLI
+clap = { version = "4.5", features = ["derive", "env"] }
+clap_complete = "4.5"
+
+# Utilities
+uuid = { version = "1.7", features = ["v4", "serde"] }
+url = "2.5"
+bytes = "1.5"
+pin-project = "1.1"
+once_cell = "1.19"
+regex = "1.10"
+semver = { version = "1.0", features = ["serde"] }
+
+# Testing
+mockall = "0.12"
+criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
+proptest = "1.4"
+wiremock = "0.6"
+
+# Build dependencies
+tonic-build = "0.11"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.bench]
+inherits = "release"
+strip = false
+debug = true
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+# Fast incremental builds
+[profile.dev.package."*"]
+opt-level = 2
+debug = false
+
+

@@ -1,0 +1,222 @@
+# Octopus API Gateway Configuration Example
+
+server:
+  # HTTP server port
+  http_port: 8080
+  
+  # HTTPS server port (requires TLS configuration)
+  https_port: 8443
+  
+  # Admin/metrics port
+  admin_port: 9090
+  
+  # Number of worker threads (auto = CPU cores)
+  workers: auto
+  
+  # Bind address
+  bind_address: "0.0.0.0"
+
+# TLS configuration
+tls:
+  enabled: false
+  cert: /etc/octopus/tls/cert.pem
+  key: /etc/octopus/tls/key.pem
+  # Optional: Client certificate verification
+  client_ca: /etc/octopus/tls/ca.pem
+
+# Service discovery configuration
+discovery:
+  # Backend: kubernetes, consul, etcd, dns, static
+  backend: kubernetes
+  
+  # Kubernetes-specific config
+  kubernetes:
+    namespace: default
+    label_selector: "app.kubernetes.io/managed-by=octopus"
+    
+  # Consul-specific config
+  consul:
+    address: http://localhost:8500
+    datacenter: dc1
+    token: ${CONSUL_TOKEN}
+    
+  # etcd-specific config
+  etcd:
+    endpoints:
+      - http://localhost:2379
+    username: ${ETCD_USER}
+    password: ${ETCD_PASSWORD}
+
+# FARP protocol configuration
+farp:
+  enabled: true
+  
+  # How often to check for service changes
+  watch_interval: 5s
+  
+  # Schema cache TTL
+  schema_cache_ttl: 5m
+  
+  # Maximum cached schemas
+  schema_cache_max_size: 100
+
+# Routing configuration
+routing:
+  # Load balancing strategy: round_robin, least_connections, weighted_round_robin, random, ip_hash
+  load_balance: round_robin
+  
+  # Default request timeout
+  timeout: 30s
+  
+  # Number of retries for failed requests
+  retries: 3
+  
+  # Circuit breaker configuration
+  circuit_breaker:
+    enabled: true
+    failure_threshold: 5
+    success_threshold: 2
+    timeout: 60s
+  
+  # Health check configuration
+  health_check:
+    enabled: true
+    interval: 10s
+    timeout: 5s
+    path: /health
+    expected_status: 200
+    healthy_threshold: 2
+    unhealthy_threshold: 3
+
+# Middleware configuration
+middleware:
+  - name: cors
+    enabled: true
+    config:
+      allow_origins: ["*"]
+      allow_methods: ["GET", "POST", "PUT", "DELETE", "PATCH"]
+      allow_headers: ["*"]
+      max_age: 3600
+  
+  - name: compression
+    enabled: true
+    config:
+      algorithms: [gzip, br, zstd]
+      level: 6
+  
+  - name: rate_limit
+    enabled: true
+    config:
+      requests_per_second: 1000
+      burst: 2000
+
+# Plugin configuration
+plugins:
+  - name: jwt-auth
+    enabled: true
+    path: /plugins/jwt-auth.so
+    config:
+      secret: ${JWT_SECRET}
+      algorithm: RS256
+      issuer: https://auth.example.com
+  
+  - name: rate-limiter
+    enabled: true
+    builtin: true
+    config:
+      strategy: token-bucket
+      redis_url: redis://localhost:6379
+      key_prefix: "ratelimit:"
+  
+  - name: redis-cache
+    enabled: false
+    path: /plugins/redis-cache.so
+    config:
+      url: redis://localhost:6379
+      ttl: 300
+      key_prefix: "cache:"
+
+# Admin dashboard configuration
+admin:
+  enabled: true
+  address: 0.0.0.0:9090
+  
+  # Admin authentication
+  auth:
+    enabled: true
+    type: basic
+    username: admin
+    # Generate with: echo -n "password" | argon2-cli
+    password_hash: $argon2id$v=19$m=19456,t=2,p=1$...
+  
+  # Dashboard features
+  features:
+    metrics: true
+    logs: true
+    config_editor: true
+    plugin_manager: true
+
+# Observability configuration
+observability:
+  # Metrics
+  metrics:
+    enabled: true
+    path: /metrics
+    port: 9090
+  
+  # Distributed tracing
+  tracing:
+    enabled: true
+    exporter: otlp
+    endpoint: http://jaeger:4317
+    sampling_rate: 0.1
+  
+  # Logging
+  logging:
+    level: info
+    format: json
+    # Output: stdout, file, syslog
+    output: stdout
+    # If output is file:
+    file:
+      path: /var/log/octopus/octopus.log
+      max_size: 100MB
+      max_backups: 10
+      compress: true
+
+# Static upstream configuration (optional, if not using FARP)
+upstreams:
+  - name: user-service
+    instances:
+      - address: localhost
+        port: 8081
+        weight: 1
+      - address: localhost
+        port: 8082
+        weight: 1
+    health_check:
+      path: /health
+      interval: 10s
+      timeout: 5s
+    timeout:
+      connect: 5s
+      request: 30s
+      idle: 90s
+
+# Static route configuration (optional, if not using FARP)
+routes:
+  - path: /api/users/*
+    methods: [GET, POST, PUT, DELETE]
+    upstream: user-service
+    strip_prefix: /api
+    middleware:
+      - jwt-auth
+      - rate-limit
+  
+  - path: /health
+    methods: [GET]
+    response:
+      status: 200
+      body: '{"status": "healthy"}'
+
+

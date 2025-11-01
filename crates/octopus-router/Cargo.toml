@@ -1,0 +1,39 @@
+[package]
+name = "octopus-router"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "High-performance trie-based router for Octopus API Gateway"
+
+[dependencies]
+octopus-core = { path = "../octopus-core" }
+
+# Async
+tokio.workspace = true
+async-trait.workspace = true
+
+# HTTP
+http.workspace = true
+
+# Data structures
+dashmap.workspace = true
+parking_lot.workspace = true
+
+# Logging
+tracing.workspace = true
+
+# Utilities
+regex.workspace = true
+once_cell.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros", "rt"] }
+criterion.workspace = true
+
+[[bench]]
+name = "router_bench"
+harness = false
+
