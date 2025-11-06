@@ -11,3 +11,14 @@ repository.workspace = true
 octopus-core = { path = "../octopus-core" }
 tokio.workspace = true
 tracing.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rhai.workspace = true
+uuid = { version = "1.6", features = ["v4"] }
+base64 = "0.21"
+form_urlencoded = "1.2"
+futures = "0.3"

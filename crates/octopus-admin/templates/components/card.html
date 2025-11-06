@@ -1,0 +1,50 @@
+<!-- shadcn Card Component -->
+{% macro card(title="", description="", class="") %}
+<div class="card {{ class }}">
+    {% if title or description %}
+    <div class="flex flex-col space-y-1.5 p-6">
+        {% if title %}
+        <h3 class="text-2xl font-semibold leading-none tracking-tight">{{ title }}</h3>
+        {% endif %}
+        {% if description %}
+        <p class="text-sm text-muted-foreground">{{ description }}</p>
+        {% endif %}
+    </div>
+    {% endif %}
+    <div class="p-6 pt-0">
+        {{ caller() }}
+    </div>
+</div>
+{% endmacro %}
+
+<!-- Metric Card Component -->
+{% macro metric_card(title, value, change="", trend="", icon_path="") %}
+<div class="card">
+    <div class="p-6">
+        <div class="flex flex-row items-center justify-between space-y-0 pb-2">
+            <h3 class="text-sm font-medium text-muted-foreground">{{ title }}</h3>
+            {% if icon_path %}
+            <svg class="h-4 w-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="{{ icon_path }}"></path>
+            </svg>
+            {% endif %}
+        </div>
+        <div class="space-y-1">
+            <div class="text-2xl font-bold">{{ value }}</div>
+            {% if change or trend %}
+            <p class="text-xs text-muted-foreground">
+                {% if change %}
+                <span class="{% if change.starts_with('+') %}text-green-600{% else %}text-red-600{% endif %}">
+                    {{ change }}
+                </span>
+                {% endif %}
+                {% if trend %}
+                <span class="ml-1">{{ trend }}</span>
+                {% endif %}
+            </p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endmacro %}
+

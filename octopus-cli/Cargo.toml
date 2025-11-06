@@ -5,6 +5,8 @@ edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
+repository.workspace = true
+description = "CLI for Octopus API Gateway"
 
 [[bin]]
 name = "octopus"
@@ -12,10 +14,28 @@ path = "src/main.rs"
 
 [dependencies]
 octopus-core = { path = "../crates/octopus-core" }
-octopus-runtime = { path = "../crates/octopus-runtime" }
 octopus-config = { path = "../crates/octopus-config" }
+octopus-runtime = { path = "../crates/octopus-runtime" }
+octopus-router = { path = "../crates/octopus-router" }
+octopus-middleware = { path = "../crates/octopus-middleware" }
+octopus-plugins = { path = "../crates/octopus-plugins" }
+octopus-health = { path = "../crates/octopus-health" }
+
+# Async
 tokio.workspace = true
+
+# CLI
 clap.workspace = true
+clap_complete.workspace = true
+
+# Logging
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+# Error handling
 anyhow.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+

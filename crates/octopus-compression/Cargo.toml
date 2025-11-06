@@ -1,0 +1,24 @@
+[package]
+name = "octopus-compression"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+octopus-core = { path = "../octopus-core" }
+tokio.workspace = true
+tracing.workspace = true
+http.workspace = true
+hyper.workspace = true
+http-body-util.workspace = true
+bytes = "1.5"
+async-trait.workspace = true
+serde = { version = "1.0", features = ["derive"] }
+
+# Compression algorithms
+flate2 = "1.0"
+brotli = "6.0"
+zstd = "0.13"
+
+[dev-dependencies]
+tokio-test = "0.4"
+

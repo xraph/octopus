@@ -1,0 +1,87 @@
+---
+title: Middleware
+description: Built-in middleware for request and response processing
+---
+
+import { Card, Cards } from 'fumadocs-ui/components/card';
+
+# Middleware
+
+Octopus provides a comprehensive set of middleware for processing requests and responses.
+
+## Available Middleware
+
+<Cards>
+  <Card
+    title="Authentication"
+    description="JWT, OAuth2, API keys, and custom auth"
+    href="/docs/middleware/authentication"
+  />
+  <Card
+    title="Rate Limiting"
+    description="Token bucket, leaky bucket, and distributed rate limiting"
+    href="/docs/middleware/rate-limiting"
+  />
+  <Card
+    title="CORS"
+    description="Cross-origin resource sharing"
+    href="/docs/middleware/cors"
+  />
+  <Card
+    title="Compression"
+    description="gzip, brotli, and zstd compression"
+    href="/docs/middleware/compression"
+  />
+  <Card
+    title="Transformation"
+    description="Request and response transformation"
+    href="/docs/middleware/transformation"
+  />
+  <Card
+    title="Caching"
+    description="Response caching with TTL"
+    href="/docs/middleware/caching"
+  />
+</Cards>
+
+## Configuration
+
+```yaml
+middleware:
+  - auth
+  - rate_limit
+  - cors
+  - compression
+
+auth:
+  type: jwt
+  secret: ${JWT_SECRET}
+
+rate_limit:
+  requests_per_second: 100
+  burst: 200
+
+cors:
+  allowed_origins: ["*"]
+  allowed_methods: [GET, POST, PUT, DELETE]
+
+compression:
+  enabled: true
+  level: 6
+```
+
+## Execution Order
+
+Middleware executes in the order specified:
+
+```
+Request → Auth → Rate Limit → CORS → Upstream → CORS → Compression → Response
+```
+
+## Next Steps
+
+- [Authentication](/docs/middleware/authentication)
+- [Rate Limiting](/docs/middleware/rate-limiting)
+- [CORS](/docs/middleware/cors)
+- [Compression](/docs/middleware/compression)
+

@@ -1,0 +1,120 @@
+---
+title: Plugins
+description: Extend Octopus with plugins
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Plugins
+
+Plugins extend Octopus functionality without modifying core code.
+
+## Overview
+
+Octopus supports two types of plugins:
+
+1. **Static Plugins**: Compiled into the binary
+2. **Dynamic Plugins**: Loaded at runtime from `.so`/`.dylib`/`.dll` files
+
+## Plugin Capabilities
+
+Plugins can provide:
+
+- **Middleware**: Process requests and responses
+- **Protocol Handlers**: Support custom protocols
+- **Admin Routes**: Extend admin dashboard
+- **Metrics**: Custom metrics collection
+- **Storage**: Persist plugin state
+
+## Using Plugins
+
+### Built-in Plugins
+
+```yaml
+plugins:
+  - name: jwt-auth
+    builtin: true
+    config:
+      secret: ${JWT_SECRET}
+      algorithm: HS256
+```
+
+### Dynamic Plugins
+
+```yaml
+plugins:
+  - name: custom-plugin
+    path: /plugins/custom-plugin.so
+    config:
+      option1: value1
+      option2: value2
+```
+
+## Available Plugins
+
+### JWT Authentication
+
+```yaml
+plugins:
+  - name: jwt-auth
+    builtin: true
+    config:
+      secret: ${JWT_SECRET}
+      algorithm: HS256
+      issuer: https://auth.example.com
+```
+
+### Redis Cache
+
+```yaml
+plugins:
+  - name: redis-cache
+    path: /plugins/redis-cache.so
+    config:
+      url: redis://localhost:6379
+      ttl: 300
+      key_prefix: "octopus:"
+```
+
+### Rate Limiter
+
+```yaml
+plugins:
+  - name: rate-limiter
+    builtin: true
+    config:
+      strategy: token-bucket
+      requests_per_second: 1000
+      distributed: true
+      redis_url: redis://localhost:6379
+```
+
+### Kafka Producer
+
+```yaml
+plugins:
+  - name: kafka-producer
+    path: /plugins/kafka-producer.so
+    config:
+      brokers: ["localhost:9092"]
+      topic: gateway-events
+```
+
+## Developing Plugins
+
+See [Plugin Development](/docs/plugins/development) for creating custom plugins.
+
+## Plugin Lifecycle
+
+1. **Load**: Plugin binary loaded
+2. **Configure**: Configuration applied
+3. **Start**: Plugin starts processing
+4. **Running**: Plugin active
+5. **Shutdown**: Plugin cleanup
+
+## Next Steps
+
+- [Plugin Development](/docs/plugins/development) - Create plugins
+- [Available Plugins](/docs/plugins) - Browse all plugins
+- [Plugin API Reference](/docs/api/plugins) - API documentation
+

@@ -1,1 +1,1 @@
-fn main() {}
+// Plugin stub - implementation will be added later

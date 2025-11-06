@@ -1,0 +1,572 @@
+---
+title: Routing
+description: How Octopus routes requests to upstream services
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tabs } from 'fumadocs-ui/components/tabs';
+
+# Routing
+
+Learn how Octopus routes incoming requests to upstream services.
+
+## Overview
+
+Octopus uses a trie-based router for efficient path matching. Routes are defined in configuration and can be dynamically updated through FARP or the admin API.
+
+## Basic Routing
+
+### Simple Path Match
+
+```yaml
+routes:
+  - path: /api/users
+    upstream: user-service
+    methods: [GET, POST]
+```
+
+Matches:
+- `GET /api/users` ✅
+- `POST /api/users` ✅
+- `PUT /api/users` ❌ (method not allowed)
+- `GET /api/users/123` ❌ (path doesn't match)
+
+### Wildcard Matching
+
+```yaml
+routes:
+  - path: /api/users/*
+    upstream: user-service
+    methods: [GET, POST, PUT, DELETE]
+```
+
+Matches:
+- `/api/users/123` ✅
+- `/api/users/123/posts` ✅
+- `/api/users/123/posts/456` ✅
+- `/api/users` ❌ (no wildcard match)
+
+### Path Parameters
+
+```yaml
+routes:
+  - path: /api/users/:id
+    upstream: user-service
+    methods: [GET, PUT, DELETE]
+  
+  - path: /api/users/:id/posts/:post_id
+    upstream: user-service
+    methods: [GET]
+```
+
+Matches:
+- `/api/users/123` → `id=123` ✅
+- `/api/users/456/posts/789` → `id=456, post_id=789` ✅
+
+<Callout title="Parameter Access">
+  Path parameters are available in middleware and can be forwarded to upstreams.
+</Callout>
+
+## Routing Strategies
+
+### Exact Match
+
+```yaml
+routes:
+  - path: /health
+    upstream: health-service
+    match_type: exact
+```
+
+Only matches `/health` exactly.
+
+### Prefix Match
+
+```yaml
+routes:
+  - path: /api/
+    upstream: api-service
+    match_type: prefix
+```
+
+Matches any path starting with `/api/`.
+
+### Regex Match
+
+```yaml
+routes:
+  - path: /api/v[0-9]+/users
+    upstream: user-service
+    match_type: regex
+```
+
+Matches `/api/v1/users`, `/api/v2/users`, etc.
+
+<Callout type="warn">
+  Regex routing is slower than trie-based matching. Use sparingly.
+</Callout>
+
+## Route Priority
+
+When multiple routes match, priority determines which one is used:
+
+```yaml
+routes:
+  # Highest priority (exact match)
+  - path: /api/users/me
+    upstream: auth-service
+    priority: 100
+  
+  # Medium priority (path parameter)
+  - path: /api/users/:id
+    upstream: user-service
+    priority: 50
+  
+  # Lowest priority (wildcard)
+  - path: /api/*
+    upstream: default-service
+    priority: 10
+```
+
+Request to `/api/users/me`:
+1. Matches all three routes
+2. Routes to `auth-service` (highest priority)
+
+### Default Priority
+
+- Exact matches: 100
+- Path parameters: 50
+- Wildcards: 10
+- Custom: Any value you specify
+
+## Method Routing
+
+### Specific Methods
+
+```yaml
+routes:
+  - path: /api/users
+    upstream: user-service
+    methods: [GET, POST]
+```
+
+### Method-Specific Configuration
+
+```yaml
+routes:
+  - path: /api/users
+    upstream: user-service
+    methods:
+      - method: GET
+        timeout: 10s
+      - method: POST
+        timeout: 30s
+        rate_limit:
+          requests_per_second: 10
+```
+
+### HEAD and OPTIONS
+
+```yaml
+routes:
+  - path: /api/users
+    upstream: user-service
+    methods: [GET, POST, PUT, DELETE]
+    auto_head: true      # Auto-handle HEAD requests
+    auto_options: true   # Auto-handle OPTIONS (CORS)
+```
+
+## Host-Based Routing
+
+Route based on the Host header:
+
+```yaml
+routes:
+  - host: api.example.com
+    path: /*
+    upstream: api-v1
+  
+  - host: api-v2.example.com
+    path: /*
+    upstream: api-v2
+  
+  - host: "*.staging.example.com"
+    path: /*
+    upstream: staging-api
+```
+
+## Header-Based Routing
+
+Route based on request headers:
+
+```yaml
+routes:
+  - path: /api/*
+    upstream: api-v2
+    conditions:
+      - header: X-API-Version
+        value: v2
+  
+  - path: /api/*
+    upstream: api-v1  # Default
+```
+
+### Multiple Conditions
+
+```yaml
+routes:
+  - path: /api/*
+    upstream: beta-api
+    conditions:
+      - header: X-Beta-User
+        value: "true"
+      - header: X-API-Key
+        exists: true
+```
+
+All conditions must match.
+
+## Query Parameter Routing
+
+```yaml
+routes:
+  - path: /api/search
+    upstream: search-v2
+    conditions:
+      - query: version
+        value: v2
+  
+  - path: /api/search
+    upstream: search-v1
+```
+
+## Path Manipulation
+
+### Strip Path Prefix
+
+```yaml
+routes:
+  - path: /api/v1/*
+    upstream: user-service
+    strip_path: /api/v1  # Forward without prefix
+```
+
+Request: `/api/v1/users/123`  
+Forwarded: `/users/123`
+
+### Path Rewrite
+
+```yaml
+routes:
+  - path: /old-api/*
+    upstream: new-service
+    rewrite: /new-api/$1
+```
+
+Request: `/old-api/users/123`  
+Forwarded: `/new-api/users/123`
+
+### Add Path Prefix
+
+```yaml
+routes:
+  - path: /*
+    upstream: service
+    add_path: /v2
+```
+
+Request: `/users/123`  
+Forwarded: `/v2/users/123`
+
+## Timeout Configuration
+
+```yaml
+routes:
+  - path: /api/users
+    upstream: user-service
+    timeout: 30s          # Total request timeout
+    connect_timeout: 5s   # Connection timeout
+    read_timeout: 20s     # Read timeout
+```
+
+## Retry Configuration
+
+```yaml
+routes:
+  - path: /api/users
+    upstream: user-service
+    retries: 3
+    retry_on:
+      - 502  # Bad Gateway
+      - 503  # Service Unavailable
+      - 504  # Gateway Timeout
+    retry_delay: 1s
+    retry_backoff: exponential  # or 'fixed'
+```
+
+## Load Balancing Strategies
+
+```yaml
+routes:
+  - path: /api/*
+    upstream: api-service
+    load_balance: round-robin  # Default
+  
+  - path: /api/search
+    upstream: search-service
+    load_balance: least-connections
+  
+  - path: /api/users
+    upstream: user-service
+    load_balance: ip-hash  # Sticky sessions
+```
+
+See [Load Balancing](/docs/concepts/load-balancing) for details.
+
+## Circuit Breaker
+
+```yaml
+routes:
+  - path: /api/orders
+    upstream: order-service
+    circuit_breaker:
+      enabled: true
+      failure_threshold: 5
+      timeout: 60s
+      half_open_requests: 3
+```
+
+See [Circuit Breaker](/docs/concepts/circuit-breaker) for details.
+
+## WebSocket Routing
+
+```yaml
+routes:
+  - path: /ws
+    upstream: websocket-service
+    protocol: websocket
+    timeout: 3600s  # Long timeout for WS connections
+```
+
+## gRPC Routing
+
+```yaml
+routes:
+  - path: /grpc.*
+    upstream: grpc-service
+    protocol: grpc
+    grpc:
+      transcoding: true  # Enable HTTP→gRPC transcoding
+```
+
+## Route Metadata
+
+Attach metadata to routes for logging/metrics:
+
+```yaml
+routes:
+  - path: /api/users
+    upstream: user-service
+    metadata:
+      team: identity
+      version: v2
+      cost_center: eng-001
+```
+
+## Dynamic Routes
+
+Routes can be added/removed dynamically:
+
+### Via Admin API
+
+```bash
+# Add route
+curl -X POST http://localhost:9090/_/routes \
+  -H "Content-Type: application/json" \
+  -d '{
+    "path": "/api/new",
+    "upstream": "new-service",
+    "methods": ["GET"]
+  }'
+
+# Remove route
+curl -X DELETE http://localhost:9090/_/routes/api-new
+```
+
+### Via FARP
+
+FARP automatically creates routes from service manifests:
+
+```json
+{
+  "service_name": "user-service",
+  "schemas": [{
+    "type": "openapi",
+    "location": { "url": "http://user-service/openapi.json" }
+  }]
+}
+```
+
+See [FARP Protocol](/docs/concepts/farp) for details.
+
+## Route Groups
+
+Organize routes with common configuration:
+
+```yaml
+route_groups:
+  - name: api-v1
+    prefix: /api/v1
+    middleware: [auth, rate_limit]
+    timeout: 30s
+    routes:
+      - path: /users
+        upstream: user-service
+      - path: /orders
+        upstream: order-service
+  
+  - name: api-v2
+    prefix: /api/v2
+    middleware: [auth, rate_limit, compression]
+    timeout: 60s
+    routes:
+      - path: /users
+        upstream: user-service-v2
+      - path: /orders
+        upstream: order-service-v2
+```
+
+## Internal Routes
+
+Routes handled by the gateway itself:
+
+```yaml
+routes:
+  - path: /_/health
+    internal: true
+    handler: health_check
+  
+  - path: /_/metrics
+    internal: true
+    handler: metrics
+  
+  - path: /_/config
+    internal: true
+    handler: config
+    auth_required: true
+```
+
+## Route Validation
+
+Validate routes on startup:
+
+```bash
+octopus validate --config config.yaml
+```
+
+Checks:
+- No duplicate paths with same priority
+- All upstreams exist
+- Valid path patterns
+- Valid method names
+- Valid condition syntax
+
+## Performance
+
+### Lookup Time
+
+- **Exact match**: O(k) where k is path length
+- **Path parameters**: O(k * p) where p is number of parameters
+- **Wildcard**: O(k * n) where n is number of wildcards
+- **Regex**: O(n) where n is number of regex routes
+
+### Memory Usage
+
+- **Per route**: ~128 bytes
+- **Trie node**: ~64 bytes
+- **Path parameter**: ~32 bytes
+
+### Optimization Tips
+
+1. Use exact matches when possible
+2. Limit regex routing
+3. Order routes by frequency (most common first)
+4. Use route groups for common configuration
+5. Avoid deep path nesting
+
+## Examples
+
+### RESTful API
+
+```yaml
+routes:
+  # List users
+  - path: /api/users
+    upstream: user-service
+    methods: [GET]
+  
+  # Create user
+  - path: /api/users
+    upstream: user-service
+    methods: [POST]
+    rate_limit:
+      requests_per_second: 10
+  
+  # Get/update/delete user
+  - path: /api/users/:id
+    upstream: user-service
+    methods: [GET, PUT, DELETE]
+```
+
+### Microservices
+
+```yaml
+routes:
+  # User service
+  - path: /users/*
+    upstream: user-service
+  
+  # Order service
+  - path: /orders/*
+    upstream: order-service
+  
+  # Product service
+  - path: /products/*
+    upstream: product-service
+  
+  # Payment service (with circuit breaker)
+  - path: /payments/*
+    upstream: payment-service
+    circuit_breaker:
+      enabled: true
+      failure_threshold: 3
+```
+
+### API Versioning
+
+```yaml
+routes:
+  # v1 API
+  - path: /api/v1/*
+    upstream: api-v1
+    timeout: 30s
+  
+  # v2 API
+  - path: /api/v2/*
+    upstream: api-v2
+    timeout: 60s
+    middleware: [auth, rate_limit, compression]
+  
+  # Default to latest
+  - path: /api/*
+    upstream: api-v2
+```
+
+## Next Steps
+
+- [Middleware](/docs/concepts/middleware) - Process requests
+- [Load Balancing](/docs/concepts/load-balancing) - Distribute traffic
+- [Health Checks](/docs/concepts/health-checks) - Monitor upstreams
+- [FARP Protocol](/docs/concepts/farp) - Auto-generate routes
+- [Configuration](/docs/configuration/routing) - Routing configuration
+

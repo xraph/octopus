@@ -1,0 +1,275 @@
+# Octopus API Gateway - Security Configuration Example
+# This file demonstrates how to configure the critical security features
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  admin_port: 9090
+
+# Request Size Limits (prevents resource exhaustion)
+request_limits:
+  # Maximum request body size in bytes (default: 10MB)
+  max_body_size: 10485760  # 10MB
+  
+  # Maximum total header size in bytes (default: 8KB)
+  max_header_size: 8192  # 8KB
+  
+  # Maximum URI length in bytes (default: 8KB)
+  max_uri_length: 8192  # 8KB
+  
+  # Custom error messages (optional)
+  body_size_error_message: "Request body too large (maximum 10MB)"
+  header_size_error_message: "Request headers too large (maximum 8KB)"
+  uri_length_error_message: "Request URI too long (maximum 8KB)"
+
+# Connection Limits (prevents DDoS)
+connection_limits:
+  # Maximum total concurrent connections (default: 10,000)
+  max_connections: 10000
+  
+  # Maximum concurrent connections per IP (default: 100)
+  max_connections_per_ip: 100
+  
+  # Connection idle timeout in seconds (default: 60)
+  idle_timeout: 60
+  
+  # IP whitelist (unlimited connections)
+  whitelist:
+    - "10.0.0.0/8"      # Internal network
+    - "192.168.0.0/16"  # Private network
+  
+  # IP blacklist (no connections allowed)
+  blacklist:
+    - "203.0.113.0"  # Example blocked IP
+  
+  # Custom error message
+  error_message: "Too many concurrent connections - please try again later"
+
+# Audit Logging (compliance & forensics)
+audit_logging:
+  # Output destination: "file", "stdout", or "stderr"
+  output: "file"
+  
+  # Log file path (if output is "file")
+  file_path: "/var/log/octopus/audit.log"
+  
+  # Event types to log
+  log_auth_success: false      # Too noisy for production
+  log_auth_failure: true       # Security critical
+  log_authz_failure: true      # Access control violations
+  log_rate_limit: true         # Rate limit violations
+  log_tls_failure: true        # TLS/SSL issues
+  log_admin_access: true       # Admin API usage
+  log_config_change: true      # Configuration changes
+  log_suspicious: true         # Suspicious activity
+  
+  # Pretty print JSON for readability (disable in production)
+  pretty_print: false
+
+# Security Headers
+security_headers:
+  # Preset: "strict", "default", or "permissive"
+  preset: "strict"
+  
+  # Or configure manually:
+  # hsts: "max-age=31536000; includeSubDomains; preload"
+  # csp: "default-src 'self'; script-src 'self'; object-src 'none'"
+  # frame_options: "DENY"
+  # content_type_options: "nosniff"
+  # xss_protection: "1; mode=block"
+  # referrer_policy: "no-referrer"
+  # permissions_policy: "geolocation=(), microphone=(), camera=()"
+
+# JWT Authentication
+jwt:
+  # Secret key for HS256 (at least 32 bytes)
+  secret: "${JWT_SECRET}"  # From environment variable
+  
+  # Or use RSA public key for RS256
+  # public_key_path: "/etc/octopus/jwt-public-key.pem"
+  
+  # Algorithm: HS256, HS384, HS512, RS256, RS384, RS512, ES256, ES384
+  algorithm: "HS256"
+  
+  # Paths to skip authentication
+  skip_paths:
+    - "/health"
+    - "/metrics"
+    - "/docs"
+    - "/redoc"
+  
+  # Token validation
+  validate_exp: true      # Check expiration
+  validate_nbf: true      # Check not-before
+  validate_iss: true      # Check issuer
+  validate_aud: true      # Check audience
+  
+  # Expected values
+  issuer: "octopus-gateway"
+  audience: "api"
+  
+  # Leeway for clock skew (seconds)
+  leeway: 60
+
+# Rate Limiting
+rate_limiting:
+  # Global rate limit
+  requests_per_window: 1000
+  window_size: 60  # seconds
+  
+  # Strategy: "token_bucket" or "fixed_window"
+  strategy: "token_bucket"
+  
+  # Per-route rate limits (override global)
+  per_route_limits:
+    "/api/login":
+      requests_per_window: 5
+      window_size: 60
+      error_message: "Too many login attempts - please wait"
+    
+    "/api/expensive-operation":
+      requests_per_window: 10
+      window_size: 60
+      error_message: "Rate limit exceeded for this operation"
+
+# TLS/SSL Configuration
+tls:
+  enabled: true
+  cert_path: "/etc/octopus/tls/cert.pem"
+  key_path: "/etc/octopus/tls/key.pem"
+  
+  # Client certificate verification (mTLS)
+  client_ca_path: "/etc/octopus/tls/ca.pem"
+  verify_client: false  # Set to true for mTLS
+  
+  # Auto-reload certificates on change
+  auto_reload: true
+  reload_interval: 3600  # seconds
+
+# CORS Configuration
+cors:
+  # Allowed origins (use ["*"] carefully!)
+  allowed_origins:
+    - "https://app.example.com"
+    - "https://admin.example.com"
+  
+  # Allowed methods
+  allowed_methods:
+    - "GET"
+    - "POST"
+    - "PUT"
+    - "DELETE"
+    - "OPTIONS"
+  
+  # Allowed headers
+  allowed_headers:
+    - "content-type"
+    - "authorization"
+    - "x-request-id"
+  
+  # Exposed headers
+  exposed_headers:
+    - "x-rate-limit-remaining"
+    - "x-rate-limit-reset"
+  
+  # Allow credentials
+  allow_credentials: true
+  
+  # Max age for preflight cache (seconds)
+  max_age: 3600
+
+# Compression
+compression:
+  enabled: true
+  
+  # Algorithms: gzip, brotli, zstd
+  algorithms:
+    - "brotli"
+    - "gzip"
+    - "zstd"
+  
+  # Minimum size to compress (bytes)
+  min_size: 1024  # 1KB
+  
+  # Compression level (1-11 for brotli, 1-9 for gzip)
+  level: 6
+
+# Timeouts
+timeouts:
+  # Request timeout (seconds)
+  request: 30
+  
+  # Idle connection timeout (seconds)
+  idle: 60
+  
+  # Keep-alive timeout (seconds)
+  keep_alive: 90
+
+# Logging
+logging:
+  level: "info"  # trace, debug, info, warn, error
+  format: "json"  # json or text
+  
+  # Include fields
+  include_request_id: true
+  include_client_ip: true
+  include_user_agent: false
+
+# Metrics
+metrics:
+  enabled: true
+  endpoint: "/metrics"  # Prometheus scraping endpoint
+
+# Routes (with security configuration)
+routes:
+  - path: "/api/public/*"
+    upstream: "http://backend:8080"
+    methods: ["GET"]
+    # No authentication required
+    skip_auth: true
+    
+  - path: "/api/private/*"
+    upstream: "http://backend:8080"
+    methods: ["GET", "POST", "PUT", "DELETE"]
+    # Requires JWT authentication
+    require_auth: true
+    # Per-route rate limit
+    rate_limit:
+      requests_per_window: 100
+      window_size: 60
+    
+  - path: "/api/admin/*"
+    upstream: "http://admin-backend:8080"
+    methods: ["GET", "POST", "PUT", "DELETE"]
+    # Requires JWT and admin role
+    require_auth: true
+    require_roles: ["admin"]
+    # Stricter rate limit
+    rate_limit:
+      requests_per_window: 50
+      window_size: 60
+    # Audit all admin access
+    audit: true
+
+# Example deployment presets:
+# 
+# DEVELOPMENT:
+# - request_limits: permissive
+# - connection_limits: permissive
+# - security_headers: permissive
+# - audit_logging.output: stdout
+# - audit_logging.pretty_print: true
+#
+# STAGING:
+# - request_limits: default
+# - connection_limits: default
+# - security_headers: default
+# - audit_logging.output: file
+#
+# PRODUCTION:
+# - request_limits: strict
+# - connection_limits: strict
+# - security_headers: strict
+# - audit_logging.output: file
+# - All critical logging enabled
+

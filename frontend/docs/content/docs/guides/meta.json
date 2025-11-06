@@ -1,0 +1,12 @@
+{
+  "title": "Guides",
+  "icon": "BookOpen",
+  "defaultOpen": false,
+  "pages": [
+    "index",
+    "performance",
+    "security",
+    "troubleshooting",
+    "migration"
+  ]
+}

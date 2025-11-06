@@ -1,0 +1,52 @@
+[package]
+name = "octopus-plugin-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Plugin runtime and lifecycle management for Octopus API Gateway"
+
+[dependencies]
+# Plugin API
+octopus-plugin-api = { path = "../octopus-plugin-api" }
+
+# Async
+tokio.workspace = true
+async-trait.workspace = true
+
+# Concurrency
+dashmap = "6.1"
+parking_lot = "0.12"
+
+# Serialization
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+serde_yaml = "0.9"
+toml = "0.8"
+
+# Error handling
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Logging
+tracing.workspace = true
+
+# Time
+chrono.workspace = true
+
+# Utilities
+once_cell.workspace = true
+
+# File watching (for hot reload)
+notify = "6.1"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }
+
+[features]
+default = []
+# Future: dynamic loading with libloading
+dynamic-loading = []
+

@@ -10,6 +10,7 @@ use serde::Serialize;
 pub type Body = Full<Bytes>;
 
 /// Response builder for convenient response construction
+#[derive(Debug)]
 pub struct ResponseBuilder {
     status: StatusCode,
     headers: Vec<(header::HeaderName, String)>,

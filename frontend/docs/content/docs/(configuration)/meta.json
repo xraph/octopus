@@ -1,0 +1,17 @@
+{
+  "title": "Configuration",
+  "icon": "Settings",
+  "defaultOpen": false,
+  "pages": [
+    "index",
+    "server",
+    "discovery",
+    "upstreams",
+    "routing",
+    "middleware",
+    "tls",
+    "observability",
+    "admin"
+  ]
+}
+

@@ -1,0 +1,107 @@
+---
+title: Observability
+description: Monitor and debug Octopus API Gateway
+---
+
+import { Card, Cards } from 'fumadocs-ui/components/card';
+
+# Observability
+
+Octopus provides comprehensive observability through metrics, tracing, and logging.
+
+## Overview
+
+<Cards>
+  <Card
+    title="Metrics"
+    description="Prometheus metrics for monitoring"
+    href="/docs/observability/metrics"
+  />
+  <Card
+    title="Tracing"
+    description="Distributed tracing with OpenTelemetry"
+    href="/docs/observability/tracing"
+  />
+  <Card
+    title="Logging"
+    description="Structured logging with JSON output"
+    href="/docs/observability/logging"
+  />
+  <Card
+    title="Health Checks"
+    description="Health and readiness endpoints"
+    href="/docs/observability/health"
+  />
+</Cards>
+
+## Configuration
+
+```yaml
+observability:
+  metrics:
+    enabled: true
+    path: /metrics
+    port: 9090
+  
+  tracing:
+    enabled: true
+    exporter: otlp
+    endpoint: http://jaeger:4317
+    sample_rate: 0.1
+  
+  logging:
+    level: info
+    format: json
+    include_request_id: true
+```
+
+## Key Metrics
+
+```bash
+# Request metrics
+octopus_requests_total{method, status, route}
+octopus_request_duration_seconds{method, route}
+
+# Upstream metrics
+octopus_upstream_requests_total{upstream, status}
+octopus_upstream_duration_seconds{upstream}
+
+# Circuit breaker
+octopus_circuit_breaker_state{upstream}
+
+# FARP
+octopus_farp_services_total
+octopus_farp_routes_total
+```
+
+## Accessing Metrics
+
+```bash
+# Prometheus metrics
+curl http://localhost:9090/metrics
+
+# Health check
+curl http://localhost:9090/_/health
+
+# Service status
+curl http://localhost:9090/_/services
+```
+
+## Grafana Dashboard
+
+Import the official Octopus dashboard:
+
+```bash
+# Download dashboard
+curl -O https://grafana.com/dashboards/octopus-gateway.json
+
+# Import to Grafana
+```
+
+## Next Steps
+
+- [Metrics](/docs/observability/metrics) - Prometheus metrics
+- [Tracing](/docs/observability/tracing) - Distributed tracing
+- [Logging](/docs/observability/logging) - Structured logging
+- [Health Checks](/docs/observability/health) - Health endpoints
+

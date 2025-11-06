@@ -1,0 +1,23 @@
+[package]
+name = "octopus-tls"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+octopus-core = { path = "../octopus-core" }
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+
+# TLS
+tokio-rustls = "0.26"
+rustls = "0.23"
+rustls-pemfile = "2.0"
+
+# Utilities
+thiserror.workspace = true
+serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }
+

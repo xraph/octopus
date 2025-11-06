@@ -1,0 +1,26 @@
+[package]
+name = "octopus-examples"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[[bin]]
+name = "mdns_service"
+path = "mdns_service.rs"
+
+[dependencies]
+# Workspace dependencies
+tokio.workspace = true
+axum.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Example-specific dependencies
+mdns-sd = "0.11"
+local-ip-address = "0.6"
+hostname = "0.4"
+clap = { version = "4.5", features = ["derive"] }
+

@@ -1,0 +1,248 @@
+{% extends "shadcn_base.html" %}
+
+{% block title %}Logs - Octopus Admin{% endblock %}
+{% block page_title %}Logs{% endblock %}
+
+{% block content %}
+<div x-data="logsPage()" x-init="init()" class="p-5 md:p-8 space-y-5">
+    <!-- Page Header -->
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-2xl font-semibold text-gray-800 dark:text-neutral-200">System Logs</h1>
+            <p class="text-sm text-gray-600 dark:text-neutral-400">Real-time log monitoring and search</p>
+        </div>
+        <div class="flex gap-x-2">
+            <button @click="toggleAutoRefresh()" type="button" class="py-2 px-3 inline-flex items-center gap-x-2 text-sm font-medium rounded-lg border shadow-sm" 
+                    :class="autoRefresh ? 'border-green-200 bg-green-50 text-green-800 hover:bg-green-100 dark:bg-green-900 dark:border-green-700 dark:text-green-200' : 'border-gray-200 bg-white text-gray-800 hover:bg-gray-50 dark:bg-neutral-800 dark:border-neutral-700 dark:text-white'">
+                <svg class="flex-shrink-0 size-4" :class="{ 'animate-pulse': autoRefresh }" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                <span x-text="autoRefresh ? 'Live' : 'Paused'"></span>
+            </button>
+            <button @click="clearLogs()" type="button" class="py-2 px-3 inline-flex items-center gap-x-2 text-sm font-medium rounded-lg border border-gray-200 bg-white text-gray-800 shadow-sm hover:bg-gray-50 disabled:opacity-50 dark:bg-neutral-800 dark:border-neutral-700 dark:text-white dark:hover:bg-neutral-700">
+                <svg class="flex-shrink-0 size-4" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                Clear
+            </button>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="flex flex-col bg-white border shadow-sm rounded-xl dark:bg-neutral-800 dark:border-neutral-700">
+        <div class="p-4 md:p-5">
+            <div class="grid sm:grid-cols-4 gap-4">
+                <div>
+                    <label class="block text-sm font-medium mb-2 dark:text-white">Log Level</label>
+                    <select x-model="filters.level" @change="loadLogs()" class="py-2 px-3 pe-9 block w-full border-gray-200 rounded-lg text-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-neutral-900 dark:border-neutral-700">
+                        <option value="">All Levels</option>
+                        <option value="trace">Trace</option>
+                        <option value="debug">Debug</option>
+                        <option value="info">Info</option>
+                        <option value="warning">Warning</option>
+                        <option value="error">Error</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-2 dark:text-white">Source</label>
+                    <select x-model="filters.source" @change="loadLogs()" class="py-2 px-3 pe-9 block w-full border-gray-200 rounded-lg text-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-neutral-900 dark:border-neutral-700">
+                        <option value="">All Sources</option>
+                        <option value="router">Router</option>
+                        <option value="proxy">Proxy</option>
+                        <option value="middleware">Middleware</option>
+                        <option value="plugin">Plugin</option>
+                    </select>
+                </div>
+                <div class="sm:col-span-2">
+                    <label class="block text-sm font-medium mb-2 dark:text-white">Search</label>
+                    <div class="relative">
+                        <input x-model="filters.search" @input="debounceSearch()" type="text" placeholder="Search logs..." 
+                               class="py-2 px-3 ps-11 block w-full border-gray-200 rounded-lg text-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-neutral-900 dark:border-neutral-700 dark:text-neutral-400">
+                        <div class="absolute inset-y-0 start-0 flex items-center pointer-events-none ps-4">
+                            <svg class="flex-shrink-0 size-4 text-gray-400 dark:text-neutral-500" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Logs Display -->
+    <div class="flex flex-col bg-white border shadow-sm rounded-xl dark:bg-neutral-800 dark:border-neutral-700">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-neutral-700 flex justify-between items-center">
+            <div>
+                <h2 class="text-xl font-semibold text-gray-800 dark:text-neutral-200">Log Entries</h2>
+                <p class="text-sm text-gray-600 dark:text-neutral-400"><span x-text="logs.length"></span> entries</p>
+            </div>
+            <button @click="exportLogs()" type="button" class="py-2 px-3 inline-flex items-center gap-x-2 text-sm font-medium rounded-lg border border-transparent text-blue-600 hover:bg-blue-100 dark:text-blue-500 dark:hover:bg-blue-900">
+                <svg class="flex-shrink-0 size-4" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                Export
+            </button>
+        </div>
+        <div class="overflow-y-auto" style="max-height: 600px;">
+            <div class="divide-y divide-gray-200 dark:divide-neutral-700">
+                <template x-for="(log, index) in logs" :key="index">
+                    <div class="p-4 hover:bg-gray-50 dark:hover:bg-neutral-700/50 transition">
+                        <div class="flex items-start gap-x-3">
+                            <div class="flex-shrink-0 mt-1">
+                                <span class="inline-flex items-center gap-x-1.5 py-1.5 px-3 rounded-full text-xs font-medium"
+                                      :class="{
+                                          'bg-gray-100 text-gray-800 dark:bg-neutral-700 dark:text-neutral-300': log.level === 'info',
+                                          'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200': log.level === 'debug',
+                                          'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200': log.level === 'warning',
+                                          'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200': log.level === 'error'
+                                      }"
+                                      x-text="log.level.toUpperCase()">
+                                </span>
+                            </div>
+                            <div class="flex-grow">
+                                <div class="flex items-center gap-x-3 mb-1">
+                                    <span class="text-xs text-gray-500 dark:text-neutral-400" x-text="log.timestamp"></span>
+                                    <span x-show="log.source" class="text-xs text-gray-500 dark:text-neutral-400">
+                                        [<span x-text="log.source"></span>]
+                                    </span>
+                                </div>
+                                <p class="text-sm text-gray-800 dark:text-neutral-200" x-text="log.message"></p>
+                                <div x-show="log.details" class="mt-2 p-2 bg-gray-100 dark:bg-neutral-900 rounded text-xs font-mono text-gray-700 dark:text-neutral-300" x-text="log.details"></div>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+                <div x-show="logs.length === 0" class="p-8 text-center text-gray-500 dark:text-neutral-400">
+                    No logs found matching your filters
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Security Events -->
+    <div class="flex flex-col bg-white border shadow-sm rounded-xl dark:bg-neutral-800 dark:border-neutral-700">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-neutral-700">
+            <h2 class="text-xl font-semibold text-gray-800 dark:text-neutral-200">Recent Security Events</h2>
+            <p class="text-sm text-gray-600 dark:text-neutral-400">Suspicious activities and security alerts</p>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200 dark:divide-neutral-700">
+                <thead class="bg-gray-50 dark:bg-neutral-800">
+                    <tr>
+                        <th class="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase dark:text-neutral-400">Timestamp</th>
+                        <th class="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase dark:text-neutral-400">Event Type</th>
+                        <th class="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase dark:text-neutral-400">Severity</th>
+                        <th class="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase dark:text-neutral-400">Source IP</th>
+                        <th class="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase dark:text-neutral-400">Details</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-200 dark:divide-neutral-700">
+                    <template x-for="event in securityEvents" :key="event.timestamp">
+                        <tr>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-800 dark:text-neutral-200" x-text="event.timestamp"></td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-800 dark:text-neutral-200" x-text="event.event_type"></td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm">
+                                <span class="inline-flex items-center gap-x-1.5 py-1.5 px-3 rounded-full text-xs font-medium"
+                                      :class="{
+                                          'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200': event.severity === 'low',
+                                          'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200': event.severity === 'medium',
+                                          'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200': event.severity === 'high',
+                                          'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200': event.severity === 'critical'
+                                      }"
+                                      x-text="event.severity.toUpperCase()">
+                                </span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-800 dark:text-neutral-200" x-text="event.source_ip"></td>
+                            <td class="px-6 py-4 text-sm text-gray-800 dark:text-neutral-200" x-text="event.details"></td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+function logsPage() {
+    return {
+        logs: [],
+        securityEvents: [],
+        filters: {
+            level: '',
+            source: '',
+            search: ''
+        },
+        autoRefresh: true,
+        refreshInterval: null,
+        searchTimeout: null,
+
+        async init() {
+            await this.loadLogs();
+            await this.loadSecurityEvents();
+            this.startAutoRefresh();
+        },
+
+        async loadLogs() {
+            try {
+                const params = new URLSearchParams();
+                if (this.filters.level) params.append('level', this.filters.level);
+                if (this.filters.search) params.append('search', this.filters.search);
+                params.append('limit', '100');
+                
+                const response = await fetch(`/admin/api/logs?${params}`);
+                if (!response.ok) throw new Error('Failed to fetch logs');
+                this.logs = await response.json();
+            } catch (error) {
+                console.error('Error loading logs:', error);
+            }
+        },
+
+        async loadSecurityEvents() {
+            try {
+                const response = await fetch('/admin/api/security/events');
+                if (!response.ok) throw new Error('Failed to fetch security events');
+                this.securityEvents = await response.json();
+            } catch (error) {
+                console.error('Error loading security events:', error);
+            }
+        },
+
+        startAutoRefresh() {
+            if (this.autoRefresh) {
+                this.refreshInterval = setInterval(() => {
+                    this.loadLogs();
+                    this.loadSecurityEvents();
+                }, 5000); // Refresh every 5 seconds
+            }
+        },
+
+        toggleAutoRefresh() {
+            this.autoRefresh = !this.autoRefresh;
+            if (this.autoRefresh) {
+                this.startAutoRefresh();
+            } else if (this.refreshInterval) {
+                clearInterval(this.refreshInterval);
+                this.refreshInterval = null;
+            }
+        },
+
+        debounceSearch() {
+            clearTimeout(this.searchTimeout);
+            this.searchTimeout = setTimeout(() => {
+                this.loadLogs();
+            }, 500);
+        },
+
+        clearLogs() {
+            if (confirm('Are you sure you want to clear the displayed logs?')) {
+                this.logs = [];
+            }
+        },
+
+        exportLogs() {
+            const data = JSON.stringify(this.logs, null, 2);
+            const blob = new Blob([data], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `logs-${new Date().toISOString()}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+    };
+}
+</script>
+{% endblock %}
+

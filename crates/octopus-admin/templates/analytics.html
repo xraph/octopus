@@ -1,0 +1,349 @@
+{% extends "shadcn_base.html" %}
+
+{% block title %}Analytics - Octopus Admin{% endblock %}
+{% block page_title %}Analytics{% endblock %}
+
+{% block content %}
+<div x-data="analyticsPage()" x-init="init()" class="p-5 md:p-8 space-y-5">
+    <!-- Page Header -->
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-2xl font-semibold text-gray-800 dark:text-neutral-200">Traffic Analytics</h1>
+            <p class="text-sm text-gray-600 dark:text-neutral-400">Detailed insights into your API traffic patterns</p>
+        </div>
+        <div class="flex gap-x-2">
+            <select x-model="timeframe" @change="loadAnalytics()" class="py-2 px-3 pe-9 block border-gray-200 rounded-lg text-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-neutral-900 dark:border-neutral-700">
+                <option value="1h">Last hour</option>
+                <option value="24h" selected>Last 24h</option>
+                <option value="7d">Last 7 days</option>
+                <option value="30d">Last 30 days</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- Key Metrics -->
+    <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+        <div class="flex flex-col bg-white border shadow-sm rounded-xl dark:bg-neutral-800 dark:border-neutral-700">
+            <div class="p-4 md:p-5">
+                <div class="flex items-center gap-x-2">
+                    <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-neutral-400">Total Volume</p>
+                </div>
+                <div class="mt-1 flex items-center gap-x-2">
+                    <h3 class="text-xl font-medium text-gray-800 dark:text-neutral-200" x-text="formatNumber(analytics.request_volume.reduce((sum, p) => sum + p.value, 0))">0</h3>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex flex-col bg-white border shadow-sm rounded-xl dark:bg-neutral-800 dark:border-neutral-700">
+            <div class="p-4 md:p-5">
+                <div class="flex items-center gap-x-2">
+                    <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-neutral-400">P99 Latency</p>
+                </div>
+                <div class="mt-1 flex items-center gap-x-2">
+                    <h3 class="text-xl font-medium text-gray-800 dark:text-neutral-200"><span x-text="analytics.latency_percentiles.p99.toFixed(1)">0</span>ms</h3>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex flex-col bg-white border shadow-sm rounded-xl dark:bg-neutral-800 dark:border-neutral-700">
+            <div class="p-4 md:p-5">
+                <div class="flex items-center gap-x-2">
+                    <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-neutral-400">Error Count</p>
+                </div>
+                <div class="mt-1 flex items-center gap-x-2">
+                    <h3 class="text-xl font-medium text-gray-800 dark:text-neutral-200" x-text="Object.values(analytics.error_breakdown).reduce((sum, v) => sum + v, 0)">0</h3>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex flex-col bg-white border shadow-sm rounded-xl dark:bg-neutral-800 dark:border-neutral-700">
+            <div class="p-4 md:p-5">
+                <div class="flex items-center gap-x-2">
+                    <p class="text-xs uppercase tracking-wide text-gray-500 dark:text-neutral-400">Success Rate</p>
+                </div>
+                <div class="mt-1 flex items-center gap-x-2">
+                    <h3 class="text-xl font-medium text-gray-800 dark:text-neutral-200"><span x-text="calculateSuccessRate()">0</span>%</h3>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Traffic Trend Chart -->
+    <div class="flex flex-col bg-white border shadow-sm rounded-xl dark:bg-neutral-800 dark:border-neutral-700">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-neutral-700">
+            <h2 class="text-xl font-semibold text-gray-800 dark:text-neutral-200">Traffic Trend</h2>
+            <p class="text-sm text-gray-600 dark:text-neutral-400">Request volume over time</p>
+        </div>
+        <div class="p-6">
+            <div id="traffic-trend-chart"></div>
+        </div>
+    </div>
+
+    <!-- Charts Grid -->
+    <div class="grid lg:grid-cols-2 gap-4 sm:gap-6">
+        <!-- Error Breakdown -->
+        <div class="flex flex-col bg-white border shadow-sm rounded-xl dark:bg-neutral-800 dark:border-neutral-700">
+            <div class="px-6 py-4 border-b border-gray-200 dark:border-neutral-700">
+                <h2 class="text-xl font-semibold text-gray-800 dark:text-neutral-200">Error Breakdown</h2>
+                <p class="text-sm text-gray-600 dark:text-neutral-400">Errors by type</p>
+            </div>
+            <div class="p-6">
+                <div id="error-breakdown-chart"></div>
+            </div>
+        </div>
+
+        <!-- Latency Percentiles -->
+        <div class="flex flex-col bg-white border shadow-sm rounded-xl dark:bg-neutral-800 dark:border-neutral-700">
+            <div class="px-6 py-4 border-b border-gray-200 dark:border-neutral-700">
+                <h2 class="text-xl font-semibold text-gray-800 dark:text-neutral-200">Latency Percentiles</h2>
+                <p class="text-sm text-gray-600 dark:text-neutral-400">Response time distribution</p>
+            </div>
+            <div class="p-6">
+                <div id="latency-percentiles-chart"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Top Routes Table -->
+    <div class="flex flex-col bg-white border shadow-sm rounded-xl dark:bg-neutral-800 dark:border-neutral-700">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-neutral-700">
+            <h2 class="text-xl font-semibold text-gray-800 dark:text-neutral-200">Top Performing Routes</h2>
+            <p class="text-sm text-gray-600 dark:text-neutral-400">Routes sorted by request count</p>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200 dark:divide-neutral-700">
+                <thead class="bg-gray-50 dark:bg-neutral-800">
+                    <tr>
+                        <th class="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase dark:text-neutral-400">Route</th>
+                        <th class="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase dark:text-neutral-400">Requests</th>
+                        <th class="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase dark:text-neutral-400">Avg Latency</th>
+                        <th class="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase dark:text-neutral-400">Error Rate</th>
+                        <th class="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase dark:text-neutral-400">P95 Latency</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-200 dark:divide-neutral-700">
+                    <template x-for="route in analytics.top_routes" :key="route.path">
+                        <tr>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-800 dark:text-neutral-200" x-text="route.path"></td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-800 dark:text-neutral-200" x-text="formatNumber(route.requests)"></td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-800 dark:text-neutral-200"><span x-text="route.avg_latency.toFixed(1)"></span>ms</td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm">
+                                <span class="inline-flex items-center gap-x-1.5 py-1.5 px-3 rounded-full text-xs font-medium" 
+                                      :class="route.error_rate < 0.01 ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' : route.error_rate < 0.05 ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200' : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'">
+                                    <span x-text="(route.error_rate * 100).toFixed(2) + '%'"></span>
+                                </span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-800 dark:text-neutral-200"><span x-text="(route.avg_latency * 1.5).toFixed(1)"></span>ms</td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+function analyticsPage() {
+    return {
+        timeframe: '24h',
+        analytics: {
+            request_volume: [],
+            latency_percentiles: { p50: 0, p90: 0, p95: 0, p99: 0 },
+            error_breakdown: {},
+            top_routes: [],
+            status_code_distribution: {},
+            traffic_by_method: {}
+        },
+        charts: {},
+
+        async init() {
+            await this.loadAnalytics();
+            await this.$nextTick();
+            this.initCharts();
+        },
+
+        async loadAnalytics() {
+            try {
+                const response = await fetch(`/admin/api/analytics?timeframe=${this.timeframe}`);
+                if (!response.ok) throw new Error('Failed to fetch analytics');
+                this.analytics = await response.json();
+                this.updateCharts();
+            } catch (error) {
+                console.error('Error loading analytics:', error);
+            }
+        },
+
+        initCharts() {
+            this.initTrafficTrendChart();
+            this.initErrorBreakdownChart();
+            this.initLatencyPercentilesChart();
+        },
+
+        initTrafficTrendChart() {
+            const element = document.querySelector('#traffic-trend-chart');
+            if (!element || this.charts.trafficTrend) return;
+
+            const isDark = document.documentElement.classList.contains('dark');
+            
+            this.charts.trafficTrend = new ApexCharts(element, {
+                chart: {
+                    type: 'area',
+                    height: 350,
+                    toolbar: { show: false },
+                    background: 'transparent',
+                    zoom: { enabled: true }
+                },
+                series: [{
+                    name: 'Requests',
+                    data: this.analytics.request_volume.map(p => ({
+                        x: new Date(p.timestamp).getTime(),
+                        y: p.value
+                    }))
+                }],
+                stroke: {
+                    curve: 'smooth',
+                    width: 2
+                },
+                fill: {
+                    type: 'gradient',
+                    gradient: {
+                        opacityFrom: 0.6,
+                        opacityTo: 0.1
+                    }
+                },
+                colors: ['#3b82f6'],
+                xaxis: {
+                    type: 'datetime',
+                    labels: {
+                        style: { colors: isDark ? '#a3a3a3' : '#6b7280' }
+                    }
+                },
+                yaxis: {
+                    labels: {
+                        style: { colors: isDark ? '#a3a3a3' : '#6b7280' },
+                        formatter: (value) => value.toLocaleString()
+                    }
+                },
+                grid: {
+                    borderColor: isDark ? '#404040' : '#e5e7eb'
+                },
+                tooltip: {
+                    theme: isDark ? 'dark' : 'light',
+                    x: { format: 'MMM dd HH:mm' }
+                }
+            });
+            
+            this.charts.trafficTrend.render();
+        },
+
+        initErrorBreakdownChart() {
+            const element = document.querySelector('#error-breakdown-chart');
+            if (!element || this.charts.errorBreakdown) return;
+
+            const isDark = document.documentElement.classList.contains('dark');
+            
+            this.charts.errorBreakdown = new ApexCharts(element, {
+                chart: {
+                    type: 'donut',
+                    height: 300,
+                    background: 'transparent'
+                },
+                series: Object.values(this.analytics.error_breakdown),
+                labels: Object.keys(this.analytics.error_breakdown),
+                colors: ['#f59e0b', '#ef4444', '#dc2626'],
+                legend: {
+                    position: 'bottom',
+                    labels: { colors: isDark ? '#a3a3a3' : '#6b7280' }
+                },
+                plotOptions: {
+                    pie: { donut: { size: '70%' } }
+                },
+                dataLabels: { enabled: true },
+                tooltip: { theme: isDark ? 'dark' : 'light' }
+            });
+            
+            this.charts.errorBreakdown.render();
+        },
+
+        initLatencyPercentilesChart() {
+            const element = document.querySelector('#latency-percentiles-chart');
+            if (!element || this.charts.latencyPercentiles) return;
+
+            const isDark = document.documentElement.classList.contains('dark');
+            const { p50, p90, p95, p99 } = this.analytics.latency_percentiles;
+            
+            this.charts.latencyPercentiles = new ApexCharts(element, {
+                chart: {
+                    type: 'bar',
+                    height: 300,
+                    toolbar: { show: false },
+                    background: 'transparent'
+                },
+                series: [{ name: 'Latency (ms)', data: [p50, p90, p95, p99] }],
+                colors: ['#06b6d4'],
+                plotOptions: {
+                    bar: { distributed: true, horizontal: true, barHeight: '70%' }
+                },
+                xaxis: {
+                    categories: ['P50', 'P90', 'P95', 'P99'],
+                    labels: {
+                        style: { colors: isDark ? '#a3a3a3' : '#6b7280' },
+                        formatter: (value) => value + 'ms'
+                    }
+                },
+                yaxis: {
+                    labels: { style: { colors: isDark ? '#a3a3a3' : '#6b7280' } }
+                },
+                grid: { borderColor: isDark ? '#404040' : '#e5e7eb' },
+                dataLabels: {
+                    enabled: true,
+                    formatter: (value) => value.toFixed(1) + 'ms'
+                },
+                legend: { show: false },
+                tooltip: { theme: isDark ? 'dark' : 'light' }
+            });
+            
+            this.charts.latencyPercentiles.render();
+        },
+
+        updateCharts() {
+            if (this.charts.trafficTrend) {
+                this.charts.trafficTrend.updateSeries([{
+                    data: this.analytics.request_volume.map(p => ({
+                        x: new Date(p.timestamp).getTime(),
+                        y: p.value
+                    }))
+                }]);
+            }
+            if (this.charts.errorBreakdown) {
+                this.charts.errorBreakdown.updateOptions({
+                    series: Object.values(this.analytics.error_breakdown),
+                    labels: Object.keys(this.analytics.error_breakdown)
+                });
+            }
+            if (this.charts.latencyPercentiles) {
+                const { p50, p90, p95, p99 } = this.analytics.latency_percentiles;
+                this.charts.latencyPercentiles.updateSeries([{
+                    data: [p50, p90, p95, p99]
+                }]);
+            }
+        },
+
+        formatNumber(num) {
+            if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
+            if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
+            return num.toString();
+        },
+
+        calculateSuccessRate() {
+            const total = Object.values(this.analytics.status_code_distribution).reduce((sum, v) => sum + v, 0);
+            const success = Object.entries(this.analytics.status_code_distribution)
+                .filter(([code]) => code >= 200 && code < 400)
+                .reduce((sum, [,v]) => sum + v, 0);
+            return total > 0 ? ((success / total) * 100).toFixed(2) : 0;
+        }
+    };
+}
+</script>
+{% endblock %}
+

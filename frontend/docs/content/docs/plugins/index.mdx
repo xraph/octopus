@@ -1,0 +1,70 @@
+---
+title: Plugins
+description: Extend Octopus with plugins
+---
+
+import { Card, Cards } from 'fumadocs-ui/components/card';
+
+# Plugins
+
+Extend Octopus functionality with built-in and custom plugins.
+
+## Built-in Plugins
+
+<Cards>
+  <Card
+    title="JWT Authentication"
+    description="JWT validation and claims extraction"
+    href="/docs/plugins/jwt-auth"
+  />
+  <Card
+    title="Redis Cache"
+    description="Response caching with Redis"
+    href="/docs/plugins/redis-cache"
+  />
+  <Card
+    title="Rate Limiter"
+    description="Distributed rate limiting with Redis"
+    href="/docs/plugins/rate-limiter"
+  />
+  <Card
+    title="Kafka Producer"
+    description="Event logging to Kafka"
+    href="/docs/plugins/kafka-producer"
+  />
+</Cards>
+
+## Using Plugins
+
+```yaml
+plugins:
+  - name: jwt-auth
+    builtin: true
+    config:
+      secret: ${JWT_SECRET}
+      algorithm: HS256
+  
+  - name: redis-cache
+    path: /plugins/redis-cache.so
+    config:
+      url: redis://localhost:6379
+      ttl: 300
+```
+
+## Developing Plugins
+
+Create custom plugins to extend Octopus:
+
+<Cards>
+  <Card
+    title="Plugin Development"
+    description="Learn how to create custom plugins"
+    href="/docs/plugins/development"
+  />
+</Cards>
+
+## Next Steps
+
+- [JWT Authentication](/docs/plugins/jwt-auth)
+- [Plugin Development](/docs/plugins/development)
+- [Plugin API Reference](/docs/api/plugins)

@@ -1,0 +1,37 @@
+[package]
+name = "example-auth"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Example JWT authentication plugin for Octopus API Gateway"
+
+[dependencies]
+# Plugin API
+octopus-plugin-api = { path = "../../crates/octopus-plugin-api" }
+
+# Async
+async-trait.workspace = true
+tokio.workspace = true
+
+# HTTP
+http.workspace = true
+http-body-util.workspace = true
+bytes.workspace = true
+
+# Serialization
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+# JWT
+jsonwebtoken = "9.3"
+base64 = "0.22"
+
+# Logging
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }
+

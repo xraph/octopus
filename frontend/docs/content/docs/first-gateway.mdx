@@ -1,0 +1,633 @@
+---
+title: Build Your First Gateway
+description: Complete walkthrough to build a production-ready API gateway with Octopus
+---
+
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+import { Tabs } from 'fumadocs-ui/components/tabs';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Build Your First Gateway
+
+In this guide, you'll build a production-ready API gateway that routes traffic to multiple microservices with authentication, rate limiting, and observability.
+
+## What You'll Build
+
+By the end of this guide, you'll have a gateway that:
+
+- ✅ Routes to multiple backend services
+- ✅ Authenticates requests with JWT
+- ✅ Rate limits API calls
+- ✅ Compresses responses
+- ✅ Provides health checks
+- ✅ Exports Prometheus metrics
+- ✅ Handles errors gracefully
+
+## Project Setup
+
+<Steps>
+
+<Step>
+### Create Project Directory
+
+```bash
+mkdir my-gateway
+cd my-gateway
+```
+</Step>
+
+<Step>
+### Create Configuration File
+
+Create `config.yaml`:
+
+```yaml
+server:
+  http_port: 8080
+  admin_port: 9090
+  workers: auto
+
+discovery:
+  backend: static
+
+observability:
+  logging:
+    level: info
+    format: json
+  metrics:
+    enabled: true
+```
+</Step>
+
+</Steps>
+
+## Define Upstreams
+
+Let's define three backend services: users, orders, and products.
+
+```yaml
+upstreams:
+  - name: user-service
+    instances:
+      - address: localhost
+        port: 8081
+        weight: 100
+    health_check:
+      type: http
+      path: /health
+      interval: 10s
+      timeout: 5s
+      healthy_threshold: 2
+      unhealthy_threshold: 3
+    load_balance: round-robin
+    
+  - name: order-service
+    instances:
+      - address: localhost
+        port: 8082
+      - address: localhost
+        port: 8083  # Multiple instances for load balancing
+    health_check:
+      type: http
+      path: /health
+      interval: 10s
+    load_balance: least-connections
+    
+  - name: product-service
+    instances:
+      - address: localhost
+        port: 8084
+    health_check:
+      type: http
+      path: /health
+      interval: 10s
+    load_balance: round-robin
+```
+
+<Callout title="Health Checks">
+  Health checks automatically remove unhealthy instances from the load balancer and add them back when they recover.
+</Callout>
+
+## Configure Routes
+
+Define routes that map paths to upstreams:
+
+```yaml
+routes:
+  # User service routes
+  - path: /api/users/*
+    upstream: user-service
+    methods: [GET, POST, PUT, DELETE]
+    timeout: 30s
+    retries: 3
+    
+  - path: /api/auth/*
+    upstream: user-service
+    methods: [POST]
+    timeout: 10s
+    strip_path: false  # Keep full path
+    
+  # Order service routes
+  - path: /api/orders/*
+    upstream: order-service
+    methods: [GET, POST, PUT, DELETE]
+    timeout: 30s
+    circuit_breaker:
+      enabled: true
+      failure_threshold: 5
+      timeout: 60s
+      half_open_requests: 3
+    
+  # Product service routes
+  - path: /api/products/*
+    upstream: product-service
+    methods: [GET, POST, PUT, DELETE]
+    timeout: 30s
+    
+  # Health endpoint (no upstream, handled by gateway)
+  - path: /_/health
+    internal: true
+```
+
+## Add Middleware
+
+Configure middleware to process requests:
+
+```yaml
+middleware:
+  - cors
+  - compression
+  - rate_limit
+  - auth
+
+# CORS configuration
+cors:
+  enabled: true
+  allowed_origins:
+    - "https://example.com"
+    - "http://localhost:3000"
+  allowed_methods: [GET, POST, PUT, DELETE, OPTIONS]
+  allowed_headers:
+    - "Content-Type"
+    - "Authorization"
+  exposed_headers:
+    - "X-Request-ID"
+  allow_credentials: true
+  max_age: 3600
+
+# Compression configuration
+compression:
+  enabled: true
+  level: 6  # Balance between compression and speed
+  min_size: 1024  # Only compress responses > 1KB
+  types:
+    - "application/json"
+    - "text/html"
+    - "text/css"
+    - "text/javascript"
+
+# Rate limiting configuration
+rate_limit:
+  enabled: true
+  strategy: token-bucket
+  requests_per_second: 100
+  burst: 200
+  key_by: ip  # Can also be: header, user_id, api_key
+  
+# Authentication configuration
+auth:
+  enabled: true
+  type: jwt
+  secret: ${JWT_SECRET}
+  algorithm: HS256
+  header: Authorization
+  scheme: Bearer
+  excluded_paths:
+    - "/api/auth/login"
+    - "/api/auth/register"
+    - "/_/health"
+```
+
+## Add Circuit Breaker
+
+Protect your services with circuit breakers:
+
+```yaml
+circuit_breaker:
+  enabled: true
+  failure_threshold: 5      # Open after 5 failures
+  timeout: 60s              # Stay open for 60s
+  half_open_requests: 3     # Allow 3 requests in half-open state
+  success_threshold: 2      # Close after 2 successes in half-open
+```
+
+## Configure Observability
+
+### Metrics
+
+```yaml
+observability:
+  metrics:
+    enabled: true
+    path: /metrics
+    port: 9090
+    include_default: true
+    custom_metrics:
+      - name: gateway_custom_metric
+        type: counter
+        help: Custom metric example
+```
+
+### Tracing
+
+```yaml
+observability:
+  tracing:
+    enabled: true
+    exporter: otlp
+    endpoint: http://jaeger:4317
+    sample_rate: 0.1  # Sample 10% of requests
+    include_headers: true
+```
+
+### Logging
+
+```yaml
+observability:
+  logging:
+    level: info
+    format: json
+    include_request_id: true
+    include_timestamp: true
+    fields:
+      - method
+      - path
+      - status
+      - duration
+      - upstream
+      - error
+```
+
+## Add Admin Configuration
+
+Configure the admin dashboard:
+
+```yaml
+admin:
+  enabled: true
+  address: 0.0.0.0:9090
+  auth:
+    enabled: true
+    type: basic
+    username: admin
+    password_hash: $2b$12$...  # bcrypt hash
+  endpoints:
+    - path: /_/health
+      public: true
+    - path: /_/metrics
+      public: true
+    - path: /_/services
+      auth_required: true
+    - path: /_/routes
+      auth_required: true
+    - path: /_/config
+      auth_required: true
+```
+
+## Complete Configuration
+
+Here's the complete `config.yaml`:
+
+```yaml
+server:
+  http_port: 8080
+  admin_port: 9090
+  workers: auto
+  read_timeout: 60s
+  write_timeout: 60s
+  idle_timeout: 120s
+
+discovery:
+  backend: static
+
+upstreams:
+  - name: user-service
+    instances:
+      - address: localhost
+        port: 8081
+    health_check:
+      type: http
+      path: /health
+      interval: 10s
+    load_balance: round-robin
+    
+  - name: order-service
+    instances:
+      - address: localhost
+        port: 8082
+      - address: localhost
+        port: 8083
+    health_check:
+      type: http
+      path: /health
+      interval: 10s
+    load_balance: least-connections
+    
+  - name: product-service
+    instances:
+      - address: localhost
+        port: 8084
+    health_check:
+      type: http
+      path: /health
+      interval: 10s
+    load_balance: round-robin
+
+routes:
+  - path: /api/users/*
+    upstream: user-service
+    methods: [GET, POST, PUT, DELETE]
+    timeout: 30s
+    retries: 3
+    
+  - path: /api/auth/*
+    upstream: user-service
+    methods: [POST]
+    timeout: 10s
+    
+  - path: /api/orders/*
+    upstream: order-service
+    methods: [GET, POST, PUT, DELETE]
+    timeout: 30s
+    circuit_breaker:
+      enabled: true
+      failure_threshold: 5
+      timeout: 60s
+    
+  - path: /api/products/*
+    upstream: product-service
+    methods: [GET, POST, PUT, DELETE]
+    timeout: 30s
+
+middleware:
+  - cors
+  - compression
+  - rate_limit
+  - auth
+
+cors:
+  allowed_origins: ["*"]
+  allowed_methods: [GET, POST, PUT, DELETE, OPTIONS]
+  allowed_headers: ["*"]
+  allow_credentials: true
+
+compression:
+  enabled: true
+  level: 6
+  min_size: 1024
+
+rate_limit:
+  requests_per_second: 100
+  burst: 200
+  key_by: ip
+
+auth:
+  type: jwt
+  secret: ${JWT_SECRET}
+  algorithm: HS256
+  excluded_paths:
+    - "/api/auth/login"
+    - "/api/auth/register"
+    - "/_/health"
+
+circuit_breaker:
+  enabled: true
+  failure_threshold: 5
+  timeout: 60s
+
+observability:
+  metrics:
+    enabled: true
+    path: /metrics
+  tracing:
+    enabled: true
+    exporter: otlp
+    endpoint: http://jaeger:4317
+  logging:
+    level: info
+    format: json
+
+admin:
+  enabled: true
+  address: 0.0.0.0:9090
+  auth:
+    type: basic
+    username: admin
+    password_hash: $2b$12$...
+```
+
+## Running the Gateway
+
+<Steps>
+
+<Step>
+### Set Environment Variables
+
+```bash
+export JWT_SECRET=your-super-secret-key-change-this
+```
+</Step>
+
+<Step>
+### Start Backend Services
+
+For this example, we'll use mock services:
+
+```bash
+# Terminal 1: User service
+python3 -m http.server 8081
+
+# Terminal 2: Order service (instance 1)
+python3 -m http.server 8082
+
+# Terminal 3: Order service (instance 2)
+python3 -m http.server 8083
+
+# Terminal 4: Product service
+python3 -m http.server 8084
+```
+</Step>
+
+<Step>
+### Start Octopus
+
+```bash
+octopus --config config.yaml
+```
+</Step>
+
+<Step>
+### Test the Gateway
+
+```bash
+# Check health
+curl http://localhost:9090/_/health
+
+# Test routing
+curl http://localhost:8080/api/users/123
+
+# Test with auth (requires JWT token)
+export TOKEN="eyJhbGciOi..."
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8080/api/orders/456
+
+# Check metrics
+curl http://localhost:9090/metrics
+```
+</Step>
+
+</Steps>
+
+## Testing
+
+### Health Checks
+
+```bash
+# Gateway health
+curl http://localhost:9090/_/health
+
+# Expected response
+{
+  "status": "healthy",
+  "upstreams": {
+    "user-service": "healthy",
+    "order-service": "healthy",
+    "product-service": "healthy"
+  }
+}
+```
+
+### Rate Limiting
+
+```bash
+# Make requests until rate limited
+for i in {1..150}; do
+  curl http://localhost:8080/api/products
+done
+
+# Should return 429 Too Many Requests after 100 requests
+```
+
+### Circuit Breaker
+
+```bash
+# Stop order service to trigger circuit breaker
+# Make requests
+for i in {1..10}; do
+  curl http://localhost:8080/api/orders
+done
+
+# Circuit should open after 5 failures
+# Returns 503 Service Unavailable
+```
+
+### Load Balancing
+
+```bash
+# Make multiple requests to see load balancing
+for i in {1..10}; do
+  curl http://localhost:8080/api/orders
+done
+
+# Check logs to see requests distributed across instances
+```
+
+## Monitoring
+
+### Prometheus Metrics
+
+Key metrics to monitor:
+
+```bash
+# Request count
+octopus_requests_total{method="GET",status="200",route="/api/users/*"}
+
+# Request duration
+octopus_request_duration_seconds{method="GET",route="/api/users/*"}
+
+# Upstream health
+octopus_upstream_health{upstream="user-service"}
+
+# Circuit breaker state
+octopus_circuit_breaker_state{upstream="order-service"}
+
+# Rate limit hits
+octopus_rate_limit_hits_total
+```
+
+### Grafana Dashboard
+
+Import the Octopus dashboard:
+
+```bash
+# Download dashboard JSON
+curl -O https://grafana.com/dashboards/octopus-gateway.json
+
+# Import to Grafana
+```
+
+## Production Checklist
+
+Before deploying to production:
+
+- [ ] Enable TLS/HTTPS
+- [ ] Use strong JWT secret
+- [ ] Configure proper CORS origins
+- [ ] Set up Prometheus/Grafana monitoring
+- [ ] Enable distributed tracing
+- [ ] Configure log aggregation
+- [ ] Set resource limits
+- [ ] Enable circuit breakers
+- [ ] Test failover scenarios
+- [ ] Document API endpoints
+- [ ] Set up alerting
+- [ ] Create backup configuration
+
+## Next Steps
+
+- [Configuration Reference](/docs/configuration) - Detailed configuration options
+- [Middleware Guide](/docs/middleware) - Learn about all middleware
+- [Plugin System](/docs/plugins) - Extend with custom plugins
+- [FARP Protocol](/docs/concepts/farp) - Auto-discover services
+- [Kubernetes Deployment](/docs/deployment/kubernetes) - Deploy to K8s
+- [Performance Tuning](/docs/guides/performance) - Optimize for production
+
+## Common Issues
+
+<Callout type="error" title="Troubleshooting">
+
+**Upstream connection refused**
+- Check upstream service is running
+- Verify port numbers in configuration
+- Check firewall rules
+
+**JWT authentication failing**
+- Verify `JWT_SECRET` environment variable is set
+- Check token format (should be `Bearer <your_jwt_token>`)
+- Ensure the token has not expired
+
+**High latency**
+- Increase worker threads in gateway configuration
+- Enable connection pooling
+- Add caching middleware
+- Check upstream response times
+
+**Rate limiting too strict**
+- Increase requests_per_second
+- Adjust burst size
+- Consider per-user rate limiting instead of per-IP
+
+</Callout>
+
+For more help, see the [Troubleshooting Guide](/docs/guides/troubleshooting).
+

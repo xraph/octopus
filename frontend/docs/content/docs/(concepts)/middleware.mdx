@@ -1,0 +1,168 @@
+---
+title: Middleware
+description: Process requests and responses with middleware
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Middleware
+
+Middleware processes requests before they reach upstreams and responses before they return to clients.
+
+## Overview
+
+Middleware in Octopus forms an ordered pipeline that executes for each request:
+
+```
+Request → M1 → M2 → M3 → Upstream → M3 → M2 → M1 → Response
+```
+
+## How Middleware Works
+
+### Execution Order
+
+```yaml
+middleware:
+  - auth          # 1. Authenticate first
+  - rate_limit    # 2. Then rate limit
+  - cors          # 3. Then CORS
+  - compression   # 4. Finally compress
+```
+
+### Short-Circuiting
+
+Middleware can stop the pipeline early:
+
+```
+Request → Auth (401) ──┐
+                        ↓
+                      Response
+```
+
+## Built-in Middleware
+
+### Authentication
+
+```yaml
+middleware:
+  - auth
+
+auth:
+  type: jwt
+  secret: ${JWT_SECRET}
+  algorithm: HS256
+  header: Authorization
+  scheme: Bearer
+  excluded_paths:
+    - "/api/auth/login"
+    - "/_/health"
+```
+
+See [Authentication Middleware](/docs/middleware/authentication) for details.
+
+### Rate Limiting
+
+```yaml
+middleware:
+  - rate_limit
+
+rate_limit:
+  strategy: token-bucket
+  requests_per_second: 100
+  burst: 200
+  key_by: ip  # or: user_id, api_key, header
+```
+
+See [Rate Limiting Middleware](/docs/middleware/rate-limiting) for details.
+
+### CORS
+
+```yaml
+middleware:
+  - cors
+
+cors:
+  allowed_origins: ["https://example.com"]
+  allowed_methods: [GET, POST, PUT, DELETE]
+  allowed_headers: ["Content-Type", "Authorization"]
+  exposed_headers: ["X-Request-ID"]
+  allow_credentials: true
+  max_age: 3600
+```
+
+See [CORS Middleware](/docs/middleware/cors) for details.
+
+### Compression
+
+```yaml
+middleware:
+  - compression
+
+compression:
+  enabled: true
+  level: 6
+  min_size: 1024
+  types:
+    - "application/json"
+    - "text/html"
+```
+
+See [Compression Middleware](/docs/middleware/compression) for details.
+
+## Custom Middleware
+
+Create custom middleware via plugins:
+
+```rust
+use octopus_middleware::prelude::*;
+
+pub struct CustomMiddleware;
+
+#[async_trait]
+impl Middleware for CustomMiddleware {
+    async fn call(
+        &self,
+        mut req: Request<Body>,
+        next: Next,
+    ) -> Result<Response<Body>> {
+        // Modify request
+        req.headers_mut()
+            .insert("X-Custom-Header", "value".parse()?);
+        
+        // Continue to next middleware
+        let mut resp = next.run(req).await?;
+        
+        // Modify response
+        resp.headers_mut()
+            .insert("X-Processed-By", "octopus".parse()?);
+        
+        Ok(resp)
+    }
+}
+```
+
+See [Plugin Development](/docs/plugins/development) for details.
+
+## Request Context
+
+Middleware can access and modify request context:
+
+```rust
+// Set context value
+req.extensions_mut().insert(UserId("123".to_string()));
+
+// Read context value
+let user_id = req.extensions().get::<UserId>();
+```
+
+## Next Steps
+
+Learn about specific middleware:
+
+- [Authentication](/docs/middleware/authentication)
+- [Rate Limiting](/docs/middleware/rate-limiting)
+- [CORS](/docs/middleware/cors)
+- [Compression](/docs/middleware/compression)
+- [Request Transformation](/docs/middleware/transformation)
+- [Caching](/docs/middleware/caching)
+

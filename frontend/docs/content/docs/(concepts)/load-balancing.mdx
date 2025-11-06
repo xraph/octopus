@@ -1,0 +1,127 @@
+---
+title: Load Balancing
+description: Distribute traffic across backend instances
+---
+
+# Load Balancing
+
+Octopus distributes traffic across multiple backend instances using various strategies.
+
+## Strategies
+
+### Round Robin
+
+Distributes requests evenly across instances:
+
+```yaml
+upstreams:
+  - name: api-service
+    instances:
+      - address: api-1
+        port: 8080
+      - address: api-2
+        port: 8080
+      - address: api-3
+        port: 8080
+    load_balance: round-robin
+```
+
+**Best for**: Homogeneous backends with similar capacity
+
+### Least Connections
+
+Routes to instance with fewest active connections:
+
+```yaml
+upstreams:
+  - name: api-service
+    instances:
+      - address: api-1
+        port: 8080
+      - address: api-2
+        port: 8080
+    load_balance: least-connections
+```
+
+**Best for**: Long-lived connections, varying request duration
+
+### Weighted Round Robin
+
+Distributes based on instance weights:
+
+```yaml
+upstreams:
+  - name: api-service
+    instances:
+      - address: api-1
+        port: 8080
+        weight: 100  # Gets 2x traffic
+      - address: api-2
+        port: 8080
+        weight: 50   # Gets 1x traffic
+    load_balance: weighted-round-robin
+```
+
+**Best for**: Heterogeneous backends with different capacity
+
+### IP Hash
+
+Routes same client IP to same instance (sticky sessions):
+
+```yaml
+upstreams:
+  - name: api-service
+    instances:
+      - address: api-1
+        port: 8080
+      - address: api-2
+        port: 8080
+    load_balance: ip-hash
+```
+
+**Best for**: Stateful applications, session affinity
+
+### Consistent Hashing
+
+Uses consistent hashing for distribution:
+
+```yaml
+upstreams:
+  - name: cache-service
+    instances:
+      - address: cache-1
+        port: 11211
+      - address: cache-2
+        port: 11211
+    load_balance: consistent-hash
+    hash_key: uri  # Can be: uri, header, cookie
+```
+
+**Best for**: Distributed caches, sharding
+
+## Health-Aware Load Balancing
+
+Only healthy instances receive traffic:
+
+```yaml
+upstreams:
+  - name: api-service
+    instances:
+      - address: api-1
+        port: 8080
+      - address: api-2
+        port: 8080
+    health_check:
+      type: http
+      path: /health
+      interval: 10s
+    load_balance: round-robin
+```
+
+Unhealthy instances are automatically removed from rotation.
+
+## See Also
+
+- [Health Checks](/docs/concepts/health-checks)
+- [Configuration](/docs/configuration/upstreams)
+

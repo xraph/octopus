@@ -1,0 +1,13 @@
+[general]
+# Template directory
+dirs = ["templates"]
+
+# Default syntax
+syntax = "default"
+
+# Escape mode (for HTML)
+escape = "html"
+
+[filters]
+json = "crate::filters::json"
+

@@ -1,0 +1,13 @@
+{
+  "title": "Plugins",
+  "icon": "Package",
+  "defaultOpen": false,
+  "pages": [
+    "index",
+    "jwt-auth",
+    "redis-cache",
+    "rate-limiter",
+    "kafka-producer",
+    "development"
+  ]
+}

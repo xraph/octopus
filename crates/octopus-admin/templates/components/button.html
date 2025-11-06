@@ -1,0 +1,33 @@
+<!-- shadcn Button Components -->
+{% macro button(text, variant="default", size="default", class="") %}
+{% set base = "button" %}
+{% set variant_class = "" %}
+{% set size_class = "" %}
+
+{% if variant == "primary" or variant == "default" %}
+    {% set variant_class = "button-primary" %}
+{% else if variant == "secondary" %}
+    {% set variant_class = "button-secondary" %}
+{% else if variant == "ghost" %}
+    {% set variant_class = "button-ghost" %}
+{% else if variant == "destructive" %}
+    {% set variant_class = "bg-destructive text-destructive-foreground hover:bg-destructive/90" %}
+{% else if variant == "outline" %}
+    {% set variant_class = "border border-input bg-background hover:bg-accent hover:text-accent-foreground" %}
+{% endif %}
+
+{% if size == "sm" %}
+    {% set size_class = "h-9 px-3" %}
+{% else if size == "lg" %}
+    {% set size_class = "h-11 px-8" %}
+{% else if size == "icon" %}
+    {% set size_class = "h-10 w-10" %}
+{% else %}
+    {% set size_class = "h-10 px-4 py-2" %}
+{% endif %}
+
+<button class="{{ base }} {{ variant_class }} {{ size_class }} {{ class }}">
+    {{ caller() if caller else text }}
+</button>
+{% endmacro %}
+

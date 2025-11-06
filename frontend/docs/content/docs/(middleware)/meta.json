@@ -1,0 +1,15 @@
+{
+  "title": "Middleware",
+  "icon": "Layers",
+  "defaultOpen": false,
+  "pages": [
+    "middleware-index",
+    "middleware-authentication",
+    "middleware-rate-limiting",
+    "middleware-cors",
+    "middleware-compression",
+    "middleware-transformation",
+    "middleware-caching"
+  ]
+}
+

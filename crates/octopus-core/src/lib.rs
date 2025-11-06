@@ -24,7 +24,7 @@ pub mod types;
 pub mod upstream;
 
 pub use error::{Error, Result};
-pub use middleware::{Middleware, Next};
+pub use middleware::{Middleware, Next, Body};
 pub use request::RequestContext;
 pub use response::ResponseBuilder;
 pub use types::*;

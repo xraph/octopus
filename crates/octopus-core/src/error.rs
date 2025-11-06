@@ -1,6 +1,5 @@
 //! Error types for Octopus Gateway
 
-use std::fmt;
 
 /// Result type alias using [`Error`]
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -76,6 +75,10 @@ pub enum Error {
     /// Discovery backend error
     #[error("Discovery backend error: {0}")]
     Discovery(String),
+
+    /// Runtime error
+    #[error("Runtime error: {0}")]
+    Runtime(String),
 
     /// Serialization error
     #[error("Serialization error: {0}")]

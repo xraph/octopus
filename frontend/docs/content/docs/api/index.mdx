@@ -1,0 +1,84 @@
+---
+title: API Reference
+description: API reference for Octopus API Gateway
+---
+
+import { Card, Cards } from 'fumadocs-ui/components/card';
+
+# API Reference
+
+Complete API reference for Octopus.
+
+<Cards>
+  <Card
+    title="Admin API"
+    description="Admin and management API endpoints"
+    href="/docs/api/admin-api"
+  />
+  <Card
+    title="Plugin API"
+    description="API for developing plugins"
+    href="/docs/api/plugin-api"
+  />
+  <Card
+    title="Error Codes"
+    description="Error codes and handling"
+    href="/docs/api/errors"
+  />
+</Cards>
+
+## Admin API Endpoints
+
+### Health
+
+```bash
+GET /_/health
+```
+
+Returns gateway health status.
+
+### Metrics
+
+```bash
+GET /metrics
+```
+
+Returns Prometheus metrics.
+
+### Services
+
+```bash
+GET /_/services
+```
+
+Lists discovered services.
+
+### Routes
+
+```bash
+GET /_/routes
+```
+
+Lists active routes.
+
+### Configuration
+
+```bash
+GET /_/config
+```
+
+Returns current configuration.
+
+### Reload
+
+```bash
+POST /_/reload
+```
+
+Reloads configuration.
+
+## Next Steps
+
+- [Admin API](/docs/api/admin-api) - Complete admin API reference
+- [Plugin API](/docs/api/plugin-api) - Plugin development API
+- [Error Codes](/docs/api/errors) - Error handling

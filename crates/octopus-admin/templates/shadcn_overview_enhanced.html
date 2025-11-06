@@ -1,0 +1,405 @@
+{% extends "shadcn_base.html" %}
+
+{% block title %}Dashboard - Octopus Admin{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+
+{% block content %}
+<div x-data="dashboard()" x-init="init()">
+    <!-- Header with Quick Actions -->
+    <div class="flex items-center justify-between space-y-2 mb-8">
+        <div>
+            <h2 class="text-3xl font-bold tracking-tight">Dashboard</h2>
+            <p class="text-muted-foreground">
+                Overview of your API Gateway performance and health
+            </p>
+        </div>
+        <div class="flex items-center space-x-2">
+            <button @click="refresh()" class="button button-ghost h-10 px-4 py-2">
+                <svg class="mr-2 h-4 w-4" :class="{ 'animate-spin': loading }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                </svg>
+                Refresh
+            </button>
+            <button @click="exportData()" class="button button-primary h-10 px-4 py-2">
+                <svg class="mr-2 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                </svg>
+                Export
+            </button>
+        </div>
+    </div>
+
+    <!-- Metrics Cards with Real-time Updates -->
+    <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4 mb-8">
+        <!-- Total Requests -->
+        <div class="card">
+            <div class="p-6">
+                <div class="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <h3 class="text-sm font-medium text-muted-foreground">Total Requests</h3>
+                    <svg class="h-4 w-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path>
+                    </svg>
+                </div>
+                <div class="space-y-1">
+                    <div class="text-2xl font-bold" x-text="stats.total_requests.toLocaleString()">{{ total_requests }}</div>
+                    <p class="text-xs text-muted-foreground">
+                        <span class="text-green-600">+<span x-text="requestGrowth"></span>%</span>
+                        <span class="ml-1">from last hour</span>
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Active Routes -->
+        <div class="card">
+            <div class="p-6">
+                <div class="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <h3 class="text-sm font-medium text-muted-foreground">Active Routes</h3>
+                    <svg class="h-4 w-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 6.75V15m6-6v8.25m.503 3.498l4.875-2.437c.381-.19.622-.58.622-1.006V4.82c0-.836-.88-1.38-1.628-1.006l-3.869 1.934c-.317.159-.69.159-1.006 0L9.503 3.252a1.125 1.125 0 00-1.006 0L3.622 5.689C3.24 5.88 3 6.27 3 6.695V19.18c0 .836.88 1.38 1.628 1.006l3.869-1.934c.317-.159.69-.159 1.006 0l4.994 2.497c.317.158.69.158 1.006 0z"></path>
+                    </svg>
+                </div>
+                <div class="space-y-1">
+                    <div class="text-2xl font-bold" x-text="stats.active_routes">{{ active_routes }}</div>
+                    <p class="text-xs text-muted-foreground">
+                        <span class="text-green-600">+<span x-text="routeGrowth"></span></span>
+                        <span class="ml-1">since last week</span>
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Avg Latency -->
+        <div class="card">
+            <div class="p-6">
+                <div class="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <h3 class="text-sm font-medium text-muted-foreground">Avg Latency</h3>
+                    <svg class="h-4 w-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                </div>
+                <div class="space-y-1">
+                    <div class="text-2xl font-bold" x-text="stats.avg_latency_ms.toFixed(1) + 'ms'">{{ avg_latency_ms }}ms</div>
+                    <p class="text-xs text-muted-foreground">
+                        <span :class="latencyChange >= 0 ? 'text-red-600' : 'text-green-600'">
+                            <span x-text="latencyChange >= 0 ? '+' : ''"></span><span x-text="latencyChange.toFixed(1)"></span>ms
+                        </span>
+                        <span class="ml-1">change</span>
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Health Status -->
+        <div class="card">
+            <div class="p-6">
+                <div class="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <h3 class="text-sm font-medium text-muted-foreground">System Status</h3>
+                    <svg class="h-4 w-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                </div>
+                <div class="space-y-1">
+                    <div class="text-2xl font-bold">
+                        <span :class="stats.health_status === 'healthy' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'" 
+                              x-text="stats.health_status === 'healthy' ? 'Healthy' : 'Degraded'"></span>
+                    </div>
+                    <p class="text-xs text-muted-foreground">
+                        <span class="text-green-600 dark:text-green-400">All systems operational</span>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content Grid -->
+    <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-7 mt-4">
+        <!-- Request Volume Chart -->
+        <div class="col-span-4">
+            <div class="card">
+                <div class="flex flex-col space-y-1.5 p-6">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h3 class="text-2xl font-semibold leading-none tracking-tight">Request Volume</h3>
+                            <p class="text-sm text-muted-foreground">Requests per hour for the last 24 hours</p>
+                        </div>
+                        <select x-model="chartTimeRange" @change="updateChart()" class="input text-sm w-32">
+                            <option value="24h">Last 24h</option>
+                            <option value="7d">Last 7d</option>
+                            <option value="30d">Last 30d</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="p-6 pt-0">
+                    <div class="relative h-[300px]">
+                        <canvas id="requestChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Routes -->
+        <div class="col-span-3">
+            <div class="card">
+                <div class="flex flex-col space-y-1.5 p-6">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h3 class="text-2xl font-semibold leading-none tracking-tight">Recent Routes</h3>
+                            <p class="text-sm text-muted-foreground">Latest configured routes</p>
+                        </div>
+                        <a href="/admin/routes" class="text-sm text-primary hover:underline">View all</a>
+                    </div>
+                </div>
+                <div class="p-6 pt-0">
+                    <div class="space-y-4" id="recentRoutesList">
+                        <!-- Routes will be loaded via HTMX -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Plugin Metrics -->
+    {% if plugin_cards.len() > 0 %}
+    <div class="mt-4">
+        <h3 class="text-lg font-semibold mb-4">Plugin Metrics</h3>
+        <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            {% for card in plugin_cards %}
+            <div class="card">
+                <div class="p-6">
+                    <div class="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <h3 class="text-sm font-medium text-muted-foreground">{{ card.title }}</h3>
+                    </div>
+                    <div class="space-y-1">
+                        <div class="text-2xl font-bold">{{ card.value }}</div>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Upstream Services Status -->
+    <div class="mt-4">
+        <div class="card">
+            <div class="flex flex-col space-y-1.5 p-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h3 class="text-2xl font-semibold leading-none tracking-tight">Upstream Services</h3>
+                        <p class="text-sm text-muted-foreground">Health status of backend services</p>
+                    </div>
+                    <button @click="refresh()" class="button button-ghost h-9 px-3">
+                        <svg class="h-4 w-4" :class="{ 'animate-spin': loading }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            <div class="p-6 pt-0">
+                <div class="space-y-4" id="upstreamServicesList" hx-get="/admin/api/health" hx-trigger="load, every 10s" hx-swap="innerHTML">
+                    <!-- Health checks loaded via HTMX -->
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function dashboard() {
+    return {
+        stats: {
+            total_requests: {{ total_requests }},
+            active_routes: {{ active_routes }},
+            avg_latency_ms: {{ avg_latency_ms }},
+            health_status: '{{ health_status }}'
+        },
+        previousStats: {},
+        requestChart: null,
+        loading: false,
+        chartTimeRange: '24h',
+        requestGrowth: 12.5,
+        routeGrowth: 4,
+        latencyChange: -2.5,
+
+        init() {
+            this.previousStats = {...this.stats};
+            this.loadStats();
+            // Delay chart initialization to ensure DOM is ready
+            setTimeout(() => {
+                this.initChart();
+            }, 100);
+            // Auto-refresh every 5 seconds
+            setInterval(() => this.loadStats(), 5000);
+        },
+
+        loadStats() {
+            this.loading = true;
+            fetch('/admin/api/stats')
+                .then(res => {
+                    if (!res.ok) {
+                        throw new Error(`HTTP error! status: ${res.status}`);
+                    }
+                    return res.json();
+                })
+                .then(data => {
+                    this.previousStats = {...this.stats};
+                    this.stats = data;
+                    this.calculateChanges();
+                    this.loading = false;
+                    // Update chart separately with error handling
+                    try {
+                        this.updateChart();
+                    } catch (err) {
+                        console.error('Failed to update chart after loading stats:', err);
+                    }
+                })
+                .catch(err => {
+                    console.error('Failed to load stats:', err);
+                    this.loading = false;
+                });
+        },
+
+        calculateChanges() {
+            if (this.previousStats.total_requests) {
+                this.requestGrowth = ((this.stats.total_requests - this.previousStats.total_requests) / this.previousStats.total_requests * 100).toFixed(1);
+            }
+            if (this.previousStats.avg_latency_ms) {
+                this.latencyChange = this.stats.avg_latency_ms - this.previousStats.avg_latency_ms;
+            }
+        },
+
+        initChart() {
+            const canvas = document.getElementById('requestChart');
+            if (!canvas) {
+                console.warn('Chart canvas not found');
+                return;
+            }
+            
+            // Get the parent container and set explicit dimensions
+            const container = canvas.parentElement;
+            if (container) {
+                canvas.width = container.clientWidth;
+                canvas.height = container.clientHeight;
+            }
+            
+            try {
+                const ctx = canvas.getContext('2d');
+                this.requestChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: this.generateLabels(24),
+                        datasets: [{
+                            label: 'Requests',
+                            data: this.generateSampleData(24),
+                            borderColor: 'rgb(59, 130, 246)',
+                            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                            tension: 0.4,
+                            fill: true
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: {
+                            intersect: false,
+                            mode: 'index'
+                        },
+                        plugins: {
+                            legend: {
+                                display: false
+                            },
+                            tooltip: {
+                                backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                                padding: 12,
+                                displayColors: false
+                            }
+                        },
+                        scales: {
+                            x: {
+                                grid: {
+                                    display: false
+                                }
+                            },
+                            y: {
+                                beginAtZero: true,
+                                grid: {
+                                    color: 'rgba(0, 0, 0, 0.05)'
+                                },
+                                ticks: {
+                                    callback: function(value) {
+                                        return value.toLocaleString();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            } catch (err) {
+                console.error('Failed to initialize chart:', err);
+            }
+        },
+
+        updateChart() {
+            if (!this.requestChart) {
+                console.warn('Chart not initialized');
+                return;
+            }
+            try {
+                const points = this.chartTimeRange === '24h' ? 24 : this.chartTimeRange === '7d' ? 7 : 30;
+                this.requestChart.data.labels = this.generateLabels(points);
+                this.requestChart.data.datasets[0].data = this.generateSampleData(points);
+                this.requestChart.update('none'); // Skip animation for smoother updates
+            } catch (err) {
+                console.error('Failed to update chart:', err);
+            }
+        },
+
+        generateLabels(count) {
+            const labels = [];
+            const now = new Date();
+            for (let i = count - 1; i >= 0; i--) {
+                const date = new Date(now);
+                if (this.chartTimeRange === '24h') {
+                    date.setHours(date.getHours() - i);
+                    labels.push(date.getHours() + ':00');
+                } else if (this.chartTimeRange === '7d') {
+                    date.setDate(date.getDate() - i);
+                    labels.push(date.toLocaleDateString('en-US', { weekday: 'short' }));
+                } else {
+                    date.setDate(date.getDate() - i);
+                    labels.push(date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+                }
+            }
+            return labels;
+        },
+
+        generateSampleData(count) {
+            return Array.from({length: count}, () => Math.floor(Math.random() * 1000) + 500);
+        },
+
+        refresh() {
+            this.loadStats();
+            if (typeof htmx !== 'undefined') {
+                htmx.trigger('#upstreamServicesList', 'refresh');
+            }
+        },
+
+        exportData() {
+            const data = {
+                stats: this.stats,
+                timestamp: new Date().toISOString()
+            };
+            const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `octopus-dashboard-${new Date().toISOString()}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+    }
+}
+</script>
+{% endblock %}
+

@@ -1,0 +1,92 @@
+---
+title: Circuit Breaker
+description: Protect services from cascading failures
+---
+
+# Circuit Breaker
+
+Circuit breakers prevent cascading failures by stopping requests to failing upstreams.
+
+## How It Works
+
+```
+Closed → Failures → Open → Timeout → Half-Open → Success → Closed
+                     ↑                              ↓
+                     └──────── Failures ───────────┘
+```
+
+### States
+
+1. **Closed**: Normal operation, requests pass through
+2. **Open**: Failures exceeded threshold, requests fail fast
+3. **Half-Open**: Testing if service recovered
+
+## Configuration
+
+```yaml
+routes:
+  - path: /api/orders
+    upstream: order-service
+    circuit_breaker:
+      enabled: true
+      failure_threshold: 5      # Open after 5 failures
+      timeout: 60s              # Stay open for 60s
+      half_open_requests: 3     # Allow 3 requests in half-open
+      success_threshold: 2      # Close after 2 successes
+```
+
+## Failure Criteria
+
+```yaml
+circuit_breaker:
+  enabled: true
+  failure_threshold: 5
+  failure_criteria:
+    - status: 500  # Internal Server Error
+    - status: 502  # Bad Gateway
+    - status: 503  # Service Unavailable
+    - status: 504  # Gateway Timeout
+    - timeout: true
+    - connection_error: true
+```
+
+## Monitoring
+
+```bash
+# View circuit breaker states
+curl http://gateway:9090/_/circuit-breakers
+
+# Prometheus metrics
+octopus_circuit_breaker_state{upstream="order-service"}
+octopus_circuit_breaker_failures_total{upstream="order-service"}
+```
+
+## Example
+
+```yaml
+upstreams:
+  - name: payment-service
+    instances:
+      - address: payment-1
+        port: 8080
+    circuit_breaker:
+      enabled: true
+      failure_threshold: 3
+      timeout: 30s
+
+routes:
+  - path: /api/payments/*
+    upstream: payment-service
+```
+
+When payment-service fails 3 times:
+- Circuit opens
+- Requests return 503 immediately
+- After 30s, circuit enters half-open
+- If requests succeed, circuit closes
+
+## See Also
+
+- [Health Checks](/docs/concepts/health-checks)
+- [Retries](/docs/configuration/retries)
+

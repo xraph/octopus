@@ -68,4 +68,19 @@ config.json
 .DS_Store
 Thumbs.db
 
+!README.md
+!LICENSE
+!CODE_OF_CONDUCT.md
+!CONTRIBUTING.md
+!CHANGELOG.md
+!SECURITY.md
+!SECURITY_AUDIT.md
+!PERFORMANCE_BENCHMARKS.md
+!RECOMMENDATIONS.md
+!CRITICAL_SECURITY_FEATURES.md
+!config.example.yaml
+!config.security.example.yaml
+**/*.md
 
+
+PROJECT_STATUS.md

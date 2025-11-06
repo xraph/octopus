@@ -1,222 +1,321 @@
 # Octopus API Gateway Configuration Example
 
-server:
-  # HTTP server port
-  http_port: 8080
+# Gateway server configuration
+# Note: Environment variables can be used with ${ VAR } or ${ VAR:-default } syntax (without spaces)
+gateway:
+  # Listen address (IP:PORT)
+  # Examples:
+  #   listen: "0.0.0.0:8080"                    # Static value
+  #   listen: "0.0.0.0:8080"                     # Or use env vars: GATEWAY_HOST and PORT with defaults
+  listen: "0.0.0.0:8080"
   
-  # HTTPS server port (requires TLS configuration)
-  https_port: 8443
+  # Number of worker threads (0 = auto-detect CPU cores)
+  workers: 0
   
-  # Admin/metrics port
-  admin_port: 9090
+  # Request timeout
+  request_timeout: 30s
   
-  # Number of worker threads (auto = CPU cores)
-  workers: auto
+  # Graceful shutdown timeout (wait for in-flight requests)
+  shutdown_timeout: 30s
   
-  # Bind address
-  bind_address: "0.0.0.0"
-
-# TLS configuration
-tls:
-  enabled: false
-  cert: /etc/octopus/tls/cert.pem
-  key: /etc/octopus/tls/key.pem
-  # Optional: Client certificate verification
-  client_ca: /etc/octopus/tls/ca.pem
-
-# Service discovery configuration
-discovery:
-  # Backend: kubernetes, consul, etcd, dns, static
-  backend: kubernetes
+  # Max request body size (in bytes)
+  max_body_size: 10485760  # 10MB
   
-  # Kubernetes-specific config
-  kubernetes:
-    namespace: default
-    label_selector: "app.kubernetes.io/managed-by=octopus"
+  # TLS/HTTPS configuration (optional)
+  # Uncomment to enable HTTPS
+  # tls:
+  #   # Certificate file (PEM format)
+  #   cert_file: /etc/octopus/tls/cert.pem
+  #   
+  #   # Private key file (PEM format) 
+  #   # Supports RSA, ECDSA, Ed25519
+  #   key_file: /etc/octopus/tls/key.pem
+  #   
+  #   # Optional: Client CA certificate for mutual TLS (mTLS)
+  #   # client_ca_file: /etc/octopus/tls/client-ca.pem
+  #   
+  #   # Require client certificates (mutual TLS)
+  #   # require_client_cert: false
+  #   
+  #   # Minimum TLS version (1.2 or 1.3)
+  #   # Default: 1.2 for compatibility
+  #   min_tls_version: "1.2"
+  #   
+  #   # Enable automatic certificate reloading
+  #   # Allows zero-downtime cert updates
+  #   # Default: true
+  #   enable_cert_reload: true
+  #   
+  #   # Certificate reload check interval (seconds)
+  #   # Default: 300 (5 minutes)
+  #   reload_interval_secs: 300
+  
+  # Compression configuration
+  compression:
+    # Enable/disable compression
+    enabled: true
     
-  # Consul-specific config
-  consul:
-    address: http://localhost:8500
-    datacenter: dc1
-    token: ${CONSUL_TOKEN}
+    # Compression level (1-9 for gzip/zstd, 1-11 for brotli)
+    # Higher = better compression but slower
+    # Default: 6 (balanced)
+    level: 6
     
-  # etcd-specific config
-  etcd:
-    endpoints:
-      - http://localhost:2379
-    username: ${ETCD_USER}
-    password: ${ETCD_PASSWORD}
+    # Minimum response size to compress (in bytes)
+    # Responses smaller than this won't be compressed
+    # Default: 1024 (1KB)
+    min_size: 1024
+    
+    # Preferred compression algorithms in order of preference
+    # Supported: br (brotli), zstd, gzip
+    # Default: [br, zstd, gzip]
+    algorithms:
+      - br      # Brotli - best compression ratio
+      - zstd    # Zstandard - fast with good compression
+      - gzip    # Gzip - universal browser support
 
-# FARP protocol configuration
+# NOTE: These sections are not yet implemented in the config loader
+# They are included here as documentation for future features
+#
+# # Service discovery configuration
+# discovery:
+#   backend: kubernetes  # kubernetes, consul, etcd, dns, static
+#   kubernetes:
+#     namespace: default
+#     label_selector: "app.kubernetes.io/managed-by=octopus"
+#
+# # FARP protocol configuration
+# farp:
+#   enabled: true
+#   watch_interval: 5s
+#   schema_cache_ttl: 5m
+
 farp:
   enabled: true
-  
-  # How often to check for service changes
   watch_interval: 5s
-  
-  # Schema cache TTL
   schema_cache_ttl: 5m
-  
-  # Maximum cached schemas
-  schema_cache_max_size: 100
 
-# Routing configuration
-routing:
-  # Load balancing strategy: round_robin, least_connections, weighted_round_robin, random, ip_hash
-  load_balance: round_robin
-  
-  # Default request timeout
-  timeout: 30s
-  
-  # Number of retries for failed requests
-  retries: 3
-  
-  # Circuit breaker configuration
-  circuit_breaker:
-    enabled: true
-    failure_threshold: 5
-    success_threshold: 2
-    timeout: 60s
-  
-  # Health check configuration
-  health_check:
-    enabled: true
-    interval: 10s
-    timeout: 5s
-    path: /health
-    expected_status: 200
-    healthy_threshold: 2
-    unhealthy_threshold: 3
+  # Service discovery backends (optional)
+  # Uncomment the backend(s) you want to use
+  discovery:
+    backends:
+      # mDNS/Bonjour discovery for local development (Mac/Windows/Linux)
+      # Automatically discovers services on the local network
+      - type: mdns
+        enabled: true
+        config:
+          service_type: "_octopus._tcp"  # Service type to discover
+          domain: "local."                # mDNS domain
+          watch_interval: 30s             # How often to poll for changes
+          query_timeout: 5s               # Query timeout
+          enable_ipv6: false               # Enable IPv6 discovery
+      
+      # Consul service discovery (for production)
+      # - type: consul
+      #   enabled: false
+      #   config:
+      #     address: "localhost:8500"
+      #     datacenter: "dc1"
+      #     token: ""                     # ACL token (optional)
+      #     watch_interval: 10s
+      
+      # Kubernetes service discovery (for K8s deployments)
+      # - type: kubernetes
+      #   enabled: false
+      #   config:
+      #     namespace: "default"
+      #     label_selector: "app=octopus-service"
+      #     watch_interval: 10s
+      
+      # DNS-based discovery (for simple deployments)
+      # - type: dns
+      #   enabled: false
+      #   config:
+      #     default_port: 80
+      #     watch_interval: 60s
 
 # Middleware configuration
+# Middleware runs for every request in the order defined
 middleware:
-  - name: cors
+  # Example: Request ID injection
+  - type: request_id
+    enabled: true
+  
+  # Example: CORS
+  - type: cors
     enabled: true
     config:
-      allow_origins: ["*"]
-      allow_methods: ["GET", "POST", "PUT", "DELETE", "PATCH"]
-      allow_headers: ["*"]
+      allowed_origins: ["*"]
+      allowed_methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+      allowed_headers: ["*"]
       max_age: 3600
-  
-  - name: compression
+
+  # Example: Inline Rhai script (NEW!)
+  # Scripts run in <100μs with full request/response access
+  - type: script
     enabled: true
     config:
-      algorithms: [gzip, br, zstd]
-      level: 6
-  
-  - name: rate_limit
+      language: rhai  # rhai, lua (future), javascript (future), wasm (future)
+      on_request: true  # Run on incoming requests
+      on_response: false  # Run on outgoing responses
+      timeout_ms: 100  # Max execution time
+      # Inline script code
+      code: |
+        // Add custom headers
+        headers["X-Gateway"] = "Octopus";
+        headers["X-Request-Time"] = unix_time().to_string();
+        
+        // Add API versioning
+        if uri.starts_with("/api/v1") {
+          headers["X-API-Version"] = "1.0";
+        }
+        
+        // Log for debugging
+        log_debug("Processing request to: " + uri);
+        
+        // Return true to continue, false to short-circuit
+        true
+
+  # Example: Script from file
+  - type: script
     enabled: true
     config:
-      requests_per_second: 1000
-      burst: 2000
+      language: rhai
+      file: /etc/octopus/scripts/auth-check.rhai
+      on_request: true
+      continue_on_error: false  # Fail request on script error
+
+  # Example: Response transformation script
+  - type: script
+    enabled: true
+    config:
+      language: rhai
+      on_request: false
+      on_response: true  # Run on responses
+      code: |
+        // Add security headers
+        headers["X-Frame-Options"] = "DENY";
+        headers["X-Content-Type-Options"] = "nosniff";
+        
+        // Modify response body (if needed)
+        if status == 200 {
+          // Parse JSON response
+          let body_json = parse_json(body);
+          
+          // Add metadata
+          body_json["_meta"] = #{
+            processed_by: "octopus",
+            timestamp: unix_time()
+          };
+          
+          // Update body
+          body = to_json(body_json);
+        }
+        
+        true
+
+  # Example: JWT authentication
+  - type: jwt
+    enabled: true
+    config:
+      secret: "your-secret-key"
+      algorithm: "HS256"
+
+  # Example: Rate limiting
+  - type: rate_limit
+    enabled: true
+    config:
+      requests_per_second: 100
+      burst: 200
 
 # Plugin configuration
 plugins:
   - name: jwt-auth
+    plugin_type: static
     enabled: true
-    path: /plugins/jwt-auth.so
+    priority: 100
     config:
-      secret: ${JWT_SECRET}
-      algorithm: RS256
-      issuer: https://auth.example.com
+      secret: "supersecret"
+      algorithm: "HS256"
+      issuer: "octopus-gateway"
   
   - name: rate-limiter
+    plugin_type: static
     enabled: true
-    builtin: true
+    priority: 90
     config:
-      strategy: token-bucket
-      redis_url: redis://localhost:6379
-      key_prefix: "ratelimit:"
-  
-  - name: redis-cache
-    enabled: false
-    path: /plugins/redis-cache.so
-    config:
-      url: redis://localhost:6379
-      ttl: 300
-      key_prefix: "cache:"
+      requests_per_second: 1000
+      burst: 2000
 
-# Admin dashboard configuration
-admin:
-  enabled: true
-  address: 0.0.0.0:9090
-  
-  # Admin authentication
-  auth:
-    enabled: true
-    type: basic
-    username: admin
-    # Generate with: echo -n "password" | argon2-cli
-    password_hash: $argon2id$v=19$m=19456,t=2,p=1$...
-  
-  # Dashboard features
-  features:
-    metrics: true
-    logs: true
-    config_editor: true
-    plugin_manager: true
+# NOTE: Admin dashboard configuration is not yet implemented
+# # Admin dashboard configuration
+# admin:
+#   enabled: true
+#   address: 0.0.0.0:9090
 
 # Observability configuration
 observability:
-  # Metrics
+  # Metrics (Prometheus-compatible)
   metrics:
     enabled: true
-    path: /metrics
-    port: 9090
+    endpoint: "0.0.0.0:9090"  # Prometheus metrics endpoint
   
-  # Distributed tracing
+  # Distributed tracing (Jaeger/OpenTelemetry)
   tracing:
     enabled: true
-    exporter: otlp
-    endpoint: http://jaeger:4317
-    sampling_rate: 0.1
+    jaeger_endpoint: "http://localhost:14268/api/traces"
   
   # Logging
   logging:
     level: info
-    format: json
-    # Output: stdout, file, syslog
-    output: stdout
-    # If output is file:
-    file:
-      path: /var/log/octopus/octopus.log
-      max_size: 100MB
-      max_backups: 10
-      compress: true
+    format: json  # json or text
 
 # Static upstream configuration (optional, if not using FARP)
 upstreams:
   - name: user-service
+    lb_policy: round_robin
     instances:
-      - address: localhost
+      - id: user-service-1
+        host: localhost
         port: 8081
         weight: 1
-      - address: localhost
+      - id: user-service-2
+        host: localhost
         port: 8082
         weight: 1
     health_check:
+      type: http
       path: /health
       interval: 10s
       timeout: 5s
-    timeout:
-      connect: 5s
-      request: 30s
-      idle: 90s
+      healthy_threshold: 2
+      unhealthy_threshold: 3
+    circuit_breaker:
+      error_threshold: 0.5
+      min_requests: 10
+      timeout: 30s
 
 # Static route configuration (optional, if not using FARP)
 routes:
   - path: /api/users/*
     methods: [GET, POST, PUT, DELETE]
     upstream: user-service
+    priority: 100
     strip_prefix: /api
-    middleware:
-      - jwt-auth
-      - rate-limit
   
-  - path: /health
+  - path: /api/health
     methods: [GET]
-    response:
-      status: 200
-      body: '{"status": "healthy"}'
+    upstream: user-service
+    priority: 90
+  
+  # WebSocket route example
+  # WebSocket connections are automatically detected via Upgrade header
+  # - path: /ws/*
+  #   methods: [GET]
+  #   upstream: websocket-service
+  #   priority: 100
+  #   # WebSocket-specific metadata (optional)
+  #   metadata:
+  #     max_message_size: "67108864"  # 64 MB
+  #     max_frame_size: "16777216"    # 16 MB
 
 

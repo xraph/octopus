@@ -1,0 +1,16 @@
+{
+  "title": "Core Concepts",
+  "icon": "BookOpen",
+  "defaultOpen": false,
+  "pages": [
+    "index",
+    "architecture",
+    "routing",
+    "middleware",
+    "plugins",
+    "farp",
+    "load-balancing",
+    "health-checks",
+    "circuit-breaker"
+  ]
+}

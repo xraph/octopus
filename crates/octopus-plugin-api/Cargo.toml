@@ -1,0 +1,40 @@
+[package]
+name = "octopus-plugin-api"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Plugin SDK for Octopus API Gateway"
+
+[dependencies]
+# Async
+async-trait.workspace = true
+
+# HTTP
+http.workspace = true
+http-body-util.workspace = true
+bytes.workspace = true
+
+# Serialization
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+# Error handling
+thiserror.workspace = true
+
+# Time
+tokio = { workspace = true, features = ["time"] }
+
+# Utilities
+semver = "1.0"
+uuid = { version = "1.10", features = ["v4"], optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full", "test-util"] }
+
+[features]
+default = []
+testing = ["uuid"]
+

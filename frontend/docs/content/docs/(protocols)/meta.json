@@ -1,0 +1,15 @@
+{
+  "title": "Protocols",
+  "icon": "Network",
+  "defaultOpen": false,
+  "pages": [
+    "protocols",
+    "protocols-http",
+    "protocols-grpc",
+    "protocols-websocket",
+    "protocols-sse",
+    "protocols-graphql",
+    "protocols-webtransport"
+  ]
+}
+

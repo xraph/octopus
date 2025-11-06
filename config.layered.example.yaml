@@ -1,0 +1,230 @@
+# Octopus API Gateway - Layered Configuration Example
+#
+# This example demonstrates multi-file configuration merging.
+#
+# Usage:
+#   octopus --config config/base.yaml --config config/production.yaml --config config/secrets.yaml
+#
+# Or in code:
+#   let config = octopus_config::load_and_merge(vec![
+#       "config/base.yaml",
+#       "config/production.yaml", 
+#       "config/secrets.yaml"
+#   ])?;
+#
+# Files are merged in order:
+# - Later files override earlier files
+# - Upstreams/routes/plugins are merged by name/path
+# - Arrays are replaced (not concatenated)
+
+---
+# File 1: config/base.yaml - Common defaults for all environments
+gateway:
+  listen: "0.0.0.0:8080"
+  workers: 0  # Auto-detect
+  request_timeout: "30s"
+  shutdown_timeout: "10s"
+  max_body_size: 10485760  # 10MB
+  
+  # Internal route prefix (default: "__")
+  # Internal endpoints will be accessible at:
+  # - /__admin (admin dashboard)
+  # - /__metrics (Prometheus metrics)
+  # - /__farp (FARP API)
+  # - /__health (health checks)
+  internal_route_prefix: "__"
+  
+  compression:
+    enabled: true
+    algorithms: ["gzip", "brotli"]
+    min_size: 1024
+
+upstreams:
+  - name: "api-service"
+    instances:
+      - id: "api-1"
+        host: "api-service"
+        port: 8080
+        weight: 1
+    lb_policy: "round_robin"
+    health_check:
+      enabled: true
+      interval: "10s"
+      timeout: "5s"
+      path: "/health"
+
+routes:
+  - path: "/api/*"
+    methods: ["GET", "POST", "PUT", "DELETE"]
+    upstream: "api-service"
+    priority: 10
+
+observability:
+  logging:
+    level: "info"
+    format: "json"
+  metrics:
+    enabled: true
+    endpoint: "/__metrics"  # Using internal prefix
+  tracing:
+    enabled: false
+
+---
+# File 2: config/production.yaml - Production-specific overrides
+gateway:
+  listen: "0.0.0.0:443"  # Override port for production
+  workers: 16  # Override for production hardware
+  
+  tls:
+    cert_file: "/etc/octopus/tls/cert.pem"
+    key_file: "/etc/octopus/tls/key.pem"
+
+# Override upstream instances for production
+upstreams:
+  - name: "api-service"
+    instances:
+      - id: "api-prod-1"
+        host: "api-prod-1.internal"
+        port: 8080
+        weight: 1
+      - id: "api-prod-2"
+        host: "api-prod-2.internal"
+        port: 8080
+        weight: 1
+      - id: "api-prod-3"
+        host: "api-prod-3.internal"
+        port: 8080
+        weight: 1
+    lb_policy: "least_conn"  # Different policy for production
+
+# Add production-only routes
+routes:
+  - path: "/api/admin/*"
+    methods: ["GET", "POST", "PUT", "DELETE"]
+    upstream: "api-service"
+    priority: 20
+    # This will merge with existing routes
+
+observability:
+  logging:
+    level: "warn"  # Less verbose in production
+    format: "json"
+  tracing:
+    enabled: true
+    endpoint: "http://jaeger:14268/api/traces"
+
+---
+# File 3: config/secrets.yaml - Sensitive values (gitignored, from secrets manager)
+# This file should NOT be committed to version control
+
+# JWT secret from environment or secrets manager
+plugins:
+  - name: "jwt-auth"
+    enabled: true
+    config:
+      secret: "${JWT_SECRET}"  # From environment variable
+      algorithm: "HS256"
+      skip_paths:
+        - "/__health"
+        - "/__metrics"
+
+# TLS certificates paths (could be from secrets manager)
+gateway:
+  tls:
+    cert_file: "${TLS_CERT_PATH}"
+    key_file: "${TLS_KEY_PATH}"
+
+# Database connection strings
+upstreams:
+  - name: "database-service"
+    instances:
+      - id: "db-1"
+        host: "${DB_HOST}"
+        port: 5432
+        weight: 1
+
+---
+# COMPLETE EXAMPLE: How files are merged
+
+# Starting with base.yaml:
+# gateway.listen = "0.0.0.0:8080"
+# gateway.workers = 0
+# gateway.tls = null
+# upstreams[0].instances = [api-1]
+
+# After merging production.yaml:
+# gateway.listen = "0.0.0.0:443"  ← OVERRIDDEN
+# gateway.workers = 16              ← OVERRIDDEN
+# gateway.tls = { cert_file, key_file }  ← ADDED
+# upstreams[0].instances = [api-prod-1, api-prod-2, api-prod-3]  ← REPLACED
+
+# After merging secrets.yaml:
+# gateway.tls.cert_file = "${TLS_CERT_PATH}"  ← OVERRIDDEN
+# gateway.tls.key_file = "${TLS_KEY_PATH}"     ← OVERRIDDEN
+# plugins = [jwt-auth]  ← ADDED
+# upstreams[1] = database-service  ← ADDED (new upstream)
+
+---
+# TYPICAL DEPLOYMENT STRUCTURES:
+
+# Development:
+# octopus --config config/base.yaml --config config/dev.yaml
+
+# Staging:
+# octopus --config config/base.yaml --config config/staging.yaml --config config/secrets.yaml
+
+# Production:
+# octopus --config config/base.yaml --config config/production.yaml --config config/secrets.yaml
+
+# Local developer overrides:
+# octopus --config config/base.yaml --config config/dev.yaml --config config/local.yaml
+
+---
+# MERGE BEHAVIOR:
+
+# 1. Gateway Config: Later values override earlier values
+# 2. Upstreams: Merged by name (same name = override, new name = append)
+# 3. Routes: Merged by path (same path = override, new path = append)
+# 4. Plugins: Merged by name (same name = override, new name = append)
+# 5. Arrays: Replaced entirely (not concatenated)
+#    Example: If base.yaml has instances=[a,b] and prod.yaml has instances=[c,d],
+#             result is instances=[c,d] (not [a,b,c,d])
+
+---
+# INTERNAL ROUTES:
+
+# With internal_route_prefix: "__"
+#
+# Admin dashboard:
+#   http://localhost:8080/__admin
+#   http://localhost:8080/__admin/routes
+#   http://localhost:8080/__admin/health
+#   http://localhost:8080/__admin/plugins
+#
+# Prometheus metrics:
+#   http://localhost:8080/__metrics
+#
+# FARP API:
+#   http://localhost:8080/__farp/register
+#   http://localhost:8080/__farp/openapi.json
+#   http://localhost:8080/__farp/asyncapi.json
+#
+# Legacy routes (backwards compatible):
+#   http://localhost:8080/admin
+#   http://localhost:8080/metrics
+#   http://localhost:8080/farp
+#
+# This prevents conflicts with your application routes!
+
+---
+# ENVIRONMENT VARIABLE SUBSTITUTION:
+
+# Syntax: ${VAR_NAME} or ${VAR_NAME:-default_value}
+#
+# Examples:
+#   jwt_secret: "${JWT_SECRET}"
+#   db_host: "${DATABASE_HOST:-localhost}"
+#   api_key: "${API_KEY}"
+#
+# Environment variables are expanded when config is loaded.
+

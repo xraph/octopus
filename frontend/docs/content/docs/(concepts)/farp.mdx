@@ -1,0 +1,329 @@
+---
+title: FARP Protocol
+description: Automatic service discovery and route generation
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# FARP Protocol
+
+FARP (Forge API Gateway Registration Protocol) enables automatic service discovery and route generation.
+
+## Overview
+
+FARP eliminates manual route configuration by:
+
+1. Services register with a `SchemaManifest`
+2. Octopus watches for manifest changes
+3. Gateway fetches schemas and generates routes
+4. Auto-generates federated API documentation
+5. Zero-downtime updates on schema changes
+
+## Enabling FARP
+
+```yaml
+discovery:
+  backend: kubernetes
+  kubernetes:
+    namespace: default
+    label_selector: "app.kubernetes.io/part-of=myapp"
+
+farp:
+  enabled: true
+  watch_interval: 5s
+  schema_cache_ttl: 5m
+```
+
+## Service Manifest
+
+Services expose a manifest describing their APIs:
+
+```json
+{
+  "version": "1.0.0",
+  "service_name": "user-service",
+  "service_version": "v1.2.3",
+  "schemas": [
+    {
+      "type": "openapi",
+      "spec_version": "3.1.0",
+      "location": {
+        "type": "http",
+        "url": "http://user-service:8080/openapi.json"
+      }
+    }
+  ],
+  "capabilities": ["rest", "websocket"],
+  "endpoints": {
+    "health": "/health",
+    "metrics": "/metrics"
+  }
+}
+```
+
+## Supported Schema Types
+
+### OpenAPI
+
+```json
+{
+  "type": "openapi",
+  "spec_version": "3.1.0",
+  "location": {
+    "type": "http",
+    "url": "http://service/openapi.json"
+  }
+}
+```
+
+Routes are generated from OpenAPI paths.
+
+### AsyncAPI
+
+```json
+{
+  "type": "asyncapi",
+  "spec_version": "2.6.0",
+  "location": {
+    "type": "http",
+    "url": "http://service/asyncapi.json"
+  }
+}
+```
+
+WebSocket routes generated from AsyncAPI channels.
+
+### gRPC Reflection
+
+```json
+{
+  "type": "grpc",
+  "location": {
+    "type": "grpc_reflection",
+    "address": "service:50051"
+  }
+}
+```
+
+gRPC routes from service reflection.
+
+## Discovery Backends
+
+### Kubernetes
+
+```yaml
+discovery:
+  backend: kubernetes
+  kubernetes:
+    namespace: default
+    label_selector: "farp.enabled=true"
+    annotation: "farp.manifest"
+```
+
+Services annotate pods with manifest URL:
+
+```yaml
+metadata:
+  annotations:
+    farp.manifest: "http://service:8080/.well-known/farp-manifest.json"
+```
+
+### Consul
+
+```yaml
+discovery:
+  backend: consul
+  consul:
+    address: consul:8500
+    service_tag: "farp"
+```
+
+### etcd
+
+```yaml
+discovery:
+  backend: etcd
+  etcd:
+    endpoints: ["etcd:2379"]
+    prefix: "/services"
+```
+
+## Route Generation
+
+FARP generates routes from schemas:
+
+```yaml
+# From OpenAPI
+GET /api/users -> user-service
+POST /api/users -> user-service
+GET /api/users/{id} -> user-service
+
+# From AsyncAPI
+WS /ws/chat -> chat-service
+
+# From gRPC
+POST /grpc/user.UserService/GetUser -> user-service
+```
+
+## FARP API Endpoints
+
+All FARP endpoints are mounted under `/__/farp/` prefix:
+
+### Federated Schemas
+
+```bash
+# Access federated OpenAPI
+curl http://gateway:3000/__/farp/openapi.json
+
+# Access federated AsyncAPI
+curl http://gateway:3000/__/farp/asyncapi.json
+
+# Access federated GraphQL schema
+curl http://gateway:3000/__/farp/graphql
+
+# Access federated gRPC schema
+curl http://gateway:3000/__/farp/grpc
+```
+
+### Service Management
+
+```bash
+# List all registered services
+curl http://gateway:3000/__/farp/services
+
+# Get specific service details
+curl http://gateway:3000/__/farp/services/user-service
+
+# Register a service
+curl -X POST http://gateway:3000/__/farp/register \
+  -H "Content-Type: application/json" \
+  -d @manifest.json
+
+# Update a service
+curl -X PUT http://gateway:3000/__/farp/services/user-service \
+  -H "Content-Type: application/json" \
+  -d @manifest.json
+
+# Deregister a service
+curl -X DELETE http://gateway:3000/__/farp/services/user-service
+```
+
+### Schema Federation
+
+```bash
+# List all federated schemas
+curl http://gateway:3000/__/farp/schemas
+
+# Get specific schema format
+curl http://gateway:3000/__/farp/schema/openapi
+curl http://gateway:3000/__/farp/schema/asyncapi
+
+# Trigger manual federation (re-merge all schemas)
+curl -X POST http://gateway:3000/__/farp/federate
+```
+
+### Documentation UIs
+
+```bash
+# View in Swagger UI
+open http://gateway:3000/__/farp/docs
+
+# View in ReDoc
+open http://gateway:3000/__/farp/redoc
+```
+
+## Schema Caching
+
+```yaml
+farp:
+  schema_cache_ttl: 5m
+  schema_max_size: 10MB
+  checksum_validation: true
+```
+
+Schemas are cached with checksums for change detection.
+
+## Hot Reload
+
+When schemas change:
+1. FARP detects change
+2. Fetches new schema
+3. Regenerates routes
+4. Updates router (zero-downtime)
+
+<Callout title="Zero Downtime">
+  Route updates happen without dropping existing connections.
+</Callout>
+
+## Example: Go Service
+
+```go
+// Expose manifest
+func FARPManifest() *farp.Manifest {
+    return &farp.Manifest{
+        Version: "1.0.0",
+        ServiceName: "user-service",
+        ServiceVersion: "v1.0.0",
+        Schemas: []farp.Schema{
+            {
+                Type: "openapi",
+                Location: farp.HTTPLocation{
+                    URL: "http://user-service/openapi.json",
+                },
+            },
+        },
+    }
+}
+
+// HTTP handler
+http.HandleFunc("/.well-known/farp-manifest.json", 
+    func(w http.ResponseWriter, r *http.Request) {
+        json.NewEncoder(w).Encode(FARPManifest())
+    })
+```
+
+## Monitoring
+
+### Service Status
+
+```bash
+# View all discovered services
+curl http://gateway:3000/__/farp/services
+
+# Get detailed service info
+curl http://gateway:3000/__/farp/services/user-service | jq .
+```
+
+### Prometheus Metrics
+
+FARP exposes the following metrics:
+
+```
+# Number of registered services
+octopus_farp_services_total
+
+# Number of routes generated per service
+octopus_farp_routes_total{service="user-service",type="http"}
+
+# Schema fetch operations
+octopus_farp_schema_fetches_total{service="user-service",type="openapi",status="success"}
+
+# Schema fetch duration
+octopus_farp_schema_fetch_duration_seconds{service="user-service",type="openapi"}
+
+# Schema updates
+octopus_farp_updates_total{service="user-service"}
+
+# Schema cache hit ratio
+octopus_farp_cache_hit_ratio
+
+# Parse errors
+octopus_farp_parse_errors_total{service="user-service",type="openapi"}
+```
+
+## Next Steps
+
+- [Service Discovery](/docs/configuration/discovery) - Configure discovery
+- [OpenAPI Integration](/docs/guides/openapi) - Generate OpenAPI
+- [gRPC Support](/docs/protocols/grpc) - gRPC services
+

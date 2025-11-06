@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+
+{% block title %}Plugins - Octopus Admin{% endblock %}
+{% block page_title %}Plugins{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex items-center justify-between">
+        <p class="text-sm text-gray-500 dark:text-gray-400">
+            Manage and configure gateway plugins
+        </p>
+        <button type="button" 
+                class="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500">
+            <svg class="-ml-1 mr-2 h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+            </svg>
+            Install Plugin
+        </button>
+    </div>
+
+    <!-- Plugins Grid -->
+    <div class="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+        {% for plugin in plugins %}
+        <div class="bg-white dark:bg-gray-800 shadow-sm rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+            <!-- Header -->
+            <div class="px-4 py-5 sm:p-6">
+                <div class="flex items-start justify-between">
+                    <div class="flex-1">
+                        <h3 class="text-lg font-medium text-gray-900 dark:text-white">{{ plugin.name }}</h3>
+                        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ plugin.description }}</p>
+                    </div>
+                    
+                    <!-- Enable/Disable Toggle with Alpine.js -->
+                    <div x-data="{ enabled: {{ plugin.enabled|lower }} }" class="ml-4">
+                        <button @click="enabled = !enabled"
+                                :class="enabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-gray-700'"
+                                class="relative inline-flex flex-shrink-0 h-6 w-11 border-2 border-transparent rounded-full cursor-pointer transition-colors ease-in-out duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                                role="switch">
+                            <span class="sr-only">Enable plugin</span>
+                            <span :class="enabled ? 'translate-x-5' : 'translate-x-0'"
+                                  class="pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow transform ring-0 transition ease-in-out duration-200"></span>
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="mt-4 space-y-2">
+                    <div class="flex items-center text-sm">
+                        <span class="text-gray-500 dark:text-gray-400 w-20">Version:</span>
+                        <span class="font-medium text-gray-900 dark:text-white">{{ plugin.version }}</span>
+                    </div>
+                    {% match plugin.author %}
+                    {% when Some with (author) %}
+                    <div class="flex items-center text-sm">
+                        <span class="text-gray-500 dark:text-gray-400 w-20">Author:</span>
+                        <span class="text-gray-900 dark:text-white">{{ author }}</span>
+                    </div>
+                    {% when None %}
+                    {% endmatch %}
+                </div>
+            </div>
+            
+            <!-- Actions -->
+            <div class="px-4 py-4 sm:px-6 bg-gray-50 dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between">
+                <div class="flex space-x-2">
+                    {% if plugin.has_dashboard %}
+                    <a href="/admin/plugins/{{ plugin.id }}" 
+                       class="text-sm font-medium text-primary-600 hover:text-primary-500 dark:text-primary-400">
+                        Dashboard
+                    </a>
+                    {% endif %}
+                    <button type="button" 
+                            class="text-sm font-medium text-gray-600 hover:text-gray-500 dark:text-gray-400 dark:hover:text-gray-300">
+                        Configure
+                    </button>
+                </div>
+                
+                <!-- Dropdown menu with Alpine.js -->
+                <div x-data="{ open: false }" class="relative">
+                    <button @click="open = !open" 
+                            class="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300">
+                        <svg class="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
+                            <path d="M10 6a2 2 0 110-4 2 2 0 010 4zM10 12a2 2 0 110-4 2 2 0 010 4zM10 18a2 2 0 110-4 2 2 0 010 4z"></path>
+                        </svg>
+                    </button>
+                    
+                    <div x-show="open" 
+                         x-cloak
+                         @click.away="open = false"
+                         x-transition:enter="transition ease-out duration-100"
+                         x-transition:enter-start="transform opacity-0 scale-95"
+                         x-transition:enter-end="transform opacity-100 scale-100"
+                         x-transition:leave="transition ease-in duration-75"
+                         x-transition:leave-start="transform opacity-100 scale-100"
+                         x-transition:leave-end="transform opacity-0 scale-95"
+                         class="origin-top-right absolute right-0 mt-2 w-48 rounded-md shadow-lg bg-white dark:bg-gray-700 ring-1 ring-black ring-opacity-5 z-10">
+                        <div class="py-1">
+                            <a href="#" class="block px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600">Reload</a>
+                            <a href="#" class="block px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-600">View Logs</a>
+                            <a href="#" class="block px-4 py-2 text-sm text-red-700 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-600">Uninstall</a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Plugin Statistics -->
+    <div class="grid grid-cols-1 gap-6 sm:grid-cols-3">
+        <div class="bg-white dark:bg-gray-800 shadow-sm rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+            <div class="flex items-center">
+                <div class="flex-shrink-0 bg-primary-100 dark:bg-primary-900 rounded-md p-3">
+                    <svg class="h-6 w-6 text-primary-600 dark:text-primary-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
+                    </svg>
+                </div>
+                <div class="ml-4">
+                    <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400">Total Plugins</h4>
+                    <p class="text-2xl font-semibold text-gray-900 dark:text-white">{{ total_plugins }}</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="bg-white dark:bg-gray-800 shadow-sm rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+            <div class="flex items-center">
+                <div class="flex-shrink-0 bg-green-100 dark:bg-green-900 rounded-md p-3">
+                    <svg class="h-6 w-6 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                </div>
+                <div class="ml-4">
+                    <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400">Active</h4>
+                    <p class="text-2xl font-semibold text-gray-900 dark:text-white">{{ active_plugins }}</p>
+                </div>
+            </div>
+        </div>
+        
+        <div class="bg-white dark:bg-gray-800 shadow-sm rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+            <div class="flex items-center">
+                <div class="flex-shrink-0 bg-yellow-100 dark:bg-yellow-900 rounded-md p-3">
+                    <svg class="h-6 w-6 text-yellow-600 dark:text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                    </svg>
+                </div>
+                <div class="ml-4">
+                    <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400">Updates Available</h4>
+                    <p class="text-2xl font-semibold text-gray-900 dark:text-white">{{ updates_available }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

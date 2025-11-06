@@ -1,0 +1,13 @@
+{
+  "title": "Observability",
+  "icon": "ChartBar",
+  "defaultOpen": false,
+  "pages": [
+    "observability-index",
+    "observability-metrics",
+    "observability-tracing",
+    "observability-logging",
+    "observability-health"
+  ]
+}
+

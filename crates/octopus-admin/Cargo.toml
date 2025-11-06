@@ -6,8 +6,44 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Admin dashboard for Octopus API Gateway (Askama + HTMX + Alpine.js)"
 
 [dependencies]
+# Core Octopus crates
 octopus-core = { path = "../octopus-core" }
+octopus-router = { path = "../octopus-router" }
+octopus-config = { path = "../octopus-config" }
+octopus-health = { path = "../octopus-health" }
+octopus-plugins = { path = "../octopus-plugins" }
+octopus-metrics = { path = "../octopus-metrics" }
+
+# Web framework
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
 tokio.workspace = true
+http.workspace = true
+
+# Templates
+askama.workspace = true
+askama_axum.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Time
+chrono.workspace = true
+
+# Logging
 tracing.workspace = true
+
+# Utilities
+once_cell.workspace = true
+uuid = { version = "1.6", features = ["v4", "serde"] }
+hostname = "0.4"
+num_cpus = "1.16"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+

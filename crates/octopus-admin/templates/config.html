@@ -1,0 +1,307 @@
+{% extends "shadcn_base.html" %}
+
+{% block title %}Configuration - Octopus Admin{% endblock %}
+{% block page_title %}Configuration{% endblock %}
+
+{% block content %}
+<div x-data="configPage()" x-init="init()" class="p-5 md:p-8 space-y-5">
+    <!-- Page Header -->
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-2xl font-semibold text-gray-800 dark:text-neutral-200">Configuration</h1>
+            <p class="text-sm text-gray-600 dark:text-neutral-400">Manage system settings and configuration</p>
+        </div>
+        <div class="flex gap-x-2">
+            <button @click="resetToDefaults()" type="button" class="py-2 px-3 inline-flex items-center gap-x-2 text-sm font-medium rounded-lg border border-gray-200 bg-white text-gray-800 shadow-sm hover:bg-gray-50 disabled:opacity-50 dark:bg-neutral-800 dark:border-neutral-700 dark:text-white dark:hover:bg-neutral-700">
+                <svg class="flex-shrink-0 size-4" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><polyline points="23 20 23 14 17 14"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/></svg>
+                Reset to Defaults
+            </button>
+            <button @click="exportConfig()" type="button" class="py-2 px-3 inline-flex items-center gap-x-2 text-sm font-medium rounded-lg border border-gray-200 bg-white text-gray-800 shadow-sm hover:bg-gray-50 disabled:opacity-50 dark:bg-neutral-800 dark:border-neutral-700 dark:text-white dark:hover:bg-neutral-700">
+                <svg class="flex-shrink-0 size-4" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+                Export
+            </button>
+        </div>
+    </div>
+
+    <!-- System Information -->
+    <div class="flex flex-col bg-white border shadow-sm rounded-xl dark:bg-neutral-800 dark:border-neutral-700">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-neutral-700">
+            <h2 class="text-xl font-semibold text-gray-800 dark:text-neutral-200">System Information</h2>
+            <p class="text-sm text-gray-600 dark:text-neutral-400">Current system status and details</p>
+        </div>
+        <div class="p-6">
+            <dl class="grid sm:grid-cols-2 gap-4">
+                <div class="flex flex-col">
+                    <dt class="text-sm font-medium text-gray-500 dark:text-neutral-400">Version</dt>
+                    <dd class="text-lg text-gray-800 dark:text-neutral-200" x-text="systemInfo.version">-</dd>
+                </div>
+                <div class="flex flex-col">
+                    <dt class="text-sm font-medium text-gray-500 dark:text-neutral-400">Uptime</dt>
+                    <dd class="text-lg text-gray-800 dark:text-neutral-200" x-text="formatUptime(systemInfo.uptime_seconds)">-</dd>
+                </div>
+                <div class="flex flex-col">
+                    <dt class="text-sm font-medium text-gray-500 dark:text-neutral-400">Hostname</dt>
+                    <dd class="text-lg text-gray-800 dark:text-neutral-200" x-text="systemInfo.hostname">-</dd>
+                </div>
+                <div class="flex flex-col">
+                    <dt class="text-sm font-medium text-gray-500 dark:text-neutral-400">Platform</dt>
+                    <dd class="text-lg text-gray-800 dark:text-neutral-200"><span x-text="systemInfo.os"></span> / <span x-text="systemInfo.arch"></span></dd>
+                </div>
+                <div class="flex flex-col">
+                    <dt class="text-sm font-medium text-gray-500 dark:text-neutral-400">CPUs</dt>
+                    <dd class="text-lg text-gray-800 dark:text-neutral-200" x-text="systemInfo.num_cpus">-</dd>
+                </div>
+                <div class="flex flex-col">
+                    <dt class="text-sm font-medium text-gray-500 dark:text-neutral-400">Total Memory</dt>
+                    <dd class="text-lg text-gray-800 dark:text-neutral-200" x-text="formatBytes(systemInfo.total_memory)">-</dd>
+                </div>
+            </dl>
+        </div>
+    </div>
+
+    <!-- Configuration Settings -->
+    <div class="flex flex-col bg-white border shadow-sm rounded-xl dark:bg-neutral-800 dark:border-neutral-700">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-neutral-700">
+            <h2 class="text-xl font-semibold text-gray-800 dark:text-neutral-200">Configuration Settings</h2>
+            <p class="text-sm text-gray-600 dark:text-neutral-400">Adjust gateway settings and parameters</p>
+        </div>
+        <div class="divide-y divide-gray-200 dark:divide-neutral-700">
+            <template x-for="config in configItems" :key="config.key">
+                <div class="p-6">
+                    <div class="flex items-center justify-between">
+                        <div class="flex-grow pr-8">
+                            <h3 class="text-sm font-semibold text-gray-800 dark:text-neutral-200" x-text="config.key"></h3>
+                            <p x-show="config.description" class="text-sm text-gray-600 dark:text-neutral-400 mt-1" x-text="config.description"></p>
+                        </div>
+                        <div class="flex items-center gap-x-3">
+                            <!-- String/Number Input -->
+                            <template x-if="typeof config.value === 'string' || typeof config.value === 'number'">
+                                <input x-model="config.value" 
+                                       :disabled="!config.editable"
+                                       @change="updateConfig(config)"
+                                       :type="typeof config.value === 'number' ? 'number' : 'text'"
+                                       class="py-2 px-3 block w-48 border-gray-200 rounded-lg text-sm focus:border-blue-500 focus:ring-blue-500 disabled:opacity-50 disabled:pointer-events-none dark:bg-neutral-900 dark:border-neutral-700 dark:text-neutral-400">
+                            </template>
+                            <!-- Boolean Toggle -->
+                            <template x-if="typeof config.value === 'boolean'">
+                                <div class="flex items-center">
+                                    <input x-model="config.value" 
+                                           :disabled="!config.editable"
+                                           @change="updateConfig(config)"
+                                           type="checkbox" 
+                                           class="shrink-0 mt-0.5 border-gray-200 rounded text-blue-600 focus:ring-blue-500 disabled:opacity-50 disabled:pointer-events-none dark:bg-neutral-800 dark:border-neutral-700 dark:checked:bg-blue-500 dark:checked:border-blue-500 dark:focus:ring-offset-gray-800">
+                                    <label class="text-sm text-gray-500 ms-3 dark:text-neutral-400" x-text="config.value ? 'Enabled' : 'Disabled'"></label>
+                                </div>
+                            </template>
+                            <!-- Edit Button -->
+                            <button x-show="config.editable && typeof config.value !== 'boolean'" 
+                                    @click="editConfig(config)" 
+                                    type="button" 
+                                    class="py-2 px-3 inline-flex items-center gap-x-2 text-sm font-medium rounded-lg border border-gray-200 bg-white text-gray-800 shadow-sm hover:bg-gray-50 disabled:opacity-50 dark:bg-neutral-800 dark:border-neutral-700 dark:text-white dark:hover:bg-neutral-700">
+                                <svg class="flex-shrink-0 size-4" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+                                Save
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- Advanced Settings -->
+    <div class="flex flex-col bg-white border shadow-sm rounded-xl dark:bg-neutral-800 dark:border-neutral-700">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-neutral-700">
+            <h2 class="text-xl font-semibold text-gray-800 dark:text-neutral-200">Advanced Settings</h2>
+            <p class="text-sm text-gray-600 dark:text-neutral-400">Expert configuration options</p>
+        </div>
+        <div class="p-6">
+            <div class="space-y-4">
+                <!-- Performance Tuning -->
+                <div>
+                    <h3 class="text-sm font-semibold text-gray-800 dark:text-neutral-200 mb-3">Performance Tuning</h3>
+                    <div class="space-y-3">
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm text-gray-700 dark:text-neutral-300">Connection Pool Size</span>
+                            <input type="number" value="100" min="10" max="1000" 
+                                   class="py-2 px-3 block w-32 border-gray-200 rounded-lg text-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-neutral-900 dark:border-neutral-700 dark:text-neutral-400">
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm text-gray-700 dark:text-neutral-300">Worker Threads</span>
+                            <input type="number" value="4" min="1" max="32" 
+                                   class="py-2 px-3 block w-32 border-gray-200 rounded-lg text-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-neutral-900 dark:border-neutral-700 dark:text-neutral-400">
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm text-gray-700 dark:text-neutral-300">Max Request Size (MB)</span>
+                            <input type="number" value="10" min="1" max="1000" 
+                                   class="py-2 px-3 block w-32 border-gray-200 rounded-lg text-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-neutral-900 dark:border-neutral-700 dark:text-neutral-400">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Security Settings -->
+                <div class="pt-4 border-t border-gray-200 dark:border-neutral-700">
+                    <h3 class="text-sm font-semibold text-gray-800 dark:text-neutral-200 mb-3">Security Settings</h3>
+                    <div class="space-y-3">
+                        <div class="flex items-center">
+                            <input type="checkbox" checked 
+                                   class="shrink-0 mt-0.5 border-gray-200 rounded text-blue-600 focus:ring-blue-500 dark:bg-neutral-800 dark:border-neutral-700 dark:checked:bg-blue-500">
+                            <label class="text-sm text-gray-700 ms-3 dark:text-neutral-300">Enable TLS/SSL</label>
+                        </div>
+                        <div class="flex items-center">
+                            <input type="checkbox" checked 
+                                   class="shrink-0 mt-0.5 border-gray-200 rounded text-blue-600 focus:ring-blue-500 dark:bg-neutral-800 dark:border-neutral-700 dark:checked:bg-blue-500">
+                            <label class="text-sm text-gray-700 ms-3 dark:text-neutral-300">Enable Rate Limiting</label>
+                        </div>
+                        <div class="flex items-center">
+                            <input type="checkbox" 
+                                   class="shrink-0 mt-0.5 border-gray-200 rounded text-blue-600 focus:ring-blue-500 dark:bg-neutral-800 dark:border-neutral-700 dark:checked:bg-blue-500">
+                            <label class="text-sm text-gray-700 ms-3 dark:text-neutral-300">Enable IP Whitelisting</label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Logging Configuration -->
+                <div class="pt-4 border-t border-gray-200 dark:border-neutral-700">
+                    <h3 class="text-sm font-semibold text-gray-800 dark:text-neutral-200 mb-3">Logging Configuration</h3>
+                    <div class="space-y-3">
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm text-gray-700 dark:text-neutral-300">Log Level</span>
+                            <select class="py-2 px-3 pe-9 block w-48 border-gray-200 rounded-lg text-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-neutral-900 dark:border-neutral-700">
+                                <option>trace</option>
+                                <option>debug</option>
+                                <option selected>info</option>
+                                <option>warn</option>
+                                <option>error</option>
+                            </select>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm text-gray-700 dark:text-neutral-300">Log Format</span>
+                            <select class="py-2 px-3 pe-9 block w-48 border-gray-200 rounded-lg text-sm focus:border-blue-500 focus:ring-blue-500 dark:bg-neutral-900 dark:border-neutral-700">
+                                <option selected>json</option>
+                                <option>text</option>
+                                <option>pretty</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Save Button -->
+    <div class="flex justify-end">
+        <button @click="saveAllSettings()" type="button" 
+                class="py-3 px-4 inline-flex items-center gap-x-2 text-sm font-semibold rounded-lg border border-transparent bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:pointer-events-none">
+            <svg class="flex-shrink-0 size-4" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            Save All Settings
+        </button>
+    </div>
+</div>
+
+<script>
+function configPage() {
+    return {
+        configItems: [],
+        systemInfo: {},
+
+        async init() {
+            await this.loadSystemInfo();
+            await this.loadConfig();
+        },
+
+        async loadSystemInfo() {
+            try {
+                const response = await fetch('/admin/api/system/info');
+                if (!response.ok) throw new Error('Failed to fetch system info');
+                this.systemInfo = await response.json();
+            } catch (error) {
+                console.error('Error loading system info:', error);
+            }
+        },
+
+        async loadConfig() {
+            try {
+                const response = await fetch('/admin/api/config');
+                if (!response.ok) throw new Error('Failed to fetch config');
+                this.configItems = await response.json();
+            } catch (error) {
+                console.error('Error loading config:', error);
+            }
+        },
+
+        async updateConfig(config) {
+            try {
+                const response = await fetch(`/admin/api/config/${config.key}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(config.value)
+                });
+                
+                if (!response.ok) throw new Error('Failed to update config');
+                
+                // Show success notification (you can add a toast notification library)
+                console.log('Config updated successfully');
+            } catch (error) {
+                console.error('Error updating config:', error);
+                alert('Failed to update configuration');
+            }
+        },
+
+        editConfig(config) {
+            this.updateConfig(config);
+        },
+
+        async saveAllSettings() {
+            for (const config of this.configItems) {
+                if (config.editable) {
+                    await this.updateConfig(config);
+                }
+            }
+            alert('All settings saved successfully!');
+        },
+
+        resetToDefaults() {
+            if (confirm('Are you sure you want to reset all settings to defaults? This action cannot be undone.')) {
+                // TODO: Implement reset to defaults
+                console.log('Resetting to defaults...');
+            }
+        },
+
+        exportConfig() {
+            const data = JSON.stringify({
+                system: this.systemInfo,
+                config: this.configItems
+            }, null, 2);
+            const blob = new Blob([data], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `octopus-config-${new Date().toISOString()}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        },
+
+        formatUptime(seconds) {
+            if (!seconds) return '-';
+            const days = Math.floor(seconds / 86400);
+            const hours = Math.floor((seconds % 86400) / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            return `${days}d ${hours}h ${minutes}m`;
+        },
+
+        formatBytes(bytes) {
+            if (!bytes) return '-';
+            const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+            let value = bytes;
+            let unitIndex = 0;
+            while (value >= 1024 && unitIndex < units.length - 1) {
+                value /= 1024;
+                unitIndex++;
+            }
+            return `${value.toFixed(2)} ${units[unitIndex]}`;
+        }
+    };
+}
+</script>
+{% endblock %}
+

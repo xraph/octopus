@@ -1,0 +1,593 @@
+---
+title: FARP API Reference
+description: Complete API reference for FARP endpoints
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# FARP API Reference
+
+Complete reference for all FARP (Forge API Gateway Registration Protocol) API endpoints.
+
+<Callout type="info">
+  All FARP endpoints are mounted under the `/__/farp/` prefix for internal API access.
+</Callout>
+
+## Base URL
+
+```
+http://gateway:3000/__/farp/
+```
+
+## Authentication
+
+Currently, FARP endpoints are unauthenticated. In production, secure these endpoints with:
+- Network policies (firewall)
+- API keys
+- mTLS
+- IP whitelisting
+
+---
+
+## Service Registration
+
+### POST /register
+
+Register a new service with the gateway.
+
+**Request:**
+
+```bash
+curl -X POST http://gateway:3000/__/farp/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "manifest": {
+      "service": {
+        "name": "user-service",
+        "version": "1.0.0",
+        "description": "User management service",
+        "base_url": "http://user-service:8080",
+        "metadata": {}
+      },
+      "capabilities": {
+        "protocols": ["http"],
+        "auth_methods": ["jwt"]
+      },
+      "schemas": [
+        {
+          "format": "openapi",
+          "version": "3.0.0",
+          "location": {
+            "type": "http",
+            "url": "http://user-service:8080/openapi.json"
+          }
+        }
+      ]
+    }
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "message": "Service 'user-service' registered successfully",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/users",
+      "upstream": "user-service"
+    },
+    {
+      "method": "POST",
+      "path": "/users",
+      "upstream": "user-service"
+    }
+  ]
+}
+```
+
+**Status Codes:**
+- `201` - Service registered successfully
+- `400` - Invalid request body
+- `409` - Service already registered
+- `500` - Internal error
+
+---
+
+### PUT /services/{service_name}
+
+Update an existing service registration.
+
+**Request:**
+
+```bash
+curl -X PUT http://gateway:3000/__/farp/services/user-service \
+  -H "Content-Type: application/json" \
+  -d '{
+    "manifest": {
+      "service": {
+        "name": "user-service",
+        "version": "1.1.0",
+        "description": "User management service (updated)",
+        "base_url": "http://user-service:8080"
+      },
+      "schemas": [...]
+    }
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "message": "Service 'user-service' updated successfully"
+}
+```
+
+**Status Codes:**
+- `200` - Service updated successfully
+- `400` - Invalid request body
+- `404` - Service not found
+- `500` - Internal error
+
+---
+
+### DELETE /services/{service_name}
+
+Deregister a service from the gateway.
+
+**Request:**
+
+```bash
+curl -X DELETE http://gateway:3000/__/farp/services/user-service
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "message": "Service 'user-service' deregistered successfully"
+}
+```
+
+**Status Codes:**
+- `200` - Service deregistered successfully
+- `404` - Service not found
+- `500` - Internal error
+
+---
+
+## Service Discovery
+
+### GET /services
+
+List all registered services.
+
+**Request:**
+
+```bash
+curl http://gateway:3000/__/farp/services
+```
+
+**Response:**
+
+```json
+{
+  "services": [
+    {
+      "name": "user-service",
+      "version": "1.0.0",
+      "schema_count": 1,
+      "updated_at": "1699123456"
+    },
+    {
+      "name": "post-service",
+      "version": "2.0.0",
+      "schema_count": 2,
+      "updated_at": "1699123789"
+    }
+  ]
+}
+```
+
+**Status Codes:**
+- `200` - Success
+
+---
+
+### GET /services/{service_name}
+
+Get detailed information about a specific service.
+
+**Request:**
+
+```bash
+curl http://gateway:3000/__/farp/services/user-service
+```
+
+**Response:**
+
+```json
+{
+  "service_name": "user-service",
+  "manifest": {
+    "service": {
+      "name": "user-service",
+      "version": "1.0.0",
+      "description": "User management service",
+      "base_url": "http://user-service:8080"
+    },
+    "capabilities": {
+      "protocols": ["http"],
+      "auth_methods": ["jwt"]
+    },
+    "schemas": [
+      {
+        "format": "openapi",
+        "version": "3.0.0",
+        "location": {
+          "type": "http",
+          "url": "http://user-service:8080/openapi.json"
+        },
+        "checksum": "sha256:abc123..."
+      }
+    ]
+  },
+  "schemas": [...],
+  "registered_at": 1699123456,
+  "updated_at": 1699123789
+}
+```
+
+**Status Codes:**
+- `200` - Success
+- `404` - Service not found
+
+---
+
+## Federated Schemas
+
+### GET /openapi.json
+
+Get the merged OpenAPI schema from all registered services.
+
+**Request:**
+
+```bash
+curl http://gateway:3000/__/farp/openapi.json
+```
+
+**Response:**
+
+```json
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Federated API",
+    "version": "1.0.0",
+    "description": "Auto-generated federated API from FARP"
+  },
+  "servers": [
+    {
+      "url": "http://gateway:3000"
+    }
+  ],
+  "paths": {
+    "/user-service/users": {
+      "get": {
+        "summary": "Get all users",
+        "tags": ["user-service"],
+        "responses": {...}
+      }
+    },
+    "/post-service/posts": {
+      "get": {
+        "summary": "Get all posts",
+        "tags": ["post-service"],
+        "responses": {...}
+      }
+    }
+  }
+}
+```
+
+**Status Codes:**
+- `200` - Success (even if no services registered, returns empty schema)
+
+---
+
+### GET /asyncapi.json
+
+Get the merged AsyncAPI schema from all registered services.
+
+**Request:**
+
+```bash
+curl http://gateway:3000/__/farp/asyncapi.json
+```
+
+**Response:**
+
+```json
+{
+  "asyncapi": "2.6.0",
+  "info": {
+    "title": "Federated Async API",
+    "version": "1.0.0"
+  },
+  "channels": {
+    "chat-service/messages": {
+      "subscribe": {...}
+    }
+  }
+}
+```
+
+**Status Codes:**
+- `200` - Success
+
+---
+
+### GET /graphql
+
+Get the merged GraphQL schema from all registered services.
+
+**Request:**
+
+```bash
+curl http://gateway:3000/__/farp/graphql
+```
+
+**Response:**
+
+```graphql
+# Federated GraphQL Schema
+type Query {
+  users: [User]
+  posts: [Post]
+}
+
+type User {
+  id: ID!
+  name: String!
+}
+
+type Post {
+  id: ID!
+  title: String!
+}
+```
+
+**Status Codes:**
+- `200` - Success
+
+---
+
+### GET /grpc
+
+Get the merged gRPC protobuf schema from all registered services.
+
+**Request:**
+
+```bash
+curl http://gateway:3000/__/farp/grpc
+```
+
+**Response:**
+
+```protobuf
+syntax = "proto3";
+
+package federated;
+
+service UserService {
+  rpc GetUser(GetUserRequest) returns (User);
+}
+
+message User {
+  string id = 1;
+  string name = 2;
+}
+```
+
+**Status Codes:**
+- `200` - Success
+
+---
+
+### GET /schemas
+
+List all available federated schemas.
+
+**Request:**
+
+```bash
+curl http://gateway:3000/__/farp/schemas
+```
+
+**Response:**
+
+```json
+{
+  "schemas": [
+    {
+      "format": "openapi",
+      "sources": ["user-service", "post-service"],
+      "updated_at": 1699123456
+    },
+    {
+      "format": "asyncapi",
+      "sources": ["chat-service"],
+      "updated_at": 1699123789
+    }
+  ]
+}
+```
+
+**Status Codes:**
+- `200` - Success
+
+---
+
+### GET /schema/{format}
+
+Get a specific federated schema by format.
+
+**Parameters:**
+- `format` - Schema format: `openapi`, `asyncapi`, `graphql`, or `grpc`
+
+**Request:**
+
+```bash
+curl http://gateway:3000/__/farp/schema/openapi
+```
+
+**Response:**
+
+Returns the schema in the appropriate format (JSON for OpenAPI/AsyncAPI, text for GraphQL/gRPC).
+
+**Status Codes:**
+- `200` - Success
+- `400` - Invalid format
+- `404` - Schema not found
+
+---
+
+### POST /federate
+
+Manually trigger federation of all registered service schemas.
+
+**Request:**
+
+```bash
+curl -X POST http://gateway:3000/__/farp/federate
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "message": "Schema federation completed",
+  "schemas_processed": 5,
+  "formats_generated": ["openapi", "asyncapi"],
+  "services": ["user-service", "post-service", "chat-service"]
+}
+```
+
+**Status Codes:**
+- `200` - Success
+
+---
+
+## Documentation UIs
+
+### GET /docs
+
+View the Swagger UI for the federated OpenAPI schema.
+
+**Request:**
+
+```bash
+open http://gateway:3000/__/farp/docs
+```
+
+Returns an interactive HTML interface for exploring the federated API.
+
+**Status Codes:**
+- `200` - Success
+
+---
+
+### GET /redoc
+
+View the ReDoc UI for the federated OpenAPI schema.
+
+**Request:**
+
+```bash
+open http://gateway:3000/__/farp/redoc
+```
+
+Returns a beautiful, responsive documentation interface.
+
+**Status Codes:**
+- `200` - Success
+
+---
+
+## Legacy Endpoints
+
+For backwards compatibility, these endpoints are also available without the `/farp` prefix:
+
+```
+/__/openapi.json  → /__/farp/openapi.json
+/__/asyncapi.json → /__/farp/asyncapi.json
+/__/graphql       → /__/farp/graphql
+/__/grpc          → /__/farp/grpc
+/__/docs          → /__/farp/docs
+/__/redoc         → /__/farp/redoc
+```
+
+<Callout type="warn">
+  Legacy endpoints are deprecated and will be removed in v2.0. Use the `/farp/` prefixed endpoints instead.
+</Callout>
+
+---
+
+## Error Responses
+
+All errors follow this format:
+
+```json
+{
+  "error": "error_code",
+  "message": "Human-readable error message"
+}
+```
+
+### Common Error Codes
+
+| Code | Description |
+|------|-------------|
+| `not_found` | Resource not found |
+| `invalid_format` | Invalid schema format |
+| `invalid_manifest` | Invalid service manifest |
+| `service_exists` | Service already registered |
+| `registration_failed` | Service registration failed |
+| `internal_error` | Internal server error |
+
+---
+
+## Rate Limiting
+
+FARP endpoints are subject to the gateway's global rate limiting. Default limits:
+
+- **Service registration**: 10 requests/minute per IP
+- **Schema fetching**: 100 requests/minute per IP
+- **Discovery endpoints**: 1000 requests/minute per IP
+
+Configure rate limits in `config.yaml`:
+
+```yaml
+middleware:
+  - name: rate-limiter
+    config:
+      farp_endpoints:
+        registration: 10
+        discovery: 1000
+```
+
+---
+
+## Next Steps
+
+- [FARP Protocol Overview](/docs/concepts/farp) - Learn about FARP
+- [Service Discovery](/docs/configuration/discovery) - Configure discovery backends
+- [mDNS Local Development](/docs/guides/mdns) - Use mDNS for local dev
+
+

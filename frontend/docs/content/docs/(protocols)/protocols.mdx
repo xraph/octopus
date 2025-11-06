@@ -1,0 +1,90 @@
+---
+title: Protocol Support
+description: Multi-protocol support in Octopus API Gateway
+---
+
+import { Card, Cards } from 'fumadocs-ui/components/card';
+
+# Protocol Support
+
+Octopus provides native support for multiple protocols out of the box.
+
+## Supported Protocols
+
+<Cards>
+  <Card
+    title="HTTP/1.1 & HTTP/2"
+    description="Full HTTP support with connection pooling and multiplexing"
+    href="/docs/protocols/http"
+  />
+  <Card
+    title="gRPC"
+    description="Proxy gRPC services with reflection and transcoding"
+    href="/docs/protocols/grpc"
+  />
+  <Card
+    title="WebSocket"
+    description="Bidirectional WebSocket proxying"
+    href="/docs/protocols/websocket"
+  />
+  <Card
+    title="Server-Sent Events"
+    description="SSE streaming support"
+    href="/docs/protocols/sse"
+  />
+  <Card
+    title="GraphQL"
+    description="GraphQL federation and schema stitching"
+    href="/docs/protocols/graphql"
+  />
+  <Card
+    title="WebTransport"
+    description="QUIC-based transport (experimental)"
+    href="/docs/protocols/webtransport"
+  />
+</Cards>
+
+## Protocol Detection
+
+Octopus automatically detects protocols based on:
+
+- HTTP headers (`Upgrade`, `Content-Type`)
+- URL path patterns
+- Port configuration
+- Request method
+
+## Configuration
+
+```yaml
+routes:
+  # HTTP/REST
+  - path: /api/*
+    upstream: api-service
+    protocol: http
+  
+  # gRPC
+  - path: /grpc.*
+    upstream: grpc-service
+    protocol: grpc
+  
+  # WebSocket
+  - path: /ws
+    upstream: ws-service
+    protocol: websocket
+  
+  # SSE
+  - path: /events
+    upstream: event-service
+    protocol: sse
+```
+
+## Next Steps
+
+Learn about specific protocol support:
+
+- [HTTP](/docs/protocols/http)
+- [gRPC](/docs/protocols/grpc)
+- [WebSocket](/docs/protocols/websocket)
+- [SSE](/docs/protocols/sse)
+- [GraphQL](/docs/protocols/graphql)
+

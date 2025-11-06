@@ -27,11 +27,18 @@ pub trait Middleware: Send + Sync + fmt::Debug {
     async fn call(&self, req: Request<Body>, next: Next) -> Result<Response<Body>>;
 }
 
+/// Type alias for the final handler function
+pub type HandlerFn = Box<
+    dyn Fn(Request<Body>) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Response<Body>>> + Send>>
+        + Send
+        + Sync,
+>;
+
 /// Represents the next middleware/handler in the chain
-#[derive(Clone)]
 pub struct Next {
     middleware_stack: Arc<[Arc<dyn Middleware>]>,
     index: usize,
+    final_handler: Option<Arc<HandlerFn>>,
 }
 
 impl Next {
@@ -40,6 +47,19 @@ impl Next {
         Self {
             middleware_stack,
             index: 0,
+            final_handler: None,
+        }
+    }
+
+    /// Create a new Next with a final handler
+    pub fn with_handler(
+        middleware_stack: Arc<[Arc<dyn Middleware>]>,
+        handler: HandlerFn,
+    ) -> Self {
+        Self {
+            middleware_stack,
+            index: 0,
+            final_handler: Some(Arc::new(handler)),
         }
     }
 
@@ -49,14 +69,27 @@ impl Next {
             let next = Self {
                 middleware_stack: Arc::clone(&self.middleware_stack),
                 index: self.index + 1,
+                final_handler: self.final_handler.clone(),
             };
             middleware.call(req, next).await
+        } else if let Some(handler) = self.final_handler {
+            // Call the final handler
+            handler(req).await
         } else {
-            // Reached end of chain, should proxy to upstream
-            // This will be handled by the actual proxy implementation
+            // Reached end of chain without handler
             Err(Error::Internal(
                 "Middleware chain completed without handler".to_string(),
             ))
+        }
+    }
+}
+
+impl Clone for Next {
+    fn clone(&self) -> Self {
+        Self {
+            middleware_stack: Arc::clone(&self.middleware_stack),
+            index: self.index,
+            final_handler: self.final_handler.clone(),
         }
     }
 }

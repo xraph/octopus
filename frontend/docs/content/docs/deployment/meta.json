@@ -1,0 +1,13 @@
+{
+  "title": "Deployment",
+  "icon": "Rocket",
+  "defaultOpen": false,
+  "pages": [
+    "index",
+    "docker",
+    "kubernetes",
+    "systemd",
+    "production"
+  ]
+}
+

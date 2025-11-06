@@ -1,0 +1,33 @@
+{
+  "title": "Octopus API Gateway",
+  "description": "High-performance, extensible API Gateway in Rust",
+  "icon": "Code",
+  "root": true,
+  "defaultOpen": true,
+  "pages": [
+    "---Getting Started---",
+    "index",
+    "installation",
+    "quick-start",
+    "first-gateway",
+    "---Concepts---",
+    "...(concepts)",
+    "---Configuration---",
+    "configuration",
+    "...(configuration)",
+    "---Protocols---",
+    "...(protocols)",
+    "---Middleware---",
+    "...(middleware)",
+    "---Plugins---",
+    "plugins",
+    "---Observability---",
+    "...(observability)",
+    "---Infra---",
+    "deployment",
+    "---Guides---",
+    "guides",
+    "---API Reference---",
+    "api"
+  ]
+}

@@ -1,0 +1,122 @@
+<!-- Alpine.js Data Table Component Script -->
+<script>
+document.addEventListener('alpine:init', () => {
+    Alpine.data('dataTable', (initialData = {}) => ({
+        // Data
+        rows: initialData.rows || [],
+        columns: initialData.columns || {},
+        
+        // State
+        sortColumn: initialData.sortColumn || null,
+        sortDirection: 'asc',
+        searchQuery: '',
+        selectedRows: [],
+        selectAll: false,
+        
+        // Computed
+        get filteredAndSortedRows() {
+            let result = [...this.rows];
+            
+            // Filter
+            if (this.searchQuery) {
+                const query = this.searchQuery.toLowerCase();
+                result = result.filter(row => 
+                    Object.values(row).some(val => 
+                        String(val).toLowerCase().includes(query)
+                    )
+                );
+            }
+            
+            // Sort
+            if (this.sortColumn) {
+                result.sort((a, b) => {
+                    let aVal = a[this.sortColumn];
+                    let bVal = b[this.sortColumn];
+                    
+                    // Handle numbers
+                    if (typeof aVal === 'number' && typeof bVal === 'number') {
+                        return this.sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
+                    }
+                    
+                    // Handle strings
+                    aVal = String(aVal).toLowerCase();
+                    bVal = String(bVal).toLowerCase();
+                    
+                    if (this.sortDirection === 'asc') {
+                        return aVal > bVal ? 1 : -1;
+                    } else {
+                        return aVal < bVal ? 1 : -1;
+                    }
+                });
+            }
+            
+            return result;
+        },
+        
+        get selectedCount() {
+            return this.selectedRows.length;
+        },
+        
+        get hasSelection() {
+            return this.selectedRows.length > 0;
+        },
+        
+        // Methods
+        sort(column) {
+            if (this.sortColumn === column) {
+                this.sortDirection = this.sortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+                this.sortColumn = column;
+                this.sortDirection = 'asc';
+            }
+        },
+        
+        toggleSelectAll() {
+            if (this.selectAll) {
+                this.selectedRows = this.filteredAndSortedRows.map(r => r.id);
+            } else {
+                this.selectedRows = [];
+            }
+        },
+        
+        toggleRow(id) {
+            const index = this.selectedRows.indexOf(id);
+            if (index > -1) {
+                this.selectedRows.splice(index, 1);
+            } else {
+                this.selectedRows.push(id);
+            }
+            
+            // Update select all state
+            this.selectAll = this.selectedRows.length === this.filteredAndSortedRows.length;
+        },
+        
+        isRowSelected(id) {
+            return this.selectedRows.includes(id);
+        },
+        
+        getSortIcon(column) {
+            if (this.sortColumn !== column) {
+                return '↕️';
+            }
+            return this.sortDirection === 'asc' ? '↑' : '↓';
+        },
+        
+        toggleColumn(column) {
+            this.columns[column] = !this.columns[column];
+        },
+        
+        bulkDelete() {
+            if (confirm(`Delete ${this.selectedCount} selected items?`)) {
+                // HTMX call to delete
+                console.log('Bulk delete:', this.selectedRows);
+            }
+        },
+        
+        bulkExport() {
+            console.log('Bulk export:', this.selectedRows);
+        }
+    }));
+});
+</script>
+

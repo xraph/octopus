@@ -6,8 +6,62 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Runtime and lifecycle management for Octopus API Gateway"
 
 [dependencies]
 octopus-core = { path = "../octopus-core" }
+octopus-config = { path = "../octopus-config" }
+octopus-router = { path = "../octopus-router" }
+octopus-proxy = { path = "../octopus-proxy" }
+octopus-admin = { path = "../octopus-admin" }
+octopus-health = { path = "../octopus-health" }
+octopus-farp = { path = "../octopus-farp" }
+octopus-discovery = { path = "../octopus-discovery", optional = true }
+octopus-metrics = { path = "../octopus-metrics" }
+octopus-compression = { path = "../octopus-compression" }
+octopus-tls = { path = "../octopus-tls" }
+octopus-protocols = { path = "../octopus-protocols" }
+octopus-plugin-runtime = { path = "../octopus-plugin-runtime" }
+
+# Async
 tokio.workspace = true
+tokio-util.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+
+# HTTP
+hyper.workspace = true
+hyper-util.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+tower.workspace = true
+
+# Error handling
+anyhow.workspace = true
+thiserror.workspace = true
+
+# Logging
 tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Utilities
+bytes.workspace = true
+parking_lot.workspace = true
+arc-swap.workspace = true
+num_cpus.workspace = true
+
+# Serialization
+serde_json.workspace = true
+
+# Templates
+askama.workspace = true
+
+# Time
+chrono.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }
+
+[features]
+default = ["mdns"]
+mdns = ["octopus-discovery", "octopus-discovery/mdns"]

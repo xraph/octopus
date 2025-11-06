@@ -16,7 +16,9 @@ members = [
     "crates/octopus-admin",
     "crates/octopus-config",
     "crates/octopus-metrics",
+    "crates/octopus-state",
     "octopus-cli",
+    "examples",
     "plugins/auth-jwt",
     "plugins/rate-limiter",
     "plugins/cache-redis",
@@ -101,7 +103,7 @@ metrics-exporter-prometheus = "0.14"
 libloading = "0.8"
 
 # Scripting
-rhai = { version = "1.17", features = ["sync", "serde", "no_std"] }
+rhai = { version = "1.17", features = ["sync", "no_std"] }
 
 # Authentication
 jsonwebtoken = "9.2"
@@ -143,12 +145,24 @@ pin-project = "1.1"
 once_cell = "1.19"
 regex = "1.10"
 semver = { version = "1.0", features = ["serde"] }
+num_cpus = "1.16"
+
+# Templates
+askama = { version = "0.12", features = ["with-axum", "serde-json"] }
+askama_axum = "0.4"
+
+# File watching
+notify = "6.1"
+
+# Time utilities
+humantime-serde = "1.1"
 
 # Testing
 mockall = "0.12"
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
 proptest = "1.4"
 wiremock = "0.6"
+tempfile = "3.8"
 
 # Build dependencies
 tonic-build = "0.11"

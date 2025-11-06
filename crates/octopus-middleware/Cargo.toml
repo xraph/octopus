@@ -6,8 +6,51 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Built-in middleware collection for Octopus API Gateway"
 
 [dependencies]
 octopus-core = { path = "../octopus-core" }
+
+# Async
 tokio.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+
+# HTTP
+http.workspace = true
+http-body-util.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+
+# Compression
+async-compression = { version = "0.4", features = ["tokio", "gzip", "brotli", "zstd"] }
+
+# Error handling
+anyhow.workspace = true
+thiserror.workspace = true
+
+# Logging
 tracing.workspace = true
+
+# Rate limiting
+governor.workspace = true
+
+# JWT Authentication
+jsonwebtoken = "9"
+serde.workspace = true
+
+# Utilities
+bytes.workspace = true
+pin-project.workspace = true
+uuid.workspace = true
+serde_json.workspace = true
+dashmap.workspace = true
+chrono.workspace = true
+parking_lot.workspace = true
+rand = "0.8"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros", "rt", "fs"] }
+serde_json.workspace = true
+tempfile = "3"
+

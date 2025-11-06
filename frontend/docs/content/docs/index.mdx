@@ -1,0 +1,246 @@
+---
+title: Introduction
+description: Welcome to Octopus API Gateway - A high-performance, extensible API Gateway built in Rust
+---
+
+import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+
+# Welcome to Octopus 🐙
+
+**Octopus** is a high-performance, extensible API Gateway built in Rust, designed for cloud-native environments. It provides automatic service discovery, dynamic routing, multi-protocol support, and a powerful plugin system.
+
+## Why Octopus?
+
+<Cards>
+  <Card
+    title="⚡ High Performance"
+    description="100k+ RPS per instance with P99 latency < 10ms. Built on Tokio and Hyper for maximum throughput."
+  />
+  <Card
+    title="🔌 Extensible"
+    description="Dynamic plugin system for custom functionality. Add middleware, protocol handlers, and more without modifying core code."
+  />
+  <Card
+    title="🔄 Auto-Discovery"
+    description="FARP protocol integration for zero-config routing. Automatically discover services and generate routes."
+  />
+  <Card
+    title="🌐 Multi-Protocol"
+    description="Native support for HTTP/1.1, HTTP/2, gRPC, WebSocket, SSE, GraphQL, and more."
+  />
+  <Card
+    title="📊 Observable"
+    description="Built-in Prometheus metrics, OpenTelemetry tracing, and structured logging."
+  />
+  <Card
+    title="🛡️ Production Ready"
+    description="Health checks, circuit breakers, graceful shutdown, and comprehensive error handling."
+  />
+</Cards>
+
+## Key Features
+
+### Core Capabilities
+
+- **🔄 Automatic Service Discovery** - FARP protocol for zero-config routing
+- **⚡ High Performance** - 100k+ RPS, P99 < 10ms
+- **🔌 Extensible Plugin System** - Dynamic loading and custom functionality
+- **🌐 Multi-Protocol Support** - REST, gRPC, WebSocket, SSE, GraphQL, WebTransport
+- **📊 Comprehensive Observability** - Metrics, tracing, and logging
+- **🛡️ Production Features** - Health checks, circuit breakers, graceful shutdown
+- **📝 Auto-Generated Docs** - Federated OpenAPI/AsyncAPI from services
+
+### Protocol Support
+
+| Protocol | Status | Description |
+|----------|--------|-------------|
+| HTTP/1.1 | ✅ | Full support with connection pooling |
+| HTTP/2 | ✅ | Multiplexing, server push |
+| HTTP/3 (QUIC) | 🚧 | Experimental |
+| gRPC | ✅ | Proxying, reflection, transcoding |
+| WebSocket | ✅ | Bidirectional proxying |
+| SSE | ✅ | Server-Sent Events |
+| GraphQL | ✅ | Federation support |
+| WebTransport | 🚧 | Experimental |
+| Custom | ✅ | Via plugins |
+
+### Service Discovery Backends
+
+- ✅ Kubernetes (native support)
+- ✅ Consul
+- ✅ etcd
+- ✅ Eureka
+- ✅ DNS SRV records
+- ✅ Static configuration
+
+## Quick Example
+
+```yaml
+# config.yaml
+server:
+  http_port: 8080
+  admin_port: 9090
+
+discovery:
+  backend: kubernetes
+  kubernetes:
+    namespace: default
+
+farp:
+  enabled: true
+  watch_interval: 5s
+```
+
+```bash
+# Run the gateway
+octopus --config config.yaml
+
+# Check health
+curl http://localhost:9090/_/health
+
+# View metrics
+curl http://localhost:9090/metrics
+```
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Client Layer                             │
+│  HTTP/HTTPS │ gRPC │ WebSocket │ GraphQL │ Custom           │
+└───────────────────────────────┬─────────────────────────────┘
+                                │
+┌───────────────────────────────▼─────────────────────────────┐
+│              Octopus API Gateway                             │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │  Protocol Layer: HTTP │ gRPC │ WS │ GraphQL         │  │
+│  └────────────────────────┬─────────────────────────────┘  │
+│  ┌────────────────────────▼─────────────────────────────┐  │
+│  │  Middleware: Auth │ RateLimit │ CORS │ Scripting    │  │
+│  └────────────────────────┬─────────────────────────────┘  │
+│  ┌────────────────────────▼─────────────────────────────┐  │
+│  │  Router: Trie-based matching, Load balancing        │  │
+│  └────────────────────────┬─────────────────────────────┘  │
+│  ┌────────────────────────▼─────────────────────────────┐  │
+│  │  Service Registry (FARP Client)                      │  │
+│  └────────────────────────┬─────────────────────────────┘  │
+│  ┌────────────────────────▼─────────────────────────────┐  │
+│  │  Plugin System: Dynamic loading, lifecycle mgmt      │  │
+│  └──────────────────────────────────────────────────────┘  │
+└───────────────────────────────┬─────────────────────────────┘
+                                │
+┌───────────────────────────────▼─────────────────────────────┐
+│          Discovery: K8s │ Consul │ etcd │ Eureka            │
+└───────────────────────────────┬─────────────────────────────┘
+                                │
+┌───────────────────────────────▼─────────────────────────────┐
+│                    Upstream Services                         │
+└──────────────────────────────────────────────────────────────┘
+```
+
+## Getting Started
+
+<Steps>
+
+<Step>
+### Install Octopus
+
+```bash
+# From source
+cargo install octopus-gateway
+
+# Or download binary
+curl -L https://github.com/xraph/octopus/releases/latest/download/octopus-linux-amd64 -o octopus
+chmod +x octopus
+```
+</Step>
+
+<Step>
+### Create Configuration
+
+```yaml
+# config.yaml
+server:
+  http_port: 8080
+  admin_port: 9090
+
+discovery:
+  backend: static
+
+upstreams:
+  - name: my-service
+    instances:
+      - address: localhost
+        port: 8081
+
+routes:
+  - path: /api/*
+    upstream: my-service
+```
+</Step>
+
+<Step>
+### Run the Gateway
+
+```bash
+octopus --config config.yaml
+```
+</Step>
+
+<Step>
+### Test It
+
+```bash
+# Make a request
+curl http://localhost:8080/api/hello
+
+# Check health
+curl http://localhost:9090/_/health
+
+# View metrics
+curl http://localhost:9090/metrics
+```
+</Step>
+
+</Steps>
+
+## Next Steps
+
+<Cards>
+  <Card
+    title="Quick Start"
+    description="Get Octopus up and running in 5 minutes"
+    href="/docs/quick-start"
+  />
+  <Card
+    title="Configuration"
+    description="Learn how to configure Octopus for your needs"
+    href="/docs/configuration"
+  />
+  <Card
+    title="FARP Protocol"
+    description="Understand automatic service discovery"
+    href="/docs/concepts/farp"
+  />
+  <Card
+    title="Plugin System"
+    description="Extend Octopus with custom plugins"
+    href="/docs/concepts/plugins"
+  />
+</Cards>
+
+## Community & Support
+
+- **📖 Documentation**: You're reading it!
+- **💬 Discussions**: [GitHub Discussions](https://github.com/xraph/octopus/discussions)
+- **🐛 Issues**: [GitHub Issues](https://github.com/xraph/octopus/issues)
+- **📧 Email**: support@octopus.io
+
+## License
+
+Octopus is dual-licensed under **MIT** and **Apache-2.0**. Choose the license that best suits your needs.
+
+---
+
+**Ready to build? Let's go! 🐙**

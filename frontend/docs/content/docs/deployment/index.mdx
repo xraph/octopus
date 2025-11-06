@@ -1,0 +1,100 @@
+---
+title: Deployment
+description: Deploy Octopus to production
+---
+
+import { Card, Cards } from 'fumadocs-ui/components/card';
+
+# Deployment
+
+Learn how to deploy Octopus API Gateway to production.
+
+## Deployment Options
+
+<Cards>
+  <Card
+    title="Docker"
+    description="Deploy with Docker and Docker Compose"
+    href="/docs/deployment/docker"
+  />
+  <Card
+    title="Kubernetes"
+    description="Deploy to Kubernetes with Helm"
+    href="/docs/deployment/kubernetes"
+  />
+  <Card
+    title="systemd"
+    description="Run as a systemd service"
+    href="/docs/deployment/systemd"
+  />
+  <Card
+    title="Production Checklist"
+    description="Production readiness checklist"
+    href="/docs/deployment/production"
+  />
+</Cards>
+
+## Quick Deploy
+
+### Docker
+
+```bash
+docker run -d \
+  --name octopus \
+  -p 8080:8080 \
+  -p 9090:9090 \
+  -v $(pwd)/config.yaml:/etc/octopus/config.yaml \
+  octopus/octopus:latest
+```
+
+### Kubernetes
+
+```bash
+helm install my-gateway octopus/octopus \
+  --set discovery.backend=kubernetes \
+  --set farp.enabled=true
+```
+
+### Binary
+
+```bash
+octopus --config /etc/octopus/config.yaml
+```
+
+## Production Considerations
+
+### High Availability
+
+- Run multiple instances behind a load balancer
+- Use horizontal pod autoscaling in Kubernetes
+- Deploy across multiple availability zones
+
+### Security
+
+- Enable TLS/HTTPS
+- Use secrets management (Vault, K8s Secrets)
+- Enable authentication on admin endpoints
+- Restrict network access
+- Regular security updates
+
+### Monitoring
+
+- Set up Prometheus and Grafana
+- Configure alerting
+- Enable distributed tracing
+- Aggregate logs
+
+### Performance
+
+- Tune worker count based on CPU cores
+- Configure connection pooling
+- Enable compression
+- Use HTTP/2 where possible
+
+## Next Steps
+
+- [Docker Deployment](/docs/deployment/docker)
+- [Kubernetes Deployment](/docs/deployment/kubernetes)
+- [Production Checklist](/docs/deployment/production)
+- [Performance Tuning](/docs/guides/performance)
+

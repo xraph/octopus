@@ -1,0 +1,376 @@
+---
+title: Installation
+description: Install Octopus API Gateway on your system
+---
+
+import { Tabs } from 'fumadocs-ui/components/tabs';
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+
+# Installation
+
+Learn how to install Octopus API Gateway on your system.
+
+## Prerequisites
+
+<Callout title="Requirements">
+  - **Rust**: 1.75 or later (if building from source)
+  - **Operating System**: Linux, macOS, or Windows
+  - **Memory**: Minimum 512MB RAM
+  - **CPU**: 1+ cores (multi-core recommended)
+</Callout>
+
+## Installation Methods
+
+<Tabs items={['Binary', 'Cargo', 'Docker', 'Source']}>
+
+<div title="Binary">
+
+### Download Binary
+
+Download the latest pre-compiled binary for your platform:
+
+```bash
+# Linux (x86_64)
+curl -L https://github.com/xraph/octopus/releases/latest/download/octopus-linux-amd64 -o octopus
+chmod +x octopus
+sudo mv octopus /usr/local/bin/
+
+# macOS (Apple Silicon)
+curl -L https://github.com/xraph/octopus/releases/latest/download/octopus-darwin-arm64 -o octopus
+chmod +x octopus
+sudo mv octopus /usr/local/bin/
+
+# macOS (Intel)
+curl -L https://github.com/xraph/octopus/releases/latest/download/octopus-darwin-amd64 -o octopus
+chmod +x octopus
+sudo mv octopus /usr/local/bin/
+```
+
+Verify the installation:
+
+```bash
+octopus --version
+```
+
+</div>
+
+<div title="Cargo">
+
+### Install via Cargo
+
+If you have Rust installed, you can install Octopus using Cargo:
+
+```bash
+cargo install octopus-gateway
+```
+
+This will compile and install the latest version from crates.io.
+
+Verify the installation:
+
+```bash
+octopus --version
+```
+
+</div>
+
+<div title="Docker">
+
+### Docker
+
+Pull the official Docker image:
+
+```bash
+docker pull octopus/octopus:latest
+```
+
+Run Octopus in a container:
+
+```bash
+docker run -d \
+  --name octopus \
+  -p 8080:8080 \
+  -p 9090:9090 \
+  -v $(pwd)/config.yaml:/etc/octopus/config.yaml \
+  octopus/octopus:latest
+```
+
+Check logs:
+
+```bash
+docker logs -f octopus
+```
+
+</div>
+
+<div title="Source">
+
+### Build from Source
+
+<Steps>
+
+<Step>
+### Install Rust
+
+If you don't have Rust installed:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source $HOME/.cargo/env
+```
+</Step>
+
+<Step>
+### Clone Repository
+
+```bash
+git clone https://github.com/xraph/octopus.git
+cd octopus
+```
+</Step>
+
+<Step>
+### Build
+
+```bash
+# Debug build
+cargo build
+
+# Release build (optimized)
+cargo build --release
+```
+</Step>
+
+<Step>
+### Install
+
+```bash
+# Install from local build
+cargo install --path octopus-cli
+
+# Or run directly
+./target/release/octopus --version
+```
+</Step>
+
+</Steps>
+
+</div>
+
+</Tabs>
+
+## Development Tools
+
+For development, install additional tools:
+
+```bash
+# Hot reload
+cargo install cargo-watch
+
+# Testing framework
+cargo install cargo-nextest
+
+# Security auditing
+cargo install cargo-audit
+
+# Dependency checking
+cargo install cargo-deny
+
+# Benchmarking
+cargo install cargo-criterion
+```
+
+## Verify Installation
+
+Check that Octopus is installed correctly:
+
+```bash
+# Check version
+octopus --version
+
+# View help
+octopus --help
+
+# Validate configuration
+octopus validate --config config.yaml
+```
+
+## Configuration Setup
+
+Create a basic configuration file:
+
+```bash
+# Download example configuration
+curl -L https://raw.githubusercontent.com/xraph/octopus/main/config.example.yaml -o config.yaml
+
+# Or create manually
+cat > config.yaml <<EOF
+server:
+  http_port: 8080
+  admin_port: 9090
+
+discovery:
+  backend: static
+
+upstreams:
+  - name: example-service
+    instances:
+      - address: localhost
+        port: 8081
+
+routes:
+  - path: /api/*
+    upstream: example-service
+EOF
+```
+
+## Platform-Specific Notes
+
+### Linux
+
+<Callout type="info">
+  On Linux, you may need to allow Octopus to bind to ports below 1024:
+</Callout>
+
+```bash
+sudo setcap 'cap_net_bind_service=+ep' /usr/local/bin/octopus
+```
+
+### macOS
+
+<Callout type="info">
+  On macOS, you might need to allow network connections in System Preferences > Security & Privacy.
+</Callout>
+
+### Windows
+
+<Callout type="info">
+  On Windows, ensure that Windows Defender Firewall allows Octopus to accept incoming connections.
+</Callout>
+
+## Kubernetes Installation
+
+For Kubernetes deployments, use Helm:
+
+```bash
+# Add Helm repository
+helm repo add octopus https://octopus.io/charts
+helm repo update
+
+# Install Octopus
+helm install my-gateway octopus/octopus \
+  --set discovery.backend=kubernetes \
+  --set farp.enabled=true
+```
+
+See [Kubernetes Deployment](/docs/deployment/kubernetes) for detailed instructions.
+
+## Upgrading
+
+### Binary/Cargo
+
+```bash
+# Cargo
+cargo install --force octopus-gateway
+
+# Binary
+# Download new version and replace old one
+curl -L https://github.com/xraph/octopus/releases/latest/download/octopus-linux-amd64 -o octopus
+chmod +x octopus
+sudo mv octopus /usr/local/bin/
+```
+
+### Docker
+
+```bash
+# Pull latest image
+docker pull octopus/octopus:latest
+
+# Restart container
+docker restart octopus
+```
+
+### Helm
+
+```bash
+helm upgrade my-gateway octopus/octopus
+```
+
+## Uninstallation
+
+### Binary
+
+```bash
+sudo rm /usr/local/bin/octopus
+```
+
+### Cargo
+
+```bash
+cargo uninstall octopus-gateway
+```
+
+### Docker
+
+```bash
+docker stop octopus
+docker rm octopus
+docker rmi octopus/octopus:latest
+```
+
+### Helm
+
+```bash
+helm uninstall my-gateway
+```
+
+## Next Steps
+
+Now that Octopus is installed, check out:
+
+- [Quick Start](/docs/quick-start) - Get up and running in 5 minutes
+- [Configuration](/docs/configuration) - Learn about configuration options
+- [First Gateway](/docs/first-gateway) - Build your first API gateway
+
+## Troubleshooting
+
+### Command Not Found
+
+If you get "command not found" after installation:
+
+```bash
+# Check if binary is in PATH
+echo $PATH
+
+# Add Cargo bin to PATH (if using Cargo)
+echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+### Permission Denied
+
+If you get "permission denied":
+
+```bash
+# Make binary executable
+chmod +x octopus
+
+# Or run with sudo
+sudo octopus --config config.yaml
+```
+
+### Port Already in Use
+
+If you get "address already in use":
+
+```bash
+# Check what's using the port
+lsof -i :8080
+
+# Change port in config.yaml
+server:
+  http_port: 8081  # Use different port
+```
+
+For more help, see [Troubleshooting Guide](/docs/guides/troubleshooting) or [open an issue](https://github.com/xraph/octopus/issues).

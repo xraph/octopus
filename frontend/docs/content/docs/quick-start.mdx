@@ -1,0 +1,512 @@
+---
+title: Quick Start
+description: Get Octopus API Gateway up and running in 5 minutes
+---
+
+import { Step, Steps } from 'fumadocs-ui/components/steps';
+import { Tabs } from 'fumadocs-ui/components/tabs';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Quick Start
+
+Get Octopus API Gateway up and running in 5 minutes.
+
+## Prerequisites
+
+<Callout title="Before you begin">
+  Make sure you have [installed Octopus](/docs/installation) on your system.
+</Callout>
+
+## Basic Setup
+
+<Steps>
+
+<Step>
+### Create Configuration
+
+Create a file named `config.yaml`:
+
+```yaml
+server:
+  http_port: 8080
+  admin_port: 9090
+  workers: auto
+
+discovery:
+  backend: static
+
+upstreams:
+  - name: example-service
+    instances:
+      - address: httpbin.org
+        port: 80
+    load_balance: round-robin
+
+routes:
+  - path: /api/*
+    upstream: example-service
+    methods: [GET, POST]
+```
+
+This configuration:
+- Listens on port 8080 for HTTP traffic
+- Listens on port 9090 for admin/metrics
+- Routes `/api/*` to httpbin.org
+- Uses static service discovery
+
+</Step>
+
+<Step>
+### Start the Gateway
+
+Run Octopus with your configuration:
+
+```bash
+octopus --config config.yaml
+```
+
+You should see output like:
+
+```
+[INFO] Octopus API Gateway starting...
+[INFO] HTTP server listening on 0.0.0.0:8080
+[INFO] Admin server listening on 0.0.0.0:9090
+[INFO] Gateway is ready to accept connections
+```
+
+</Step>
+
+<Step>
+### Test the Gateway
+
+In another terminal, make a request:
+
+```bash
+# Make a request through the gateway
+curl http://localhost:8080/api/get
+
+# Check health
+curl http://localhost:9090/_/health
+
+# View metrics
+curl http://localhost:9090/metrics
+```
+
+</Step>
+
+</Steps>
+
+## Configuration Explained
+
+Let's break down what each section does:
+
+### Server Configuration
+
+```yaml
+server:
+  http_port: 8080      # Port for incoming requests
+  admin_port: 9090     # Port for admin/metrics
+  workers: auto        # Number of worker threads (auto = CPU cores)
+```
+
+### Discovery Backend
+
+```yaml
+discovery:
+  backend: static      # Use static configuration
+```
+
+Other options: `kubernetes`, `consul`, `etcd`, `eureka`
+
+### Upstreams
+
+```yaml
+upstreams:
+  - name: example-service           # Unique upstream name
+    instances:
+      - address: httpbin.org        # Backend address
+        port: 80                    # Backend port
+    load_balance: round-robin       # Load balancing strategy
+```
+
+### Routes
+
+```yaml
+routes:
+  - path: /api/*                    # Path pattern to match
+    upstream: example-service       # Target upstream
+    methods: [GET, POST]            # Allowed HTTP methods
+```
+
+## Common Scenarios
+
+<Tabs items={['Multiple Services', 'With Middleware', 'With FARP', 'Production']}>
+
+<div title="Multiple Services">
+
+### Route to Multiple Services
+
+```yaml
+upstreams:
+  - name: user-service
+    instances:
+      - address: localhost
+        port: 8081
+  
+  - name: order-service
+    instances:
+      - address: localhost
+        port: 8082
+
+routes:
+  - path: /api/users/*
+    upstream: user-service
+  
+  - path: /api/orders/*
+    upstream: order-service
+```
+
+</div>
+
+<div title="With Middleware">
+
+### Add Middleware
+
+```yaml
+server:
+  http_port: 8080
+  admin_port: 9090
+
+middleware:
+  - cors
+  - rate_limit
+  - compression
+
+cors:
+  allowed_origins: ["*"]
+  allowed_methods: [GET, POST, PUT, DELETE]
+  allowed_headers: ["*"]
+
+rate_limit:
+  requests_per_second: 1000
+  burst: 2000
+
+upstreams:
+  - name: api-service
+    instances:
+      - address: localhost
+        port: 8081
+
+routes:
+  - path: /api/*
+    upstream: api-service
+```
+
+</div>
+
+<div title="With FARP">
+
+### Enable FARP Auto-Discovery
+
+```yaml
+server:
+  http_port: 8080
+  admin_port: 9090
+
+discovery:
+  backend: kubernetes
+  kubernetes:
+    namespace: default
+    label_selector: "app.kubernetes.io/part-of=myapp"
+
+farp:
+  enabled: true
+  watch_interval: 5s
+  schema_cache_ttl: 5m
+
+# Routes are automatically generated from service manifests
+```
+
+</div>
+
+<div title="Production">
+
+### Production Configuration
+
+```yaml
+server:
+  http_port: 8080
+  https_port: 8443
+  admin_port: 9090
+  workers: auto
+
+tls:
+  enabled: true
+  cert: /etc/octopus/tls/cert.pem
+  key: /etc/octopus/tls/key.pem
+
+discovery:
+  backend: kubernetes
+  kubernetes:
+    namespace: production
+    label_selector: "app.kubernetes.io/part-of=myapp"
+
+farp:
+  enabled: true
+  watch_interval: 5s
+
+routing:
+  timeout: 30s
+  retries: 3
+  circuit_breaker:
+    failure_threshold: 5
+    timeout: 60s
+
+middleware:
+  - auth
+  - rate_limit
+  - cors
+  - compression
+
+auth:
+  type: jwt
+  secret: ${JWT_SECRET}
+
+rate_limit:
+  strategy: token-bucket
+  requests_per_second: 10000
+  burst: 20000
+
+observability:
+  metrics:
+    enabled: true
+    path: /metrics
+  tracing:
+    enabled: true
+    exporter: otlp
+    endpoint: http://jaeger:4317
+  logging:
+    level: info
+    format: json
+
+admin:
+  enabled: true
+  auth:
+    type: basic
+    username: admin
+    password_hash: $2b$...
+```
+
+</div>
+
+</Tabs>
+
+## Admin Endpoints
+
+Octopus exposes several admin endpoints on the admin port (default: 9090):
+
+```bash
+# Health check
+curl http://localhost:9090/_/health
+
+# Readiness check
+curl http://localhost:9090/_/ready
+
+# Prometheus metrics
+curl http://localhost:9090/metrics
+
+# Service list
+curl http://localhost:9090/_/services
+
+# Route list
+curl http://localhost:9090/_/routes
+
+# Configuration
+curl http://localhost:9090/_/config
+```
+
+## Testing Your Setup
+
+### 1. Health Check
+
+```bash
+curl http://localhost:9090/_/health
+```
+
+Expected response:
+```json
+{
+  "status": "healthy",
+  "upstreams": {
+    "example-service": "healthy"
+  }
+}
+```
+
+### 2. Make Requests
+
+```bash
+# GET request
+curl http://localhost:8080/api/get
+
+# POST request
+curl -X POST http://localhost:8080/api/post \
+  -H "Content-Type: application/json" \
+  -d '{"key": "value"}'
+
+# With headers
+curl http://localhost:8080/api/headers \
+  -H "X-Custom-Header: test"
+```
+
+### 3. Check Metrics
+
+```bash
+curl http://localhost:9090/metrics | grep octopus
+```
+
+You should see metrics like:
+```
+octopus_requests_total{method="GET",status="200",route="/api/*"} 42
+octopus_request_duration_seconds{method="GET",route="/api/*"} 0.003
+```
+
+## Load Testing
+
+Test gateway performance:
+
+```bash
+# Install wrk
+brew install wrk  # macOS
+sudo apt install wrk  # Linux
+
+# Run load test
+wrk -t12 -c400 -d30s http://localhost:8080/api/get
+
+# Or use Apache Bench
+ab -n 10000 -c 100 http://localhost:8080/api/get
+```
+
+## Environment Variables
+
+You can use environment variables in your configuration:
+
+```yaml
+server:
+  http_port: ${HTTP_PORT:-8080}  # Default to 8080
+
+auth:
+  jwt_secret: ${JWT_SECRET}      # Required env var
+
+database:
+  url: ${DATABASE_URL}
+```
+
+Set them before running:
+
+```bash
+export JWT_SECRET=your-secret-key
+export DATABASE_URL=postgres://localhost/mydb
+octopus --config config.yaml
+```
+
+## Docker Quick Start
+
+<Steps>
+
+<Step>
+### Create docker-compose.yml
+
+```yaml
+version: '3.8'
+
+services:
+  octopus:
+    image: octopus/octopus:latest
+    ports:
+      - "8080:8080"
+      - "9090:9090"
+    volumes:
+      - ./config.yaml:/etc/octopus/config.yaml
+    environment:
+      - LOG_LEVEL=info
+```
+</Step>
+
+<Step>
+### Start with Docker Compose
+
+```bash
+docker-compose up -d
+```
+</Step>
+
+<Step>
+### Check logs
+
+```bash
+docker-compose logs -f octopus
+```
+</Step>
+
+</Steps>
+
+## Graceful Shutdown
+
+Octopus supports graceful shutdown. To stop:
+
+```bash
+# Send SIGTERM (Ctrl+C)
+# Or
+kill -TERM <pid>
+```
+
+Octopus will:
+1. Stop accepting new connections
+2. Wait for in-flight requests to complete
+3. Close connections gracefully
+4. Shut down
+
+## Next Steps
+
+Now that you have Octopus running:
+
+- [Build Your First Gateway](/docs/first-gateway) - Detailed walkthrough
+- [Configuration Guide](/docs/configuration) - Explore all options
+- [FARP Protocol](/docs/concepts/farp) - Learn about auto-discovery
+- [Middleware](/docs/middleware) - Add authentication, rate limiting, etc.
+- [Deployment](/docs/deployment) - Deploy to production
+
+## Troubleshooting
+
+<Callout type="error" title="Common Issues">
+
+**Port already in use**
+```bash
+# Change port in config.yaml
+server:
+  http_port: 8081
+```
+
+**Connection refused to upstream**
+```bash
+# Check upstream is running
+curl http://localhost:8081/health
+
+# Check firewall rules
+```
+
+**High latency**
+```bash
+# Increase worker threads
+server:
+  workers: 8
+
+# Enable HTTP/2
+http2:
+  enabled: true
+```
+
+</Callout>
+
+For more help, see the [Troubleshooting Guide](/docs/guides/troubleshooting).

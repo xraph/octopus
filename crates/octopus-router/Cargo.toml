@@ -33,7 +33,3 @@ once_cell.workspace = true
 tokio = { workspace = true, features = ["test-util", "macros", "rt"] }
 criterion.workspace = true
 
-[[bench]]
-name = "router_bench"
-harness = false
-

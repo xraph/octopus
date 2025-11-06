@@ -5,9 +5,48 @@ edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
-
-[lib]
-crate-type = ["cdylib"]
+repository.workspace = true
+description = "JWT authentication plugin for Octopus API Gateway"
 
 [dependencies]
+octopus-core = { path = "../../crates/octopus-core" }
 octopus-plugins = { path = "../../crates/octopus-plugins" }
+
+# Dashboard integration (optional)
+octopus-admin = { path = "../../crates/octopus-admin", optional = true }
+
+# Async
+tokio.workspace = true
+async-trait.workspace = true
+
+# HTTP
+http.workspace = true
+http-body-util.workspace = true
+
+# JWT
+jsonwebtoken.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Error handling
+anyhow.workspace = true
+thiserror.workspace = true
+
+# Logging
+tracing.workspace = true
+
+# Utilities
+bytes.workspace = true
+
+# Time
+chrono.workspace = true
+
+[features]
+default = []
+dashboard = ["octopus-admin"]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros", "rt"] }
+

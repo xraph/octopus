@@ -1,0 +1,362 @@
+{% extends "shadcn_base.html" %}
+
+{% block title %}Health - Octopus Admin{% endblock %}
+{% block page_title %}Health Status{% endblock %}
+
+{% block content %}
+<div x-data="healthMonitor()" x-init="init()">
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-8">
+        <div>
+            <h2 class="text-3xl font-bold tracking-tight">Health Status</h2>
+            <p class="text-muted-foreground">
+                Monitor the health of your services and infrastructure
+            </p>
+        </div>
+        <div class="flex items-center space-x-2">
+            <button @click="refresh()" class="button button-ghost h-10 px-4 py-2" :disabled="loading">
+                <svg class="mr-2 h-4 w-4" :class="{ 'animate-spin': loading }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                </svg>
+                Refresh
+            </button>
+            <button @click="exportHealthReport()" class="button button-primary h-10 px-4 py-2">
+                <svg class="mr-2 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                </svg>
+                Export Report
+            </button>
+        </div>
+    </div>
+
+    <!-- Overall Health Banner -->
+    <div class="card mb-8">
+        <div class="p-6">
+            <div class="flex items-center">
+                <div class="flex-shrink-0">
+                    <div :class="overallStatus === 'healthy' ? 'bg-green-100 dark:bg-green-900/20' : 'bg-red-100 dark:bg-red-900/20'"
+                         class="flex h-16 w-16 items-center justify-center rounded-full">
+                        <svg class="h-10 w-10" :class="overallStatus === 'healthy' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'" 
+                             fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <template x-if="overallStatus === 'healthy'">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </template>
+                            <template x-if="overallStatus !== 'healthy'">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                            </template>
+                        </svg>
+                    </div>
+                </div>
+                <div class="ml-6 flex-1">
+                    <h3 class="text-2xl font-bold" 
+                        :class="overallStatus === 'healthy' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'">
+                        System <span x-text="overallStatus === 'healthy' ? 'Healthy' : 'Degraded'"></span>
+                    </h3>
+                    <p class="mt-1 text-sm text-muted-foreground">
+                        Last updated: <span x-text="lastCheckTime"></span>
+                    </p>
+                    <div class="mt-3 flex items-center space-x-6">
+                        <div class="flex items-center">
+                            <span class="text-sm text-muted-foreground mr-2">Passing:</span>
+                            <span class="text-sm font-semibold text-green-600 dark:text-green-400" x-text="passingCount"></span>
+                        </div>
+                        <div class="flex items-center">
+                            <span class="text-sm text-muted-foreground mr-2">Warning:</span>
+                            <span class="text-sm font-semibold text-yellow-600 dark:text-yellow-400" x-text="warningCount"></span>
+                        </div>
+                        <div class="flex items-center">
+                            <span class="text-sm text-muted-foreground mr-2">Critical:</span>
+                            <span class="text-sm font-semibold text-red-600 dark:text-red-400" x-text="criticalCount"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Uptime Statistics with Charts -->
+    <div class="grid gap-4 md:grid-cols-3 mb-8">
+        <div class="card">
+            <div class="p-6">
+                <div class="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <h3 class="text-sm font-medium text-muted-foreground">24 Hours</h3>
+                    <svg class="h-4 w-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                </div>
+                <div class="space-y-1">
+                    <div class="text-3xl font-bold">{{ uptime_24h }}%</div>
+                    <p class="text-xs text-muted-foreground">Uptime</p>
+                </div>
+                <div class="mt-4 h-2 bg-muted rounded-full overflow-hidden">
+                    <div class="h-full bg-green-500 rounded-full transition-all" :style="`width: ${uptime_24h}%`"></div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="p-6">
+                <div class="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <h3 class="text-sm font-medium text-muted-foreground">7 Days</h3>
+                    <svg class="h-4 w-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+                    </svg>
+                </div>
+                <div class="space-y-1">
+                    <div class="text-3xl font-bold">{{ uptime_7d }}%</div>
+                    <p class="text-xs text-muted-foreground">Uptime</p>
+                </div>
+                <div class="mt-4 h-2 bg-muted rounded-full overflow-hidden">
+                    <div class="h-full bg-green-500 rounded-full transition-all" :style="`width: ${uptime_7d}%`"></div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <div class="p-6">
+                <div class="flex flex-row items-center justify-between space-y-0 pb-2">
+                    <h3 class="text-sm font-medium text-muted-foreground">30 Days</h3>
+                    <svg class="h-4 w-4 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                    </svg>
+                </div>
+                <div class="space-y-1">
+                    <div class="text-3xl font-bold">{{ uptime_30d }}%</div>
+                    <p class="text-xs text-muted-foreground">Uptime</p>
+                </div>
+                <div class="mt-4 h-2 bg-muted rounded-full overflow-hidden">
+                    <div class="h-full bg-green-500 rounded-full transition-all" :style="`width: ${uptime_30d}%`"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="mb-6 flex items-center gap-4">
+        <select x-model="filterStatus" @change="filterHealthChecks()" class="input w-[160px]">
+            <option value="">All Status</option>
+            <option value="passing">Passing</option>
+            <option value="warning">Warning</option>
+            <option value="critical">Critical</option>
+        </select>
+        <input x-model="searchQuery" 
+               @input="filterHealthChecks()"
+               type="search"
+               placeholder="Search health checks..."
+               class="input flex-1 max-w-md" />
+    </div>
+
+    <!-- Health Checks with Real-time Updates -->
+    <div class="grid gap-6 md:grid-cols-2 lg:grid-cols-3" id="healthChecksList">
+        <template x-for="check in filteredChecks" :key="check.name">
+            <div class="card" :class="{'ring-2 ring-yellow-500': check.status === 'warning', 'ring-2 ring-red-500': check.status === 'critical'}">
+                <!-- Header -->
+                <div class="p-6 pb-4">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-semibold text-foreground" x-text="check.name"></h3>
+                        <span :class="getStatusBadgeClass(check.status)"
+                              class="inline-flex items-center rounded-md px-2 py-1 text-xs font-medium ring-1 ring-inset"
+                              x-text="check.status.charAt(0).toUpperCase() + check.status.slice(1)">
+                        </span>
+                    </div>
+                    
+                    <div class="space-y-3">
+                        <div class="flex justify-between items-center">
+                            <span class="text-sm text-muted-foreground">Response Time</span>
+                            <span class="text-sm font-medium text-foreground" x-text="check.response_time_ms + 'ms'"></span>
+                        </div>
+                        <div x-show="check.message" class="text-sm text-muted-foreground" x-text="check.message"></div>
+                        
+                        <!-- Response Time Chart -->
+                        <div class="mt-4">
+                            <div class="flex items-center justify-between mb-1">
+                                <span class="text-xs text-muted-foreground">Response Time Trend</span>
+                                <span class="text-xs text-foreground font-medium" x-text="check.response_time_ms + 'ms'"></span>
+                            </div>
+                            <div class="h-16 bg-muted rounded overflow-hidden">
+                                <canvas :id="'chart-' + check.name.replace(/\s+/g, '-').toLowerCase()" class="w-full h-full"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Expandable Details -->
+                <div x-data="{ expanded: false }" class="border-t border-border">
+                    <button @click="expanded = !expanded" 
+                            class="w-full px-6 py-3 text-left text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors flex items-center justify-between">
+                        <span>Details</span>
+                        <svg class="h-4 w-4 transform transition-transform" 
+                             :class="{ 'rotate-180': expanded }"
+                             fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                        </svg>
+                    </button>
+                    
+                    <div x-show="expanded" 
+                         x-cloak
+                         x-collapse
+                         class="px-6 py-4 bg-muted/50 space-y-3">
+                        <div>
+                            <dt class="text-xs font-medium text-muted-foreground mb-1">Last Check</dt>
+                            <dd class="text-sm text-foreground" x-text="check.last_check"></dd>
+                        </div>
+                        <div x-show="check.endpoint">
+                            <dt class="text-xs font-medium text-muted-foreground mb-1">Endpoint</dt>
+                            <dd class="text-sm text-foreground font-mono bg-background px-2 py-1 rounded" x-text="check.endpoint"></dd>
+                        </div>
+                        <div>
+                            <dt class="text-xs font-medium text-muted-foreground mb-1">Consecutive Failures</dt>
+                            <dd class="text-sm text-foreground" x-text="check.consecutive_failures"></dd>
+                        </div>
+                        <div x-show="check.message">
+                            <dt class="text-xs font-medium text-muted-foreground mb-1">Message</dt>
+                            <dd class="text-sm text-foreground" x-text="check.message"></dd>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </template>
+    </div>
+</div>
+
+<script>
+function healthMonitor() {
+    return {
+        healthChecks: {{ health_checks|json }},
+        filteredChecks: [],
+        overallStatus: '{{ overall_status }}',
+        lastCheckTime: '{{ last_check_time }}',
+        uptime_24h: {{ uptime_24h }},
+        uptime_7d: {{ uptime_7d }},
+        uptime_30d: {{ uptime_30d }},
+        searchQuery: '',
+        filterStatus: '',
+        loading: false,
+        passingCount: 0,
+        warningCount: 0,
+        criticalCount: 0,
+
+        init() {
+            this.filteredChecks = [...this.healthChecks];
+            this.calculateCounts();
+            this.initMiniCharts();
+            this.loadHealthChecks();
+            // Auto-refresh every 10 seconds
+            setInterval(() => this.loadHealthChecks(), 10000);
+        },
+
+        calculateCounts() {
+            this.passingCount = this.healthChecks.filter(c => c.status === 'passing').length;
+            this.warningCount = this.healthChecks.filter(c => c.status === 'warning').length;
+            this.criticalCount = this.healthChecks.filter(c => c.status === 'critical' || c.status === 'failing').length;
+        },
+
+        filterHealthChecks() {
+            let filtered = [...this.healthChecks];
+            
+            if (this.searchQuery) {
+                const query = this.searchQuery.toLowerCase();
+                filtered = filtered.filter(c => 
+                    c.name.toLowerCase().includes(query) ||
+                    (c.message && c.message.toLowerCase().includes(query))
+                );
+            }
+            
+            if (this.filterStatus) {
+                filtered = filtered.filter(c => c.status === this.filterStatus);
+            }
+            
+            this.filteredChecks = filtered;
+        },
+
+        getStatusBadgeClass(status) {
+            const classes = {
+                'passing': 'bg-green-50 text-green-700 dark:bg-green-500/10 dark:text-green-400 dark:ring-green-500/20',
+                'warning': 'bg-yellow-50 text-yellow-700 dark:bg-yellow-500/10 dark:text-yellow-400 dark:ring-yellow-500/20',
+                'critical': 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-500/20',
+                'failing': 'bg-red-50 text-red-700 dark:bg-red-500/10 dark:text-red-400 dark:ring-red-500/20',
+            };
+            return classes[status] || 'bg-gray-50 text-gray-700 dark:bg-gray-500/10 dark:text-gray-400 dark:ring-gray-500/20';
+        },
+
+        initMiniCharts() {
+            this.$nextTick(() => {
+                this.healthChecks.forEach(check => {
+                    const canvasId = 'chart-' + check.name.replace(/\s+/g, '-').toLowerCase();
+                    const canvas = document.getElementById(canvasId);
+                    if (canvas) {
+                        new Chart(canvas, {
+                            type: 'line',
+                            data: {
+                                labels: Array.from({length: 20}, (_, i) => ''),
+                                datasets: [{
+                                    data: Array.from({length: 20}, () => check.response_time_ms + Math.random() * 10),
+                                    borderColor: check.status === 'passing' ? 'rgb(34, 197, 94)' : check.status === 'warning' ? 'rgb(234, 179, 8)' : 'rgb(239, 68, 68)',
+                                    borderWidth: 2,
+                                    pointRadius: 0,
+                                    tension: 0.4,
+                                    fill: false
+                                }]
+                            },
+                            options: {
+                                responsive: true,
+                                maintainAspectRatio: false,
+                                plugins: { legend: { display: false } },
+                                scales: {
+                                    x: { display: false },
+                                    y: { display: false }
+                                }
+                            }
+                        });
+                    }
+                });
+            });
+        },
+
+        loadHealthChecks() {
+            this.loading = true;
+            fetch('/admin/api/health')
+                .then(res => res.json())
+                .then(data => {
+                    this.healthChecks = data;
+                    this.calculateCounts();
+                    this.filterHealthChecks();
+                    this.overallStatus = this.criticalCount > 0 ? 'degraded' : 'healthy';
+                    this.lastCheckTime = new Date().toLocaleString();
+                    this.loading = false;
+                })
+                .catch(err => {
+                    console.error('Failed to load health checks:', err);
+                    this.loading = false;
+                });
+        },
+
+        refresh() {
+            this.loadHealthChecks();
+        },
+
+        exportHealthReport() {
+            const report = {
+                overall_status: this.overallStatus,
+                last_check: this.lastCheckTime,
+                uptime: {
+                    '24h': this.uptime_24h,
+                    '7d': this.uptime_7d,
+                    '30d': this.uptime_30d
+                },
+                health_checks: this.healthChecks,
+                timestamp: new Date().toISOString()
+            };
+            const blob = new Blob([JSON.stringify(report, null, 2)], {type: 'application/json'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `health-report-${new Date().toISOString()}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+    }
+}
+</script>
+{% endblock %}
+

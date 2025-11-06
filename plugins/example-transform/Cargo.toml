@@ -1,0 +1,35 @@
+[package]
+name = "example-transform"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Example transform plugin for Octopus API Gateway"
+
+[dependencies]
+# Plugin API
+octopus-plugin-api = { path = "../../crates/octopus-plugin-api" }
+
+# Async
+async-trait.workspace = true
+
+# HTTP
+http.workspace = true
+http-body-util.workspace = true
+bytes.workspace = true
+
+# Serialization
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+# Regex
+regex = "1.10"
+
+# Logging
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }
+
