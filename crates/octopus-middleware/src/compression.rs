@@ -63,10 +63,7 @@ pub struct CompressionConfig {
 impl Default for CompressionConfig {
     fn default() -> Self {
         Self {
-            algorithms: vec![
-                CompressionAlgorithm::Brotli,
-                CompressionAlgorithm::Gzip,
-            ],
+            algorithms: vec![CompressionAlgorithm::Brotli, CompressionAlgorithm::Gzip],
             min_size: 1024, // 1 KB
             content_types: vec![
                 "text/".to_string(),
@@ -133,7 +130,10 @@ impl Compression {
     }
 
     /// Choose compression algorithm based on Accept-Encoding
-    fn choose_algorithm(&self, accept_encoding: Option<&HeaderValue>) -> Option<CompressionAlgorithm> {
+    fn choose_algorithm(
+        &self,
+        accept_encoding: Option<&HeaderValue>,
+    ) -> Option<CompressionAlgorithm> {
         if let Some(accept) = accept_encoding {
             if let Ok(accept_str) = accept.to_str() {
                 // Try each configured algorithm in order
@@ -159,18 +159,18 @@ impl Compression {
         // TODO: Implement actual compression using async-compression
         // This would require wrapping the body in a compression stream
         // which is more complex with http_body_util::Full
-        
+
         // In a real implementation, we'd use:
         // - async_compression::tokio::bufread::GzipEncoder for gzip
         // - async_compression::tokio::bufread::BrotliEncoder for brotli
         // - async_compression::tokio::bufread::ZstdEncoder for zstd
-        
+
         tracing::debug!(
             algorithm = ?algorithm,
             size = body.len(),
             "Compression not yet implemented"
         );
-        
+
         Ok(body)
     }
 }
@@ -216,7 +216,7 @@ impl Middleware for Compression {
         // 2. Wrapping in compression encoder
         // 3. Collecting back to Bytes
         // This is complex and would require significant changes to our Body type
-        
+
         tracing::debug!(
             algorithm = ?algorithm,
             "Compression middleware (not yet fully implemented)"
@@ -259,10 +259,7 @@ mod tests {
             CompressionAlgorithm::from_accept_encoding("gzip, deflate"),
             Some(CompressionAlgorithm::Gzip)
         );
-        assert_eq!(
-            CompressionAlgorithm::from_accept_encoding("identity"),
-            None
-        );
+        assert_eq!(CompressionAlgorithm::from_accept_encoding("identity"), None);
     }
 
     #[tokio::test]
@@ -324,16 +321,15 @@ mod tests {
         };
 
         let compression = Compression::with_config(config);
-        
+
         // Body smaller than min_size should not be compressed
         let body = "small".repeat(10); // < 1024 bytes
         assert!(body.len() < 1024);
-        
-        let result = compression.compress_body(
-            Bytes::from(body),
-            CompressionAlgorithm::Gzip
-        ).unwrap();
-        
+
+        let result = compression
+            .compress_body(Bytes::from(body), CompressionAlgorithm::Gzip)
+            .unwrap();
+
         // Should return original (no compression for small bodies)
         assert!(result.len() < 1024);
     }

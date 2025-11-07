@@ -106,4 +106,3 @@ mod tests {
         assert_eq!(err.to_string(), "Plugin not found: auth");
     }
 }
-

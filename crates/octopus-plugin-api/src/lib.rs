@@ -77,8 +77,9 @@ pub mod prelude {
     pub use crate::interceptor::{InterceptorAction, RequestInterceptor, ResponseInterceptor};
     pub use crate::plugin::{HealthStatus, Plugin, PluginDependency};
     pub use crate::protocol::ProtocolHandler;
-    pub use crate::script::{ScriptCacheStats, ScriptConfig, ScriptInterceptorPlugin, ScriptLanguage};
+    pub use crate::script::{
+        ScriptCacheStats, ScriptConfig, ScriptInterceptorPlugin, ScriptLanguage,
+    };
     pub use crate::transform::{TransformConfig, TransformPlugin};
     pub use async_trait::async_trait;
 }
-

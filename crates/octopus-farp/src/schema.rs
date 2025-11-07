@@ -121,5 +121,3 @@ mod tests {
         assert_eq!(schema.checksum.as_ref(), Some(&checksum));
     }
 }
-
-

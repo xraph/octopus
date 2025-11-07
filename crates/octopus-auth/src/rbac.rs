@@ -206,8 +206,7 @@ mod tests {
     fn test_rbac_inheritance() {
         let rbac = RoleBasedAccessControl::new();
 
-        let user_role = Role::new("user")
-            .with_permission(Permission::new("posts", "read"));
+        let user_role = Role::new("user").with_permission(Permission::new("posts", "read"));
 
         let admin_role = Role::new("admin")
             .with_permission(Permission::new("posts", "write"))
@@ -229,8 +228,7 @@ mod tests {
     fn test_rbac_require_permission() {
         let rbac = RoleBasedAccessControl::new();
 
-        let user_role = Role::new("user")
-            .with_permission(Permission::new("posts", "read"));
+        let user_role = Role::new("user").with_permission(Permission::new("posts", "read"));
 
         rbac.add_role(user_role);
 
@@ -243,5 +241,3 @@ mod tests {
             .is_err());
     }
 }
-
-

@@ -111,9 +111,9 @@ impl RequestLimits {
     pub fn strict() -> Self {
         Self {
             config: RequestLimitsConfig {
-                max_body_size: 1024 * 1024,  // 1MB
-                max_header_size: 4 * 1024,   // 4KB
-                max_uri_length: 2048,        // 2KB
+                max_body_size: 1024 * 1024, // 1MB
+                max_header_size: 4 * 1024,  // 4KB
+                max_uri_length: 2048,       // 2KB
                 body_size_error_message: Some(
                     "Request body too large (max 1MB allowed)".to_string(),
                 ),
@@ -188,13 +188,13 @@ impl Middleware for RequestLimits {
                 .uri_length_error_message
                 .as_deref()
                 .unwrap_or("Request URI too long");
-            
+
             tracing::warn!(
                 uri_length = uri_str.len(),
                 max_length = self.config.max_uri_length,
                 "Request URI length exceeded"
             );
-            
+
             return Ok(Self::error_response(StatusCode::URI_TOO_LONG, message));
         }
 
@@ -206,13 +206,13 @@ impl Middleware for RequestLimits {
                 .header_size_error_message
                 .as_deref()
                 .unwrap_or("Request headers too large");
-            
+
             tracing::warn!(
                 header_size,
                 max_size = self.config.max_header_size,
                 "Request header size exceeded"
             );
-            
+
             return Ok(Self::error_response(
                 StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE,
                 message,
@@ -229,17 +229,14 @@ impl Middleware for RequestLimits {
                             .body_size_error_message
                             .as_deref()
                             .unwrap_or("Request body too large");
-                        
+
                         tracing::warn!(
                             body_size = length,
                             max_size = self.config.max_body_size,
                             "Request body size exceeded"
                         );
-                        
-                        return Ok(Self::error_response(
-                            StatusCode::PAYLOAD_TOO_LARGE,
-                            message,
-                        ));
+
+                        return Ok(Self::error_response(StatusCode::PAYLOAD_TOO_LARGE, message));
                     }
                 }
             }
@@ -277,8 +274,7 @@ mod tests {
     async fn test_default_limits_accept_normal_request() {
         let limits = RequestLimits::default();
         let handler = TestHandler;
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(limits), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(limits), Arc::new(handler)]);
 
         let req = Request::builder()
             .uri("/test")
@@ -300,8 +296,7 @@ mod tests {
         };
         let limits = RequestLimits::with_config(config);
         let handler = TestHandler;
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(limits), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(limits), Arc::new(handler)]);
 
         let req = Request::builder()
             .uri("/test")
@@ -323,8 +318,7 @@ mod tests {
         };
         let limits = RequestLimits::with_config(config);
         let handler = TestHandler;
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(limits), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(limits), Arc::new(handler)]);
 
         let long_path = format!("/test/{}", "a".repeat(200));
         let req = Request::builder()
@@ -346,8 +340,7 @@ mod tests {
         };
         let limits = RequestLimits::with_config(config);
         let handler = TestHandler;
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(limits), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(limits), Arc::new(handler)]);
 
         let req = Request::builder()
             .uri("/test")
@@ -358,15 +351,17 @@ mod tests {
         let next = Next::new(stack);
         let response = next.run(req).await.unwrap();
 
-        assert_eq!(response.status(), StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE);
+        assert_eq!(
+            response.status(),
+            StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE
+        );
     }
 
     #[tokio::test]
     async fn test_strict_limits() {
         let limits = RequestLimits::strict();
         let handler = TestHandler;
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(limits), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(limits), Arc::new(handler)]);
 
         // Should reject 2MB body (strict allows only 1MB)
         let req = Request::builder()
@@ -385,8 +380,7 @@ mod tests {
     async fn test_permissive_limits() {
         let limits = RequestLimits::permissive();
         let handler = TestHandler;
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(limits), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(limits), Arc::new(handler)]);
 
         // Should accept 50MB body (permissive allows up to 100MB)
         let req = Request::builder()
@@ -410,8 +404,7 @@ mod tests {
         };
         let limits = RequestLimits::with_config(config);
         let handler = TestHandler;
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(limits), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(limits), Arc::new(handler)]);
 
         let req = Request::builder()
             .uri("/test")
@@ -423,11 +416,10 @@ mod tests {
         let response = next.run(req).await.unwrap();
 
         assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
-        
+
         use http_body_util::BodyExt;
         let body_bytes = response.into_body().collect().await.unwrap().to_bytes();
         let body_str = String::from_utf8_lossy(&body_bytes);
         assert!(body_str.contains("Custom error message"));
     }
 }
-

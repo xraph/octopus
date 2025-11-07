@@ -44,7 +44,7 @@ pub struct MdnsConfig {
     pub query_timeout: Duration,
 
     /// Enable IPv6 address registration (filters discovered addresses only)
-    /// 
+    ///
     /// When false, only IPv4 addresses will be registered with FARP.
     /// **Note**: This does NOT prevent mDNS from querying IPv6 interfaces.
     /// VPN tunnel errors will still occur as they are logged by the mdns-sd library.
@@ -56,10 +56,10 @@ impl Default for MdnsConfig {
         // Prefer IPv4 addresses on macOS (still queries IPv6 interfaces)
         #[cfg(target_os = "macos")]
         let enable_ipv6 = false;
-        
+
         #[cfg(not(target_os = "macos"))]
         let enable_ipv6 = true;
-        
+
         Self {
             service_type: "_octopus._tcp".to_string(),
             domain: "local.".to_string(),
@@ -92,18 +92,18 @@ impl MdnsConfig {
     }
 
     /// Enable or disable IPv6 address registration
-    /// 
+    ///
     /// When `false`, only IPv4 addresses from discovered services will be registered
     /// with FARP. IPv6 addresses will be filtered out.
-    /// 
+    ///
     /// **Note**: This does NOT prevent mDNS from querying IPv6 interfaces or stop
     /// VPN interface errors. It only controls which service addresses get registered.
-    /// 
+    ///
     /// Useful for:
     /// - Forcing IPv4-only service communication
     /// - Avoiding IPv6 routing/firewall issues
     /// - Networks with unreliable IPv6 connectivity
-    /// 
+    ///
     /// Default: `false` on macOS (to prefer IPv4), `true` on other platforms
     pub fn with_ipv6(mut self, enable: bool) -> Self {
         self.enable_ipv6 = enable;
@@ -485,10 +485,7 @@ mod tests {
         let discovery = MdnsDiscovery::with_defaults();
 
         let mut custom = HashMap::new();
-        custom.insert(
-            "openapi_url".to_string(),
-            "/api/openapi.json".to_string(),
-        );
+        custom.insert("openapi_url".to_string(), "/api/openapi.json".to_string());
         custom.insert("health_url".to_string(), "/health".to_string());
 
         let metadata = ServiceMetadata {
@@ -501,9 +498,8 @@ mod tests {
         let endpoints = discovery.parse_endpoints(&metadata);
 
         assert_eq!(endpoints.len(), 2);
-        assert!(endpoints
-            .iter()
-            .any(|e| e.path == "/api/openapi.json" && e.metadata.get("type") == Some(&"openapi".to_string())));
+        assert!(endpoints.iter().any(|e| e.path == "/api/openapi.json"
+            && e.metadata.get("type") == Some(&"openapi".to_string())));
         assert!(endpoints
             .iter()
             .any(|e| e.path == "/health" && e.metadata.get("type") == Some(&"health".to_string())));
@@ -515,4 +511,3 @@ mod tests {
         assert_eq!(discovery.name(), "mdns");
     }
 }
-

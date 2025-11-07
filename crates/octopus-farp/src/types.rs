@@ -10,31 +10,31 @@ pub enum SchemaType {
     /// OpenAPI/Swagger specifications (REST APIs)
     #[serde(rename = "openapi")]
     OpenAPI,
-    
+
     /// AsyncAPI specifications (WebSocket, SSE, message queues)
     #[serde(rename = "asyncapi")]
     AsyncAPI,
-    
+
     /// gRPC protocol buffer definitions
     #[serde(rename = "grpc")]
     GRPC,
-    
+
     /// GraphQL Schema Definition Language
     #[serde(rename = "graphql")]
     GraphQL,
-    
+
     /// oRPC (OpenAPI-based RPC) specifications
     #[serde(rename = "orpc")]
     ORPC,
-    
+
     /// Apache Thrift IDL
     #[serde(rename = "thrift")]
     Thrift,
-    
+
     /// Apache Avro schemas
     #[serde(rename = "avro")]
     Avro,
-    
+
     /// Custom/proprietary schema types
     #[serde(rename = "custom")]
     Custom,
@@ -63,11 +63,11 @@ pub enum LocationType {
     /// Fetch schema via HTTP GET request
     #[serde(rename = "http")]
     HTTP,
-    
+
     /// Fetch schema from backend KV store (Consul, etcd, etc.)
     #[serde(rename = "registry")]
     Registry,
-    
+
     /// Schema is embedded directly in the manifest
     #[serde(rename = "inline")]
     Inline,
@@ -90,17 +90,17 @@ pub struct SchemaLocation {
     /// Location type (http, registry, inline)
     #[serde(rename = "type")]
     pub location_type: LocationType,
-    
+
     /// HTTP URL (if type == HTTP)
     /// Example: "http://user-service:8080/openapi.json"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
-    
+
     /// Registry path in backend KV store (if type == Registry)
     /// Example: "/schemas/user-service/v1/openapi"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub registry_path: Option<String>,
-    
+
     /// HTTP headers for authentication (if type == HTTP)
     /// Example: {"Authorization": "Bearer token"}
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -117,7 +117,7 @@ impl SchemaLocation {
             headers: None,
         }
     }
-    
+
     /// Create an HTTP location with headers
     pub fn http_with_headers(url: impl Into<String>, headers: HashMap<String, String>) -> Self {
         Self {
@@ -127,7 +127,7 @@ impl SchemaLocation {
             headers: Some(headers),
         }
     }
-    
+
     /// Create a registry location
     pub fn registry(path: impl Into<String>) -> Self {
         Self {
@@ -137,7 +137,7 @@ impl SchemaLocation {
             headers: None,
         }
     }
-    
+
     /// Create an inline location
     pub fn inline() -> Self {
         Self {
@@ -147,7 +147,7 @@ impl SchemaLocation {
             headers: None,
         }
     }
-    
+
     /// Validate the schema location
     pub fn validate(&self) -> octopus_core::Result<()> {
         match self.location_type {
@@ -179,23 +179,23 @@ pub struct SchemaDescriptor {
     /// Type of schema (openapi, asyncapi, grpc, graphql, etc.)
     #[serde(rename = "type")]
     pub schema_type: SchemaType,
-    
+
     /// Specification version (e.g., "3.1.0" for OpenAPI, "3.0.0" for AsyncAPI)
     pub spec_version: String,
-    
+
     /// How to retrieve the schema
     pub location: SchemaLocation,
-    
+
     /// Content type (e.g., "application/json", "application/x-protobuf")
     pub content_type: String,
-    
+
     /// Optional: Inline schema for small schemas (< 100KB recommended)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inline_schema: Option<serde_json::Value>,
-    
+
     /// SHA256 hash of schema content for integrity validation
     pub hash: String,
-    
+
     /// Size in bytes
     pub size: i64,
 }
@@ -220,7 +220,7 @@ impl SchemaDescriptor {
             size,
         }
     }
-    
+
     /// Set inline schema
     pub fn with_inline_schema(mut self, schema: serde_json::Value) -> Self {
         self.inline_schema = Some(schema);
@@ -234,26 +234,26 @@ pub struct SchemaEndpoints {
     /// Health check endpoint (required)
     /// Example: "/health" or "/healthz"
     pub health: String,
-    
+
     /// Prometheus metrics endpoint (optional)
     /// Example: "/metrics"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metrics: Option<String>,
-    
+
     /// OpenAPI spec endpoint (optional)
     /// Example: "/openapi.json"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub openapi: Option<String>,
-    
+
     /// AsyncAPI spec endpoint (optional)
     /// Example: "/asyncapi.json"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub asyncapi: Option<String>,
-    
+
     /// Whether gRPC server reflection is enabled
     #[serde(default, skip_serializing_if = "is_false")]
     pub grpc_reflection: bool,
-    
+
     /// GraphQL introspection endpoint (optional)
     /// Example: "/graphql"
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -271,31 +271,31 @@ pub enum Capability {
     /// REST API support
     #[serde(rename = "rest")]
     REST,
-    
+
     /// gRPC support
     #[serde(rename = "grpc")]
     GRPC,
-    
+
     /// WebSocket support
     #[serde(rename = "websocket")]
     WebSocket,
-    
+
     /// Server-Sent Events support
     #[serde(rename = "sse")]
     SSE,
-    
+
     /// GraphQL support
     #[serde(rename = "graphql")]
     GraphQL,
-    
+
     /// MQTT support
     #[serde(rename = "mqtt")]
     MQTT,
-    
+
     /// AMQP support
     #[serde(rename = "amqp")]
     AMQP,
-    
+
     /// RPC support (oRPC)
     #[serde(rename = "rpc")]
     RPC,
@@ -342,7 +342,10 @@ mod tests {
     fn test_schema_location_http() {
         let location = SchemaLocation::http("http://example.com/openapi.json");
         assert_eq!(location.location_type, LocationType::HTTP);
-        assert_eq!(location.url, Some("http://example.com/openapi.json".to_string()));
+        assert_eq!(
+            location.url,
+            Some("http://example.com/openapi.json".to_string())
+        );
         assert!(location.validate().is_ok());
     }
 
@@ -350,7 +353,10 @@ mod tests {
     fn test_schema_location_registry() {
         let location = SchemaLocation::registry("/schemas/service/v1/openapi");
         assert_eq!(location.location_type, LocationType::Registry);
-        assert_eq!(location.registry_path, Some("/schemas/service/v1/openapi".to_string()));
+        assert_eq!(
+            location.registry_path,
+            Some("/schemas/service/v1/openapi".to_string())
+        );
         assert!(location.validate().is_ok());
     }
 
@@ -371,7 +377,7 @@ mod tests {
             "abc123",
             1024,
         );
-        
+
         assert_eq!(descriptor.schema_type, SchemaType::OpenAPI);
         assert_eq!(descriptor.spec_version, "3.1.0");
         assert_eq!(descriptor.content_type, "application/json");
@@ -379,4 +385,3 @@ mod tests {
         assert_eq!(descriptor.size, 1024);
     }
 }
-

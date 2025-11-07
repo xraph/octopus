@@ -88,7 +88,9 @@ impl Server {
         // Create TCP listener
         let listener = tokio::net::TcpListener::bind(self.listen_addr())
             .await
-            .map_err(|e| Error::Runtime(format!("Failed to bind to {}: {}", self.listen_addr(), e)))?;
+            .map_err(|e| {
+                Error::Runtime(format!("Failed to bind to {}: {}", self.listen_addr(), e))
+            })?;
 
         // Create TLS acceptor if configured
         let tls_acceptor = if let Some(ref tls_config) = self.config.gateway.tls {
@@ -101,7 +103,7 @@ impl Server {
                 enable_cert_reload: tls_config.enable_cert_reload,
                 reload_interval_secs: tls_config.reload_interval_secs,
             };
-            
+
             match octopus_tls::TlsAcceptor::new(&tls_cfg) {
                 Ok(acceptor) => {
                     tracing::info!(
@@ -122,7 +124,7 @@ impl Server {
 
         // Build middleware chain
         let mut middlewares: Vec<Arc<dyn octopus_core::middleware::Middleware>> = Vec::new();
-        
+
         // Add compression middleware if enabled
         if self.config.gateway.compression.enabled {
             let compression_config = octopus_compression::CompressionConfig {
@@ -131,9 +133,10 @@ impl Server {
                 min_size: self.config.gateway.compression.min_size,
                 algorithms: self.config.gateway.compression.algorithms.clone(),
             };
-            let compression_middleware = Arc::new(
-                octopus_compression::CompressionMiddleware::new(compression_config)
-            ) as Arc<dyn octopus_core::middleware::Middleware>;
+            let compression_middleware = Arc::new(octopus_compression::CompressionMiddleware::new(
+                compression_config,
+            ))
+                as Arc<dyn octopus_core::middleware::Middleware>;
             middlewares.push(compression_middleware);
             tracing::info!(
                 level = self.config.gateway.compression.level,
@@ -141,15 +144,15 @@ impl Server {
                 "Compression middleware enabled"
             );
         }
-        
-        let middleware_chain: Arc<[Arc<dyn octopus_core::middleware::Middleware>]> = 
+
+        let middleware_chain: Arc<[Arc<dyn octopus_core::middleware::Middleware>]> =
             Arc::from(middlewares);
-        
+
         let protocol_handlers: Arc<[Arc<dyn ProtocolHandler>]> = Arc::from(
             self.protocol_handlers
                 .iter()
                 .map(Arc::clone)
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>(),
         );
 
         // Create metrics collector and activity log
@@ -261,24 +264,26 @@ impl Server {
         // Graceful shutdown implementation:
         // 1. Stop accepting new connections (already done by breaking the loop)
         // 2. Wait for active requests to complete with timeout
-        
+
         let shutdown_timeout = self.config.gateway.shutdown_timeout;
         let start = std::time::Instant::now();
-        
+
         tracing::info!(
             timeout_secs = shutdown_timeout.as_secs(),
             "Waiting for in-flight requests to complete"
         );
-        
+
         // Poll active connections count until zero or timeout
         loop {
-            let active = self.request_count.load(std::sync::atomic::Ordering::Relaxed);
-            
+            let active = self
+                .request_count
+                .load(std::sync::atomic::Ordering::Relaxed);
+
             if active == 0 {
                 tracing::info!("All requests completed, shutting down cleanly");
                 break;
             }
-            
+
             if start.elapsed() >= shutdown_timeout {
                 tracing::warn!(
                     active_requests = active,
@@ -286,13 +291,13 @@ impl Server {
                 );
                 break;
             }
-            
+
             tracing::debug!(
                 active_requests = active,
                 elapsed_ms = start.elapsed().as_millis(),
                 "Waiting for active requests to complete"
             );
-            
+
             // Sleep briefly before checking again
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
@@ -379,7 +384,7 @@ impl ServerBuilder {
         // Register upstreams
         for upstream_config in &config.upstreams {
             let mut cluster = octopus_core::UpstreamCluster::new(&upstream_config.name);
-            
+
             for instance_config in &upstream_config.instances {
                 let instance = octopus_core::UpstreamInstance::new(
                     &instance_config.id,
@@ -388,7 +393,7 @@ impl ServerBuilder {
                 );
                 cluster.add_instance(instance);
             }
-            
+
             router.register_upstream(cluster);
         }
 
@@ -425,7 +430,7 @@ impl ServerBuilder {
             tracing::info!("Initializing FARP handler");
             let registry = Arc::new(octopus_farp::SchemaRegistry::new());
             let federation = Arc::new(octopus_farp::SchemaFederation::new());
-            
+
             // Initialize discovery watcher if discovery is configured
             if let Some(ref discovery_config) = config.farp.discovery {
                 Self::initialize_farp_discovery(
@@ -436,8 +441,10 @@ impl ServerBuilder {
                     config.farp.watch_interval,
                 );
             }
-            
-            Some(Arc::new(FarpApiHandler::with_federation(registry, federation)))
+
+            Some(Arc::new(FarpApiHandler::with_federation(
+                registry, federation,
+            )))
         } else {
             if !config.farp.enabled {
                 tracing::info!("FARP disabled in configuration");
@@ -511,7 +518,7 @@ impl ServerBuilder {
             federation,
         )
         .with_router(router);
-        
+
         let mut enabled_backends = 0;
 
         for backend in &discovery_config.backends {
@@ -578,9 +585,7 @@ impl ServerBuilder {
                 }
             });
         } else {
-            tracing::warn!(
-                "No discovery backends enabled, FARP discovery watcher will not start"
-            );
+            tracing::warn!("No discovery backends enabled, FARP discovery watcher will not start");
         }
     }
 }
@@ -619,10 +624,7 @@ mod tests {
         let config = test_config();
         let server = ServerBuilder::new().config(config).build().unwrap();
 
-        assert_eq!(
-            server.listen_addr(),
-            "127.0.0.1:8080".parse().unwrap()
-        );
+        assert_eq!(server.listen_addr(), "127.0.0.1:8080".parse().unwrap());
         assert_eq!(server.request_count(), 0);
     }
 
@@ -635,5 +637,3 @@ mod tests {
         assert!(result.is_err());
     }
 }
-
-

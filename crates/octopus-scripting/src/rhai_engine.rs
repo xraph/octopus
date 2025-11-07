@@ -4,7 +4,7 @@ use crate::context::{RequestContext, ResponseContext, ScriptContext};
 use crate::engine::{CacheStats, ScriptEngine, ScriptLanguage, ScriptSource};
 use crate::error::{Result, ScriptError};
 use async_trait::async_trait;
-use rhai::{Dynamic, Engine, AST, Scope};
+use rhai::{Dynamic, Engine, Scope, AST};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -98,9 +98,7 @@ impl RhaiEngine {
                 .as_secs() as i64
         });
 
-        engine.register_fn("uuid", || -> String {
-            uuid::Uuid::new_v4().to_string()
-        });
+        engine.register_fn("uuid", || -> String { uuid::Uuid::new_v4().to_string() });
 
         // Logging (for debugging scripts)
         engine.register_fn("log_debug", |msg: &str| {
@@ -135,13 +133,14 @@ impl RhaiEngine {
         self.cache_misses.fetch_add(1, Ordering::Relaxed);
         trace!(script = %name, "AST cache miss, compiling");
 
-        let ast = self.engine.compile(&code).map_err(|e| {
-            ScriptError::CompilationError {
+        let ast = self
+            .engine
+            .compile(&code)
+            .map_err(|e| ScriptError::CompilationError {
                 message: e.to_string(),
                 line: None,
                 column: None,
-            }
-        })?;
+            })?;
 
         // Store in cache
         {
@@ -154,32 +153,34 @@ impl RhaiEngine {
     }
 
     /// Execute script with request context
-    async fn execute_with_request(
-        &self,
-        ast: &AST,
-        ctx: &mut RequestContext,
-    ) -> Result<bool> {
+    async fn execute_with_request(&self, ast: &AST, ctx: &mut RequestContext) -> Result<bool> {
         let mut scope = Scope::new();
 
         // Convert context to Rhai map
         scope.push("method", ctx.method.clone());
         scope.push("uri", ctx.uri.clone());
         scope.push("version", ctx.version.clone());
-        
+
         // Headers as map
-        let headers_map: rhai::Map = ctx.headers.iter()
+        let headers_map: rhai::Map = ctx
+            .headers
+            .iter()
             .map(|(k, v)| (k.clone().into(), Dynamic::from(v.clone())))
             .collect();
         scope.push("headers", headers_map);
 
         // Query params as map
-        let query_map: rhai::Map = ctx.query.iter()
+        let query_map: rhai::Map = ctx
+            .query
+            .iter()
             .map(|(k, v)| (k.clone().into(), Dynamic::from(v.clone())))
             .collect();
         scope.push("query", query_map);
 
         // Path params as map
-        let path_params_map: rhai::Map = ctx.path_params.iter()
+        let path_params_map: rhai::Map = ctx
+            .path_params
+            .iter()
             .map(|(k, v)| (k.clone().into(), Dynamic::from(v.clone())))
             .collect();
         scope.push("path_params", path_params_map);
@@ -190,7 +191,9 @@ impl RhaiEngine {
         }
 
         // Execute script
-        let result: Dynamic = self.engine.eval_ast_with_scope(&mut scope, ast)
+        let result: Dynamic = self
+            .engine
+            .eval_ast_with_scope(&mut scope, ast)
             .map_err(|e| ScriptError::RuntimeError {
                 message: e.to_string(),
                 line: None,
@@ -203,13 +206,12 @@ impl RhaiEngine {
         if let Some(uri) = scope.get_value::<String>("uri") {
             ctx.uri = uri;
         }
-        
+
         // Extract headers
         if let Some(headers) = scope.get_value::<rhai::Map>("headers") {
-            ctx.headers = headers.iter()
-                .filter_map(|(k, v)| {
-                    Some((k.to_string(), v.clone().try_cast::<String>()?))
-                })
+            ctx.headers = headers
+                .iter()
+                .filter_map(|(k, v)| Some((k.to_string(), v.clone().try_cast::<String>()?)))
                 .collect();
         }
 
@@ -227,18 +229,16 @@ impl RhaiEngine {
     }
 
     /// Execute script with response context
-    async fn execute_with_response(
-        &self,
-        ast: &AST,
-        ctx: &mut ResponseContext,
-    ) -> Result<bool> {
+    async fn execute_with_response(&self, ast: &AST, ctx: &mut ResponseContext) -> Result<bool> {
         let mut scope = Scope::new();
 
         // Convert context to Rhai map
         scope.push("status", ctx.status as i64);
-        
+
         // Headers as map
-        let headers_map: rhai::Map = ctx.headers.iter()
+        let headers_map: rhai::Map = ctx
+            .headers
+            .iter()
             .map(|(k, v)| (k.clone().into(), Dynamic::from(v.clone())))
             .collect();
         scope.push("headers", headers_map);
@@ -249,7 +249,9 @@ impl RhaiEngine {
         }
 
         // Execute script
-        let result: Dynamic = self.engine.eval_ast_with_scope(&mut scope, ast)
+        let result: Dynamic = self
+            .engine
+            .eval_ast_with_scope(&mut scope, ast)
             .map_err(|e| ScriptError::RuntimeError {
                 message: e.to_string(),
                 line: None,
@@ -259,13 +261,12 @@ impl RhaiEngine {
         if let Some(status) = scope.get_value::<i64>("status") {
             ctx.status = status as u16;
         }
-        
+
         // Extract headers
         if let Some(headers) = scope.get_value::<rhai::Map>("headers") {
-            ctx.headers = headers.iter()
-                .filter_map(|(k, v)| {
-                    Some((k.to_string(), v.clone().try_cast::<String>()?))
-                })
+            ctx.headers = headers
+                .iter()
+                .filter_map(|(k, v)| Some((k.to_string(), v.clone().try_cast::<String>()?)))
                 .collect();
         }
 
@@ -307,7 +308,7 @@ impl ScriptEngine for RhaiEngine {
         ctx: &mut ScriptContext,
     ) -> Result<bool> {
         let ast = self.get_ast(source).await?;
-        
+
         if let Some(req_ctx) = ctx.as_request_mut() {
             self.execute_with_request(&ast, req_ctx).await
         } else {
@@ -321,7 +322,7 @@ impl ScriptEngine for RhaiEngine {
         ctx: &mut ScriptContext,
     ) -> Result<bool> {
         let ast = self.get_ast(source).await?;
-        
+
         if let Some(res_ctx) = ctx.as_response_mut() {
             self.execute_with_response(&ast, res_ctx).await
         } else {
@@ -355,7 +356,7 @@ mod tests {
     async fn test_rhai_engine_basic() {
         let engine = RhaiEngine::new();
         let source = ScriptSource::inline("let x = 1 + 1; x");
-        
+
         // Just test compilation
         assert!(engine.prepare(&source).await.is_ok());
     }
@@ -383,14 +384,13 @@ mod tests {
 
         let mut script_ctx = ScriptContext::Request(ctx.clone());
         let result = engine.execute_request(&source, &mut script_ctx).await;
-        
+
         assert!(result.is_ok());
         assert!(result.unwrap());
-        
+
         if let ScriptContext::Request(modified) = script_ctx {
             assert_eq!(modified.method, "POST");
             assert_eq!(modified.headers.get("X-Custom"), Some(&"test".to_string()));
         }
     }
 }
-

@@ -34,4 +34,3 @@ pub mod prelude {
     pub use crate::sse::SseHandler;
     pub use crate::websocket::WebSocketHandler;
 }
-

@@ -106,26 +106,29 @@ impl PluginRegistry {
     pub fn register(&mut self, plugin: Box<dyn DashboardPlugin>) -> Result<(), String> {
         let metadata = plugin.metadata();
         let plugin_id = metadata.id.clone();
-        
+
         if self.plugins.contains_key(&plugin_id) {
-            return Err(format!("Plugin with id '{}' is already registered", plugin_id));
+            return Err(format!(
+                "Plugin with id '{}' is already registered",
+                plugin_id
+            ));
         }
-        
+
         // Register views
         self.views.extend(plugin.register_views());
-        
+
         // Register stats cards
         self.stats_cards.extend(plugin.register_stats_cards());
-        
+
         // Register nav items
         self.nav_items.extend(plugin.register_nav_items());
 
         // Register API endpoints
         self.api_endpoints.extend(plugin.register_api_endpoints());
-        
+
         // Store plugin
         self.plugins.insert(plugin_id, plugin);
-        
+
         Ok(())
     }
 

@@ -1,5 +1,5 @@
 //! Enhanced API handlers for the admin dashboard
-//! 
+//!
 //! Provides comprehensive REST API endpoints for:
 //! - Metrics and analytics
 //! - Route management (CRUD)
@@ -14,12 +14,12 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use std::sync::Arc;
-use std::collections::HashMap;
 use chrono::Utc;
+use std::collections::HashMap;
+use std::sync::Arc;
 
-use crate::models::*;
 use crate::handlers::AppState;
+use crate::models::*;
 
 // ============================================================================
 // Metrics & Analytics Endpoints
@@ -32,10 +32,10 @@ pub async fn api_analytics_handler(
     Query(params): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
     let timeframe = params.get("timeframe").map(|s| s.as_str()).unwrap_or("24h");
-    
+
     // TODO: Fetch real analytics data
     let analytics = generate_mock_analytics(timeframe);
-    
+
     Json(analytics)
 }
 
@@ -56,7 +56,7 @@ pub async fn api_realtime_metrics_handler(
         cpu_usage: 42.3,
         memory_usage: 67.8,
     };
-    
+
     Json(metrics)
 }
 
@@ -66,12 +66,15 @@ pub async fn api_timeseries_handler(
     State(_state): State<Arc<AppState>>,
     Query(params): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
-    let metric = params.get("metric").map(|s| s.as_str()).unwrap_or("requests");
+    let metric = params
+        .get("metric")
+        .map(|s| s.as_str())
+        .unwrap_or("requests");
     let period = params.get("period").map(|s| s.as_str()).unwrap_or("1h");
-    
+
     // TODO: Fetch real time series data
     let data = generate_mock_timeseries(metric, period);
-    
+
     Json(data)
 }
 
@@ -84,13 +87,13 @@ pub async fn api_performance_metrics_handler(
     let metrics = PerformanceMetrics {
         cpu_usage: 42.3,
         memory_usage: 67.8,
-        memory_total: 16_777_216_000, // 16GB
+        memory_total: 16_777_216_000,    // 16GB
         memory_available: 5_400_000_000, // ~5GB
         goroutines: 256,
         gc_count: 1234,
         gc_pause_ms: 2.5,
     };
-    
+
     Json(metrics)
 }
 
@@ -100,9 +103,7 @@ pub async fn api_performance_metrics_handler(
 
 /// List all routes
 /// GET /admin/api/routes
-pub async fn api_routes_list_handler(
-    State(_state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn api_routes_list_handler(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
     // TODO: Fetch real routes
     let routes = generate_mock_routes();
     Json(routes)
@@ -126,7 +127,7 @@ pub async fn api_route_get_handler(
         error_count: 12,
         last_accessed: Some(Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()),
     };
-    
+
     Json(route)
 }
 
@@ -138,7 +139,7 @@ pub async fn api_route_create_handler(
 ) -> impl IntoResponse {
     // TODO: Create route in system
     tracing::info!("Creating route: {} {}", config.method, config.path);
-    
+
     let route = RouteInfo {
         id: uuid::Uuid::new_v4().to_string(),
         path: config.path,
@@ -150,7 +151,7 @@ pub async fn api_route_create_handler(
         error_count: 0,
         last_accessed: None,
     };
-    
+
     (StatusCode::CREATED, Json(route))
 }
 
@@ -163,7 +164,7 @@ pub async fn api_route_update_handler(
 ) -> impl IntoResponse {
     // TODO: Update route in system
     tracing::info!("Updating route {}: {} {}", id, config.method, config.path);
-    
+
     let route = RouteInfo {
         id,
         path: config.path,
@@ -175,7 +176,7 @@ pub async fn api_route_update_handler(
         error_count: 12,
         last_accessed: Some(Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()),
     };
-    
+
     Json(route)
 }
 
@@ -187,7 +188,7 @@ pub async fn api_route_delete_handler(
 ) -> impl IntoResponse {
     // TODO: Delete route from system
     tracing::info!("Deleting route: {}", id);
-    
+
     StatusCode::NO_CONTENT
 }
 
@@ -197,9 +198,7 @@ pub async fn api_route_delete_handler(
 
 /// List all plugins
 /// GET /admin/api/plugins
-pub async fn api_plugins_list_handler(
-    State(_state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn api_plugins_list_handler(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
     // TODO: Fetch real plugins
     let plugins = generate_mock_plugins();
     Json(plugins)
@@ -225,7 +224,7 @@ pub async fn api_plugin_get_handler(
             "token_expiry": 3600
         })),
     };
-    
+
     Json(plugin)
 }
 
@@ -237,7 +236,7 @@ pub async fn api_plugin_toggle_handler(
 ) -> impl IntoResponse {
     // TODO: Toggle plugin state
     tracing::info!("Toggling plugin: {}", id);
-    
+
     Json(serde_json::json!({
         "success": true,
         "message": "Plugin state toggled"
@@ -253,7 +252,7 @@ pub async fn api_plugin_config_handler(
 ) -> impl IntoResponse {
     // TODO: Update plugin configuration
     tracing::info!("Updating plugin {} config: {:?}", id, config);
-    
+
     Json(serde_json::json!({
         "success": true,
         "message": "Plugin configuration updated"
@@ -277,9 +276,7 @@ pub async fn api_logs_handler(
 
 /// Get security events
 /// GET /admin/api/security/events
-pub async fn api_security_events_handler(
-    State(_state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn api_security_events_handler(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
     // TODO: Fetch real security events
     let events = generate_mock_security_events();
     Json(events)
@@ -291,9 +288,7 @@ pub async fn api_security_events_handler(
 
 /// Get all configuration
 /// GET /admin/api/config
-pub async fn api_config_list_handler(
-    State(_state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn api_config_list_handler(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
     // TODO: Fetch real configuration
     let config = generate_mock_config();
     Json(config)
@@ -308,7 +303,7 @@ pub async fn api_config_update_handler(
 ) -> impl IntoResponse {
     // TODO: Update configuration
     tracing::info!("Updating config {}: {:?}", key, value);
-    
+
     Json(serde_json::json!({
         "success": true,
         "message": "Configuration updated"
@@ -321,9 +316,7 @@ pub async fn api_config_update_handler(
 
 /// Get system information
 /// GET /admin/api/system/info
-pub async fn api_system_info_handler(
-    State(_state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn api_system_info_handler(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
     // TODO: Fetch real system info
     let info = SystemInfo {
         version: env!("CARGO_PKG_VERSION").to_string(),
@@ -338,7 +331,7 @@ pub async fn api_system_info_handler(
         num_cpus: num_cpus::get(),
         total_memory: 16_777_216_000, // 16GB
     };
-    
+
     Json(info)
 }
 
@@ -354,19 +347,19 @@ fn generate_mock_analytics(timeframe: &str) -> AnalyticsMetrics {
         "30d" => 30,
         _ => 24,
     };
-    
+
     let request_volume: Vec<TimeSeriesPoint> = (0..points_count)
         .map(|i| TimeSeriesPoint {
             timestamp: format!("2024-01-{:02} {:02}:00:00", (i / 24) + 1, i % 24),
             value: (500.0 + (i as f64 * 10.0) + (i as f64).sin() * 100.0),
         })
         .collect();
-    
+
     let mut error_breakdown = HashMap::new();
     error_breakdown.insert("4xx".to_string(), 123);
     error_breakdown.insert("5xx".to_string(), 45);
     error_breakdown.insert("timeout".to_string(), 12);
-    
+
     let mut status_codes = HashMap::new();
     status_codes.insert(200, 95432);
     status_codes.insert(201, 3421);
@@ -374,13 +367,13 @@ fn generate_mock_analytics(timeframe: &str) -> AnalyticsMetrics {
     status_codes.insert(401, 234);
     status_codes.insert(404, 567);
     status_codes.insert(500, 45);
-    
+
     let mut traffic_by_method = HashMap::new();
     traffic_by_method.insert("GET".to_string(), 75000);
     traffic_by_method.insert("POST".to_string(), 18000);
     traffic_by_method.insert("PUT".to_string(), 4500);
     traffic_by_method.insert("DELETE".to_string(), 2500);
-    
+
     AnalyticsMetrics {
         timeframe: timeframe.to_string(),
         request_volume,
@@ -424,7 +417,7 @@ fn generate_mock_timeseries(metric: &str, period: &str) -> Vec<TimeSeriesPoint> 
         "24h" => 24,
         _ => 24,
     };
-    
+
     (0..points_count)
         .map(|i| {
             let base_value = match metric {
@@ -435,7 +428,7 @@ fn generate_mock_timeseries(metric: &str, period: &str) -> Vec<TimeSeriesPoint> 
                 "memory" => 60.0,
                 _ => 100.0,
             };
-            
+
             TimeSeriesPoint {
                 timestamp: Utc::now()
                     .checked_sub_signed(chrono::Duration::minutes(points_count - i))
@@ -562,7 +555,7 @@ fn generate_mock_logs(query: &LogQuery) -> Vec<ActivityLogEntry> {
             source: Some("proxy".to_string()),
         },
     ];
-    
+
     // Filter by level if specified
     let filtered: Vec<_> = if let Some(level) = &query.level {
         logs.into_iter()
@@ -571,7 +564,7 @@ fn generate_mock_logs(query: &LogQuery) -> Vec<ActivityLogEntry> {
     } else {
         logs
     };
-    
+
     // Apply limit
     let limit = query.limit.unwrap_or(100);
     filtered.into_iter().take(limit).collect()
@@ -628,4 +621,3 @@ fn generate_mock_config() -> Vec<ConfigItem> {
         },
     ]
 }
-

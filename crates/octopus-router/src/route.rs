@@ -9,22 +9,22 @@ use std::collections::HashMap;
 pub struct Route {
     /// HTTP method
     pub method: Method,
-    
+
     /// Path pattern (e.g., "/users/:id")
     pub path: String,
-    
+
     /// Upstream cluster name
     pub upstream_name: String,
-    
+
     /// Priority (higher = matched first)
     pub priority: i32,
-    
+
     /// Route metadata
     pub metadata: HashMap<String, String>,
-    
+
     /// Path prefix to strip before forwarding
     pub strip_prefix: Option<String>,
-    
+
     /// Path prefix to add before forwarding
     pub add_prefix: Option<String>,
 }
@@ -98,13 +98,16 @@ impl RouteBuilder {
 
     /// Build the route
     pub fn build(self) -> Result<Route> {
-        let method = self.method
+        let method = self
+            .method
             .ok_or_else(|| Error::Config("method is required".to_string()))?;
-        
-        let path = self.path
+
+        let path = self
+            .path
             .ok_or_else(|| Error::Config("path is required".to_string()))?;
-        
-        let upstream_name = self.upstream_name
+
+        let upstream_name = self
+            .upstream_name
             .ok_or_else(|| Error::Config("upstream_name is required".to_string()))?;
 
         // Validate path
@@ -148,9 +151,7 @@ mod tests {
 
     #[test]
     fn test_route_builder_missing_fields() {
-        let result = RouteBuilder::new()
-            .path("/users")
-            .build();
+        let result = RouteBuilder::new().path("/users").build();
 
         assert!(result.is_err());
     }
@@ -181,5 +182,3 @@ mod tests {
         assert_eq!(route.add_prefix, Some("/v1".to_string()));
     }
 }
-
-

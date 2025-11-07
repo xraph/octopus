@@ -8,5 +8,4 @@ pub mod mocks;
 
 pub use builders::{RequestBuilder, ResponseBuilder};
 pub use helpers::{PluginTestHarness, TestContext};
-pub use mocks::{MockPlugin, MockAuthProvider, MockInterceptor};
-
+pub use mocks::{MockAuthProvider, MockInterceptor, MockPlugin};

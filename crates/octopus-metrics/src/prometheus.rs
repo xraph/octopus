@@ -36,11 +36,7 @@ impl PrometheusExporter {
             "# HELP octopus_requests_duration_seconds HTTP request duration in seconds"
         )
         .unwrap();
-        writeln!(
-            output,
-            "# TYPE octopus_requests_duration_seconds histogram"
-        )
-        .unwrap();
+        writeln!(output, "# TYPE octopus_requests_duration_seconds histogram").unwrap();
 
         writeln!(
             output,
@@ -137,14 +133,14 @@ impl PrometheusExporter {
     fn write_route_metrics(output: &mut String, collector: &MetricsCollector) {
         // Get all routes from the route_count map
         let route_count = collector.route_count();
-        
+
         // For now, we'll just export basic per-route metrics
         // A more complete implementation would iterate over all routes
         // For the initial version, we can output placeholder metrics
-        
+
         // Since we don't have a way to iterate all routes, we'll skip per-route metrics for now
         // This can be enhanced later by adding an API to list all routes
-        
+
         writeln!(output, "# Per-route metrics (count: {})", route_count).unwrap();
     }
 
@@ -196,4 +192,3 @@ mod tests {
         assert!(output.contains("octopus_"));
     }
 }
-

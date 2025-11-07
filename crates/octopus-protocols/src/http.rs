@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use http::{Method, Request, Response, StatusCode};
 use http_body_util::Full;
-use octopus_core::{Result, ResponseBuilder};
+use octopus_core::{ResponseBuilder, Result};
 
 /// HTTP protocol handler
 #[derive(Debug, Clone)]
@@ -60,7 +60,10 @@ impl HttpHandler {
         ResponseBuilder::new(StatusCode::NO_CONTENT)
             .header(http::header::ALLOW, methods_str.clone())
             .header(http::header::ACCESS_CONTROL_ALLOW_METHODS, methods_str)
-            .header(http::header::ACCESS_CONTROL_ALLOW_HEADERS, "Content-Type, Authorization")
+            .header(
+                http::header::ACCESS_CONTROL_ALLOW_HEADERS,
+                "Content-Type, Authorization",
+            )
             .build()
     }
 }
@@ -146,5 +149,3 @@ mod tests {
         assert!(response.headers().contains_key(http::header::ALLOW));
     }
 }
-
-

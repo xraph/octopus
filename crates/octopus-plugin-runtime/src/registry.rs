@@ -2,9 +2,7 @@
 
 use crate::error::{PluginRuntimeError, Result};
 use dashmap::DashMap;
-use octopus_plugin_api::{
-    HealthStatus, Plugin, PluginDependency, PluginInfo, PluginMetadata,
-};
+use octopus_plugin_api::{HealthStatus, Plugin, PluginDependency, PluginInfo, PluginMetadata};
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::{error, info, warn};
@@ -13,8 +11,7 @@ use tracing::{error, info, warn};
 ///
 /// The registry maintains all registered plugins and their states,
 /// handles dependency resolution, and manages lifecycle transitions.
-#[derive(Clone)]
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct PluginRegistry {
     /// Registered plugins
     plugins: Arc<DashMap<String, PluginEntry>>,
@@ -87,11 +84,7 @@ impl PluginRegistry {
     ///
     /// Registers a plugin with the given name and instance.
     /// The plugin will be in the `Registered` state after this call.
-    pub async fn register(
-        &self,
-        name: impl Into<String>,
-        plugin: Box<dyn Plugin>,
-    ) -> Result<()> {
+    pub async fn register(&self, name: impl Into<String>, plugin: Box<dyn Plugin>) -> Result<()> {
         let name = name.into();
 
         if self.plugins.contains_key(&name) {
@@ -132,11 +125,7 @@ impl PluginRegistry {
     }
 
     /// Initialize a plugin with configuration
-    pub async fn initialize(
-        &self,
-        name: &str,
-        config: serde_json::Value,
-    ) -> Result<()> {
+    pub async fn initialize(&self, name: &str, config: serde_json::Value) -> Result<()> {
         let entry = self
             .plugins
             .get(name)
@@ -205,7 +194,7 @@ impl PluginRegistry {
                             let dep_state = dep_entry.state.read();
                             *dep_state != PluginState::Started
                         };
-                        
+
                         if should_start {
                             self.start_internal(dep_name).await?;
                         }
@@ -341,9 +330,7 @@ impl PluginRegistry {
                     metadata: entry.metadata.clone(),
                     state: match state {
                         PluginState::Registered => octopus_plugin_api::PluginState::Loaded,
-                        PluginState::Initialized => {
-                            octopus_plugin_api::PluginState::Initialized
-                        }
+                        PluginState::Initialized => octopus_plugin_api::PluginState::Initialized,
                         PluginState::Started => octopus_plugin_api::PluginState::Started,
                         PluginState::Stopped => octopus_plugin_api::PluginState::Stopped,
                         PluginState::Failed(msg) => octopus_plugin_api::PluginState::Failed(msg),
@@ -358,11 +345,7 @@ impl PluginRegistry {
     }
 
     /// Check for dependency cycles
-    fn check_dependency_cycle(
-        &self,
-        name: &str,
-        deps: &[PluginDependency],
-    ) -> Result<()> {
+    fn check_dependency_cycle(&self, name: &str, deps: &[PluginDependency]) -> Result<()> {
         let mut visited = std::collections::HashSet::new();
         let mut stack = vec![name.to_string()];
 
@@ -376,8 +359,7 @@ impl PluginRegistry {
 
             if let Some(dep_deps) = self.dependencies.get(&dep.name) {
                 stack.push(dep.name.clone());
-                if !self.check_cycle_recursive(&dep.name, dep_deps.value(), &mut visited, &stack)?
-                {
+                if !self.check_cycle_recursive(&dep.name, dep_deps.value(), &mut visited, &stack)? {
                     return Err(PluginRuntimeError::dependency_cycle(format!(
                         "Cycle detected involving {}",
                         name
@@ -456,7 +438,10 @@ mod tests {
             "1.0.0"
         }
 
-        async fn init(&mut self, _config: serde_json::Value) -> std::result::Result<(), PluginError> {
+        async fn init(
+            &mut self,
+            _config: serde_json::Value,
+        ) -> std::result::Result<(), PluginError> {
             Ok(())
         }
 
@@ -519,4 +504,3 @@ mod tests {
         assert_eq!(plugins.len(), 2);
     }
 }
-

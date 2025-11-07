@@ -10,9 +10,7 @@ async fn main() -> Result<()> {
 
     // Basic set/get
     println!("=== Basic Operations ===");
-    backend
-        .set("user:123", b"Alice".to_vec(), None)
-        .await?;
+    backend.set("user:123", b"Alice".to_vec(), None).await?;
 
     if let Some(value) = backend.get("user:123").await? {
         println!("User: {}", String::from_utf8_lossy(&value));
@@ -29,10 +27,7 @@ async fn main() -> Result<()> {
         .await?;
 
     println!("Session created with 5s TTL");
-    println!(
-        "Session exists: {}",
-        backend.exists("session:abc").await?
-    );
+    println!("Session exists: {}", backend.exists("session:abc").await?);
 
     tokio::time::sleep(Duration::from_secs(6)).await;
     println!(
@@ -111,4 +106,3 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
-

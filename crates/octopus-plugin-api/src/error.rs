@@ -122,4 +122,3 @@ mod tests {
         assert_eq!(err.to_string(), "Initialization failed: failed to init");
     }
 }
-

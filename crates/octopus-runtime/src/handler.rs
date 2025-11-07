@@ -1,5 +1,6 @@
 //! HTTP request handler
 
+use crate::admin::AdminHandler;
 use bytes::Bytes;
 use http::{Request, Response, StatusCode};
 use http_body_util::{BodyExt, Full};
@@ -7,7 +8,7 @@ use hyper::body::Incoming;
 use octopus_core::{middleware::Middleware, Error, Result};
 use octopus_farp::FarpApiHandler;
 use octopus_health::{CircuitBreaker, HealthTracker};
-use octopus_metrics::{MetricsCollector, ActivityLog, RequestOutcome};
+use octopus_metrics::{ActivityLog, MetricsCollector, RequestOutcome};
 use octopus_plugin_runtime::PluginManager;
 use octopus_protocols::ProtocolHandler;
 use octopus_proxy::HttpProxy;
@@ -16,7 +17,6 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, error, info, warn};
-use crate::admin::AdminHandler;
 
 /// Body type alias
 pub type Body = Full<Bytes>;
@@ -54,12 +54,9 @@ impl RequestHandler {
     ) -> Self {
         let metrics_collector = Arc::new(MetricsCollector::new());
         let activity_log = Arc::new(ActivityLog::default());
-        
-        let admin_handler = AdminHandler::new(
-            Arc::clone(&router),
-            Arc::clone(&request_count),
-        );
-        
+
+        let admin_handler = AdminHandler::new(Arc::clone(&router), Arc::clone(&request_count));
+
         Self {
             router,
             proxy,
@@ -84,7 +81,7 @@ impl RequestHandler {
     ) -> Self {
         let metrics_collector = Arc::new(MetricsCollector::new());
         let activity_log = Arc::new(ActivityLog::default());
-        
+
         // For now, create AdminHandler without health tracker and plugin manager
         // These will be None until we properly wire them from the proxy/health system
         let admin_handler = AdminHandler::with_all(
@@ -96,7 +93,7 @@ impl RequestHandler {
             Some(Arc::clone(&metrics_collector)),
             Some(Arc::clone(&activity_log)),
         );
-        
+
         Self {
             router,
             proxy,
@@ -133,7 +130,7 @@ impl RequestHandler {
             Some(Arc::clone(&metrics_collector)),
             Some(Arc::clone(&activity_log)),
         );
-        
+
         Self {
             router,
             proxy,
@@ -156,12 +153,9 @@ impl RequestHandler {
     ) -> Self {
         let metrics_collector = Arc::new(MetricsCollector::new());
         let activity_log = Arc::new(ActivityLog::default());
-        
-        let admin_handler = AdminHandler::new(
-            Arc::clone(&router),
-            Arc::clone(&request_count),
-        );
-        
+
+        let admin_handler = AdminHandler::new(Arc::clone(&router), Arc::clone(&request_count));
+
         Self {
             router,
             proxy,
@@ -206,7 +200,7 @@ impl RequestHandler {
             let internal_path = path.replacen("/__admin", "/admin", 1);
             return self.admin_handler.handle(&method, &internal_path);
         }
-        
+
         // Also support legacy /admin paths for backwards compatibility
         if path.starts_with("/admin") {
             return self.admin_handler.handle(&method, &path);
@@ -236,21 +230,20 @@ impl RequestHandler {
                 let mut builder = http::Request::builder()
                     .method(parts.method)
                     .version(parts.version);
-                
+
                 // Copy headers
                 for (key, value) in parts.headers.iter() {
                     builder = builder.header(key, value);
                 }
-                
-                let internal_req = builder
-                    .uri(internal_path)
-                    .body(body)
-                    .map_err(|e| Error::InvalidRequest(format!("Failed to build request: {}", e)))?;
-                
+
+                let internal_req = builder.uri(internal_path).body(body).map_err(|e| {
+                    Error::InvalidRequest(format!("Failed to build request: {}", e))
+                })?;
+
                 return farp_handler.handle(internal_req).await;
             }
         }
-        
+
         // Also support legacy /farp paths for backwards compatibility
         if path.starts_with("/farp") {
             if let Some(farp_handler) = &self.farp_handler {
@@ -276,15 +269,17 @@ impl RequestHandler {
                 middleware_count = self.middleware_chain.len(),
                 "Executing middleware chain"
             );
-            
+
             // Create final handler closure
             let handler = self.clone();
             let final_handler = Box::new(move |req: Request<Body>| {
                 let handler = handler.clone();
                 Box::pin(async move { handler.handle_proxy_request(req).await })
-                    as std::pin::Pin<Box<dyn std::future::Future<Output = Result<Response<Body>>> + Send>>
+                    as std::pin::Pin<
+                        Box<dyn std::future::Future<Output = Result<Response<Body>>> + Send>,
+                    >
             });
-            
+
             // Execute middleware chain with final handler
             let next = octopus_core::middleware::Next::with_handler(
                 Arc::clone(&self.middleware_chain),
@@ -317,9 +312,10 @@ impl RequestHandler {
                     error = %e,
                     "No route found"
                 );
-                
+
                 // Record failed request
-                self.metrics_collector.record_request(&path, latency, RequestOutcome::Error);
+                self.metrics_collector
+                    .record_request(&path, latency, RequestOutcome::Error);
                 self.activity_log.record(
                     method.clone(),
                     path.clone(),
@@ -328,7 +324,7 @@ impl RequestHandler {
                     "none".to_string(),
                 );
                 self.metrics_collector.decrement_active_connections();
-                
+
                 return self.error_response(StatusCode::NOT_FOUND, "Route not found");
             }
         };
@@ -348,9 +344,10 @@ impl RequestHandler {
                     error = %e,
                     "Failed to select upstream instance"
                 );
-                
+
                 // Record failed request
-                self.metrics_collector.record_request(&path, latency, RequestOutcome::Error);
+                self.metrics_collector
+                    .record_request(&path, latency, RequestOutcome::Error);
                 self.activity_log.record(
                     method.clone(),
                     path.clone(),
@@ -359,7 +356,7 @@ impl RequestHandler {
                     route.upstream_name.clone(),
                 );
                 self.metrics_collector.decrement_active_connections();
-                
+
                 return self.error_response(
                     StatusCode::SERVICE_UNAVAILABLE,
                     "No healthy upstream available",
@@ -377,10 +374,10 @@ impl RequestHandler {
         // Proxy the request
         let result = self.proxy.proxy(req, &instance).await;
         let latency = start_time.elapsed();
-        
+
         // Decrement active connections
         self.metrics_collector.decrement_active_connections();
-        
+
         match result {
             Ok(response) => {
                 let status = response.status();
@@ -389,9 +386,10 @@ impl RequestHandler {
                 } else {
                     RequestOutcome::Error
                 };
-                
+
                 // Record successful request
-                self.metrics_collector.record_request(&path, latency, outcome);
+                self.metrics_collector
+                    .record_request(&path, latency, outcome);
                 self.activity_log.record(
                     method.clone(),
                     path.clone(),
@@ -399,7 +397,7 @@ impl RequestHandler {
                     latency,
                     route.upstream_name.clone(),
                 );
-                
+
                 info!(
                     method = %method,
                     path = %path,
@@ -411,7 +409,8 @@ impl RequestHandler {
             }
             Err(e) => {
                 // Record failed request
-                self.metrics_collector.record_request(&path, latency, RequestOutcome::Error);
+                self.metrics_collector
+                    .record_request(&path, latency, RequestOutcome::Error);
                 self.activity_log.record(
                     method.clone(),
                     path.clone(),
@@ -419,7 +418,7 @@ impl RequestHandler {
                     latency,
                     route.upstream_name.clone(),
                 );
-                
+
                 error!(
                     method = %method,
                     path = %path,
@@ -440,7 +439,6 @@ impl RequestHandler {
             .body(Full::new(Bytes::from(message.to_string())))
             .map_err(|e| Error::Internal(format!("Failed to build error response: {}", e)))
     }
-
 }
 
 #[cfg(test)]
@@ -465,4 +463,3 @@ mod tests {
         assert_eq!(handler.request_count.load(Ordering::Relaxed), 0);
     }
 }
-

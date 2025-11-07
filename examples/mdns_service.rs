@@ -173,7 +173,9 @@ async fn health() -> impl IntoResponse {
 }
 
 /// OpenAPI schema handler
-async fn openapi(axum::extract::State(service_name): axum::extract::State<String>) -> Json<serde_json::Value> {
+async fn openapi(
+    axum::extract::State(service_name): axum::extract::State<String>,
+) -> Json<serde_json::Value> {
     Json(openapi_schema(&service_name))
 }
 
@@ -255,8 +257,14 @@ fn register_mdns(args: &Args) -> Result<ServiceDaemon> {
         ("datacenter", "local"),
         // FARP v1.0.0 Standard Metadata Keys
         ("farp.enabled", "true"),
-        ("farp.manifest", &format!("http://{}:{}/_farp/manifest", local_ip, args.port)),
-        ("farp.openapi", &format!("http://{}:{}/api/openapi.json", local_ip, args.port)),
+        (
+            "farp.manifest",
+            &format!("http://{}:{}/_farp/manifest", local_ip, args.port),
+        ),
+        (
+            "farp.openapi",
+            &format!("http://{}:{}/api/openapi.json", local_ip, args.port),
+        ),
         ("farp.openapi.path", "/api/openapi.json"),
         ("farp.capabilities", "[rest]"),
         ("farp.strategy", "hybrid"),
@@ -364,4 +372,3 @@ async fn shutdown_signal(mdns: ServiceDaemon) {
     // Give time for cleanup
     tokio::time::sleep(Duration::from_millis(100)).await;
 }
-

@@ -176,8 +176,11 @@ impl From<Box<rhai::EvalAltResult>> for ScriptError {
         let pos = err.position();
         Self::RuntimeError {
             message: err.to_string(),
-            line: if pos.is_beginning_of_line() { None } else { Some(pos.line().unwrap_or(0)) },
+            line: if pos.is_beginning_of_line() {
+                None
+            } else {
+                Some(pos.line().unwrap_or(0))
+            },
         }
     }
 }
-

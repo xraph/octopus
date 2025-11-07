@@ -5,10 +5,10 @@
 pub struct WorkerConfig {
     /// Number of worker threads (0 = auto)
     pub threads: usize,
-    
+
     /// Thread stack size
     pub stack_size: Option<usize>,
-    
+
     /// Thread name prefix
     pub thread_name: String,
 }
@@ -24,10 +24,10 @@ impl Default for WorkerConfig {
 }
 
 /// Worker pool manager
-/// 
+///
 /// Note: This struct tracks worker configuration but does not create a separate runtime.
 /// The server uses the runtime provided by #[tokio::main] in the CLI entry point.
-/// Creating a nested runtime would cause "Cannot drop a runtime in a context where 
+/// Creating a nested runtime would cause "Cannot drop a runtime in a context where
 /// blocking is not allowed" panics on shutdown.
 #[derive(Debug)]
 pub struct WorkerPool {
@@ -42,13 +42,13 @@ impl WorkerPool {
         } else {
             config.threads
         };
-        
+
         tracing::info!(
             threads = threads,
             thread_name = %config.thread_name,
             "Worker pool configuration loaded (using existing runtime)"
         );
-        
+
         Ok(Self { config })
     }
 
@@ -77,7 +77,7 @@ mod tests {
     fn test_worker_pool_auto_threads() {
         let config = WorkerConfig::default();
         let pool = WorkerPool::new(config).unwrap();
-        
+
         // Should use number of CPUs
         assert_eq!(pool.worker_count(), num_cpus::get());
     }
@@ -89,9 +89,7 @@ mod tests {
             ..Default::default()
         };
         let pool = WorkerPool::new(config).unwrap();
-        
+
         assert_eq!(pool.worker_count(), 4);
     }
 }
-
-

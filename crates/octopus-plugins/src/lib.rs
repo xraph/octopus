@@ -16,22 +16,20 @@
     unreachable_pub
 )]
 
-pub mod registry;
-pub mod traits;
 pub mod loader;
 pub mod manager;
+pub mod registry;
+pub mod traits;
 
-pub use registry::PluginRegistry;
-pub use traits::{Plugin, PluginMetadata, PluginType};
 pub use loader::PluginLoader;
 pub use manager::PluginManager;
-
+pub use registry::PluginRegistry;
+pub use traits::{Plugin, PluginMetadata, PluginType};
 
 /// Re-export commonly used types
 pub mod prelude {
-    pub use crate::registry::PluginRegistry;
-    pub use crate::traits::{Plugin, PluginMetadata, PluginType};
     pub use crate::loader::PluginLoader;
     pub use crate::manager::PluginManager;
+    pub use crate::registry::PluginRegistry;
+    pub use crate::traits::{Plugin, PluginMetadata, PluginType};
 }
-

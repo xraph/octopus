@@ -28,4 +28,3 @@ pub mod prelude {
     pub use crate::session::{Session, SessionManager};
     pub use crate::token::{ApiKey, ApiKeyStore};
 }
-

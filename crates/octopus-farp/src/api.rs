@@ -3,7 +3,7 @@
 use crate::federation::SchemaFederation;
 use crate::manifest::SchemaManifest;
 use crate::registry::SchemaRegistry;
-use crate::route_generator::{RouteGenerator, GeneratedRoute};
+use crate::route_generator::{GeneratedRoute, RouteGenerator};
 use crate::schema::{SchemaDescriptor, SchemaFormat};
 use bytes::Bytes;
 use http::{Method, Request, Response, StatusCode};
@@ -14,8 +14,7 @@ use std::sync::Arc;
 use tracing::{debug, info};
 
 /// FARP API handler
-#[derive(Clone)]
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct FarpApiHandler {
     registry: Arc<SchemaRegistry>,
     route_generator: Arc<RouteGenerator>,
@@ -27,7 +26,7 @@ pub struct FarpApiHandler {
 pub struct RegistrationRequest {
     /// Service manifest
     pub manifest: SchemaManifest,
-    
+
     /// Optional schemas (if not using location strategy)
     pub schemas: Option<Vec<SchemaDescriptor>>,
 }
@@ -37,10 +36,10 @@ pub struct RegistrationRequest {
 pub struct RegistrationResponse {
     /// Success status
     pub success: bool,
-    
+
     /// Message
     pub message: String,
-    
+
     /// Generated routes
     pub routes: Vec<GeneratedRoute>,
 }
@@ -57,13 +56,13 @@ pub struct ServiceListResponse {
 pub struct ServiceInfo {
     /// Service name
     pub name: String,
-    
+
     /// Service version
     pub version: String,
-    
+
     /// Number of schemas
     pub schema_count: usize,
-    
+
     /// Last updated
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
@@ -78,7 +77,7 @@ impl FarpApiHandler {
             federation: Arc::new(SchemaFederation::new()),
         }
     }
-    
+
     /// Create a new FARP API handler with custom federation
     pub fn with_federation(
         registry: Arc<SchemaRegistry>,
@@ -92,10 +91,7 @@ impl FarpApiHandler {
     }
 
     /// Handle FARP API requests
-    pub async fn handle(
-        &self,
-        req: Request<Full<Bytes>>,
-    ) -> Result<Response<Full<Bytes>>> {
+    pub async fn handle(&self, req: Request<Full<Bytes>>) -> Result<Response<Full<Bytes>>> {
         let method = req.method().clone();
         let path = req.uri().path().to_string();
 
@@ -117,7 +113,7 @@ impl FarpApiHandler {
                 let service_name = p.trim_start_matches("/farp/services/");
                 self.get_service(service_name).await
             }
-            
+
             // Federated schema endpoints (under /farp/ prefix)
             (Method::GET, "/farp/openapi.json") => self.get_federated_openapi().await,
             (Method::GET, "/farp/asyncapi.json") => self.get_federated_asyncapi().await,
@@ -129,11 +125,11 @@ impl FarpApiHandler {
                 self.get_federated_schema(format_str).await
             }
             (Method::POST, "/farp/federate") => self.trigger_federation().await,
-            
+
             // Documentation UIs (under /farp/ prefix)
             (Method::GET, "/farp/docs") => self.swagger_ui().await,
             (Method::GET, "/farp/redoc") => self.redoc_ui().await,
-            
+
             // Legacy root paths for backwards compatibility
             (Method::GET, "/openapi.json") => self.get_federated_openapi().await,
             (Method::GET, "/asyncapi.json") => self.get_federated_asyncapi().await,
@@ -141,28 +137,29 @@ impl FarpApiHandler {
             (Method::GET, "/grpc") => self.get_federated_grpc().await,
             (Method::GET, "/docs") => self.swagger_ui().await,
             (Method::GET, "/redoc") => self.redoc_ui().await,
-            
+
             _ => self.not_found(),
         }
     }
 
     /// Register a service
-    async fn register_service(
-        &self,
-        req: Request<Full<Bytes>>,
-    ) -> Result<Response<Full<Bytes>>> {
-        let body_bytes = req.into_body().collect().await
+    async fn register_service(&self, req: Request<Full<Bytes>>) -> Result<Response<Full<Bytes>>> {
+        let body_bytes = req
+            .into_body()
+            .collect()
+            .await
             .map_err(|e| Error::Farp(format!("Failed to read request body: {}", e)))?
             .to_bytes();
         let registration: RegistrationRequest = serde_json::from_slice(&body_bytes)
             .map_err(|e| Error::Farp(format!("Invalid registration request: {}", e)))?;
 
         let service_name = registration.manifest.service_name.clone();
-        
+
         info!(service = %service_name, "Registering service");
 
         // Register with registry
-        self.registry.register_service(registration.manifest.clone())?;
+        self.registry
+            .register_service(registration.manifest.clone())?;
 
         // Store schemas and trigger federation
         if let Some(schemas) = &registration.schemas {
@@ -172,15 +169,16 @@ impl FarpApiHandler {
                     reg.schemas.push(schema.clone());
                 }
             }
-            
+
             // Trigger federation automatically
-            let all_service_schemas: Vec<_> = self.registry
+            let all_service_schemas: Vec<_> = self
+                .registry
                 .list_services()
                 .iter()
                 .filter_map(|s| self.registry.get_service(s).ok())
                 .flat_map(|r| r.schemas)
                 .collect();
-            
+
             if !all_service_schemas.is_empty() {
                 let _ = self.federation.federate_schemas(all_service_schemas);
             }
@@ -210,7 +208,10 @@ impl FarpApiHandler {
         service_name: &str,
         req: Request<Full<Bytes>>,
     ) -> Result<Response<Full<Bytes>>> {
-        let body_bytes = req.into_body().collect().await
+        let body_bytes = req
+            .into_body()
+            .collect()
+            .await
             .map_err(|e| Error::Farp(format!("Failed to read request body: {}", e)))?
             .to_bytes();
         let registration: RegistrationRequest = serde_json::from_slice(&body_bytes)
@@ -252,7 +253,7 @@ impl FarpApiHandler {
                 services.push(ServiceInfo {
                     name: reg.service_name.clone(),
                     version: reg.manifest.service_version.clone(),
-                    schema_count: reg.manifest.schemas.len(),  // ← Fixed: read from manifest
+                    schema_count: reg.manifest.schemas.len(), // ← Fixed: read from manifest
                     updated_at: reg
                         .updated_at
                         .duration_since(std::time::UNIX_EPOCH)
@@ -291,15 +292,13 @@ impl FarpApiHandler {
     /// Get federated OpenAPI schema
     async fn get_federated_openapi(&self) -> Result<Response<Full<Bytes>>> {
         info!("Serving federated OpenAPI schema");
-        
+
         match self.federation.get_federated(&SchemaFormat::OpenApi) {
-            Ok(schema) => {
-                Response::builder()
-                    .status(StatusCode::OK)
-                    .header("content-type", "application/json")
-                    .body(Full::new(Bytes::from(schema.content)))
-                    .map_err(|e| Error::Internal(format!("Failed to build response: {}", e)))
-            }
+            Ok(schema) => Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "application/json")
+                .body(Full::new(Bytes::from(schema.content)))
+                .map_err(|e| Error::Internal(format!("Failed to build response: {}", e))),
             Err(_) => {
                 // Return empty OpenAPI schema if none available
                 let empty_schema = serde_json::json!({
@@ -311,11 +310,13 @@ impl FarpApiHandler {
                     },
                     "paths": {}
                 });
-                
+
                 Response::builder()
                     .status(StatusCode::OK)
                     .header("content-type", "application/json")
-                    .body(Full::new(Bytes::from(serde_json::to_string_pretty(&empty_schema).unwrap())))
+                    .body(Full::new(Bytes::from(
+                        serde_json::to_string_pretty(&empty_schema).unwrap(),
+                    )))
                     .map_err(|e| Error::Internal(format!("Failed to build response: {}", e)))
             }
         }
@@ -324,15 +325,13 @@ impl FarpApiHandler {
     /// Get federated AsyncAPI schema
     async fn get_federated_asyncapi(&self) -> Result<Response<Full<Bytes>>> {
         info!("Serving federated AsyncAPI schema");
-        
+
         match self.federation.get_federated(&SchemaFormat::AsyncApi) {
-            Ok(schema) => {
-                Response::builder()
-                    .status(StatusCode::OK)
-                    .header("content-type", "application/json")
-                    .body(Full::new(Bytes::from(schema.content)))
-                    .map_err(|e| Error::Internal(format!("Failed to build response: {}", e)))
-            }
+            Ok(schema) => Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "application/json")
+                .body(Full::new(Bytes::from(schema.content)))
+                .map_err(|e| Error::Internal(format!("Failed to build response: {}", e))),
             Err(_) => {
                 let empty_schema = serde_json::json!({
                     "asyncapi": "2.6.0",
@@ -342,11 +341,13 @@ impl FarpApiHandler {
                     },
                     "channels": {}
                 });
-                
+
                 Response::builder()
                     .status(StatusCode::OK)
                     .header("content-type", "application/json")
-                    .body(Full::new(Bytes::from(serde_json::to_string_pretty(&empty_schema).unwrap())))
+                    .body(Full::new(Bytes::from(
+                        serde_json::to_string_pretty(&empty_schema).unwrap(),
+                    )))
                     .map_err(|e| Error::Internal(format!("Failed to build response: {}", e)))
             }
         }
@@ -355,18 +356,17 @@ impl FarpApiHandler {
     /// Get federated GraphQL schema
     async fn get_federated_graphql(&self) -> Result<Response<Full<Bytes>>> {
         info!("Serving federated GraphQL schema");
-        
+
         match self.federation.get_federated(&SchemaFormat::GraphQL) {
-            Ok(schema) => {
-                Response::builder()
-                    .status(StatusCode::OK)
-                    .header("content-type", "text/plain; charset=utf-8")
-                    .body(Full::new(Bytes::from(schema.content)))
-                    .map_err(|e| Error::Internal(format!("Failed to build response: {}", e)))
-            }
+            Ok(schema) => Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "text/plain; charset=utf-8")
+                .body(Full::new(Bytes::from(schema.content)))
+                .map_err(|e| Error::Internal(format!("Failed to build response: {}", e))),
             Err(_) => {
-                let empty_schema = "# Federated GraphQL Schema (No Services)\ntype Query { _empty: String }";
-                
+                let empty_schema =
+                    "# Federated GraphQL Schema (No Services)\ntype Query { _empty: String }";
+
                 Response::builder()
                     .status(StatusCode::OK)
                     .header("content-type", "text/plain; charset=utf-8")
@@ -379,18 +379,16 @@ impl FarpApiHandler {
     /// Get federated gRPC schema (protobuf)
     async fn get_federated_grpc(&self) -> Result<Response<Full<Bytes>>> {
         info!("Serving federated gRPC schema");
-        
+
         match self.federation.get_federated(&SchemaFormat::Grpc) {
-            Ok(schema) => {
-                Response::builder()
-                    .status(StatusCode::OK)
-                    .header("content-type", "text/plain; charset=utf-8")
-                    .body(Full::new(Bytes::from(schema.content)))
-                    .map_err(|e| Error::Internal(format!("Failed to build response: {}", e)))
-            }
+            Ok(schema) => Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "text/plain; charset=utf-8")
+                .body(Full::new(Bytes::from(schema.content)))
+                .map_err(|e| Error::Internal(format!("Failed to build response: {}", e))),
             Err(_) => {
                 let empty_schema = "// Federated gRPC Schema (No Services)\nsyntax = \"proto3\";";
-                
+
                 Response::builder()
                     .status(StatusCode::OK)
                     .header("content-type", "text/plain; charset=utf-8")
@@ -403,7 +401,7 @@ impl FarpApiHandler {
     /// List all available federated schemas
     async fn list_federated_schemas(&self) -> Result<Response<Full<Bytes>>> {
         let formats = self.federation.list_formats();
-        
+
         let schemas: Vec<_> = formats
             .iter()
             .filter_map(|format| {
@@ -419,11 +417,11 @@ impl FarpApiHandler {
                 })
             })
             .collect();
-        
+
         let response = serde_json::json!({
             "schemas": schemas
         });
-        
+
         self.json_response(StatusCode::OK, &response)
     }
 
@@ -444,14 +442,14 @@ impl FarpApiHandler {
                 );
             }
         };
-        
+
         match self.federation.get_federated(&format) {
             Ok(schema) => {
                 let content_type = match format {
                     SchemaFormat::OpenApi | SchemaFormat::AsyncApi => "application/json",
                     _ => "text/plain; charset=utf-8",
                 };
-                
+
                 Response::builder()
                     .status(StatusCode::OK)
                     .header("content-type", content_type)
@@ -550,17 +548,17 @@ impl FarpApiHandler {
     /// Trigger federation of all registered service schemas
     async fn trigger_federation(&self) -> Result<Response<Full<Bytes>>> {
         info!("Triggering schema federation");
-        
+
         // Collect all schemas from registered services
         let service_names = self.registry.list_services();
         let mut all_schemas = Vec::new();
-        
+
         for service_name in &service_names {
             if let Ok(registration) = self.registry.get_service(service_name) {
                 all_schemas.extend(registration.schemas.clone());
             }
         }
-        
+
         if all_schemas.is_empty() {
             return self.json_response(
                 StatusCode::OK,
@@ -571,12 +569,12 @@ impl FarpApiHandler {
                 }),
             );
         }
-        
+
         // Perform federation
         self.federation.federate_schemas(all_schemas.clone())?;
-        
+
         let formats = self.federation.list_formats();
-        
+
         self.json_response(
             StatusCode::OK,
             &serde_json::json!({
@@ -716,7 +714,8 @@ mod tests {
     async fn test_get_federated_openapi_with_schema() {
         let registry = Arc::new(SchemaRegistry::new());
         let federation = Arc::new(SchemaFederation::new());
-        let handler = FarpApiHandler::with_federation(Arc::clone(&registry), Arc::clone(&federation));
+        let handler =
+            FarpApiHandler::with_federation(Arc::clone(&registry), Arc::clone(&federation));
 
         // Create and register a test schema
         let schema = SchemaDescriptor::new(
@@ -825,7 +824,8 @@ mod tests {
     async fn test_list_federated_schemas() {
         let registry = Arc::new(SchemaRegistry::new());
         let federation = Arc::new(SchemaFederation::new());
-        let handler = FarpApiHandler::with_federation(Arc::clone(&registry), Arc::clone(&federation));
+        let handler =
+            FarpApiHandler::with_federation(Arc::clone(&registry), Arc::clone(&federation));
 
         // Federate some schemas
         let schema1 = SchemaDescriptor::new(
@@ -865,7 +865,8 @@ mod tests {
     async fn test_get_federated_schema_by_format() {
         let registry = Arc::new(SchemaRegistry::new());
         let federation = Arc::new(SchemaFederation::new());
-        let handler = FarpApiHandler::with_federation(Arc::clone(&registry), Arc::clone(&federation));
+        let handler =
+            FarpApiHandler::with_federation(Arc::clone(&registry), Arc::clone(&federation));
 
         let schema = SchemaDescriptor::new(
             "test",
@@ -996,7 +997,8 @@ mod tests {
     async fn test_multiple_services_federation() {
         let registry = Arc::new(SchemaRegistry::new());
         let federation = Arc::new(SchemaFederation::new());
-        let handler = FarpApiHandler::with_federation(Arc::clone(&registry), Arc::clone(&federation));
+        let handler =
+            FarpApiHandler::with_federation(Arc::clone(&registry), Arc::clone(&federation));
 
         // Register multiple services with OpenAPI schemas
         let schema1 = SchemaDescriptor::new(
@@ -1038,11 +1040,10 @@ mod tests {
 
         let body = res.into_body().collect().await.unwrap().to_bytes();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        
+
         // Both services should be in the federated schema with prefixed paths
         let paths = json["paths"].as_object().unwrap();
         assert!(paths.contains_key("/users-service/users"));
         assert!(paths.contains_key("/posts-service/posts"));
     }
 }
-

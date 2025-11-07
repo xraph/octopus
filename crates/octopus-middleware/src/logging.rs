@@ -257,10 +257,8 @@ mod tests {
             status: StatusCode::OK,
         };
 
-        let stack: std::sync::Arc<[std::sync::Arc<dyn Middleware>]> = std::sync::Arc::new([
-            std::sync::Arc::new(logger),
-            std::sync::Arc::new(handler),
-        ]);
+        let stack: std::sync::Arc<[std::sync::Arc<dyn Middleware>]> =
+            std::sync::Arc::new([std::sync::Arc::new(logger), std::sync::Arc::new(handler)]);
 
         let next = Next::new(stack);
 
@@ -284,10 +282,7 @@ mod tests {
             logger.redact_value("Authorization", "Bearer token123"),
             "[REDACTED]"
         );
-        assert_eq!(
-            logger.redact_value("Cookie", "session=abc"),
-            "[REDACTED]"
-        );
+        assert_eq!(logger.redact_value("Cookie", "session=abc"), "[REDACTED]");
         assert_eq!(
             logger.redact_value("Content-Type", "application/json"),
             "application/json"
@@ -310,10 +305,8 @@ mod tests {
             status: StatusCode::OK,
         };
 
-        let stack: std::sync::Arc<[std::sync::Arc<dyn Middleware>]> = std::sync::Arc::new([
-            std::sync::Arc::new(logger),
-            std::sync::Arc::new(handler),
-        ]);
+        let stack: std::sync::Arc<[std::sync::Arc<dyn Middleware>]> =
+            std::sync::Arc::new([std::sync::Arc::new(logger), std::sync::Arc::new(handler)]);
 
         let next = Next::new(stack);
 
@@ -344,10 +337,8 @@ mod tests {
 
         let handler = ErrorHandler;
 
-        let stack: std::sync::Arc<[std::sync::Arc<dyn Middleware>]> = std::sync::Arc::new([
-            std::sync::Arc::new(logger),
-            std::sync::Arc::new(handler),
-        ]);
+        let stack: std::sync::Arc<[std::sync::Arc<dyn Middleware>]> =
+            std::sync::Arc::new([std::sync::Arc::new(logger), std::sync::Arc::new(handler)]);
 
         let next = Next::new(stack);
 

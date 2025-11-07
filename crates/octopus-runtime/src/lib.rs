@@ -26,7 +26,6 @@ pub use handler::RequestHandler;
 pub use server::{Server, ServerBuilder};
 pub use shutdown::{ShutdownSignal, SignalHandler};
 
-
 /// Runtime state
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeState {
@@ -46,4 +45,3 @@ pub mod prelude {
     pub use crate::shutdown::{ShutdownSignal, SignalHandler};
     pub use crate::RuntimeState;
 }
-

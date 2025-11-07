@@ -1,8 +1,8 @@
 //! Graceful shutdown with signal handling
 
-use tokio::sync::broadcast;
-use tokio::signal;
 use std::sync::Arc;
+use tokio::signal;
+use tokio::sync::broadcast;
 
 /// Shutdown signal broadcaster
 #[derive(Debug, Clone)]
@@ -60,12 +60,12 @@ impl SignalHandler {
         #[cfg(unix)]
         {
             use signal::unix::{signal, SignalKind};
-            
-            let mut sigterm = signal(SignalKind::terminate())
-                .expect("Failed to setup SIGTERM handler");
-            let mut sigint = signal(SignalKind::interrupt())
-                .expect("Failed to setup SIGINT handler");
-            
+
+            let mut sigterm =
+                signal(SignalKind::terminate()).expect("Failed to setup SIGTERM handler");
+            let mut sigint =
+                signal(SignalKind::interrupt()).expect("Failed to setup SIGINT handler");
+
             tokio::select! {
                 _ = sigterm.recv() => {
                     tracing::info!("Received SIGTERM");
@@ -77,7 +77,7 @@ impl SignalHandler {
                 }
             }
         }
-        
+
         #[cfg(not(unix))]
         {
             match signal::ctrl_c().await {
@@ -108,9 +108,9 @@ mod tests {
     async fn test_shutdown_signal_subscribe() {
         let signal = ShutdownSignal::new();
         let mut rx = signal.subscribe();
-        
+
         signal.trigger();
-        
+
         // Should receive shutdown
         assert!(rx.try_recv().is_ok());
     }
@@ -120,13 +120,11 @@ mod tests {
         let signal = ShutdownSignal::new();
         let mut rx1 = signal.subscribe();
         let mut rx2 = signal.subscribe();
-        
+
         signal.trigger();
-        
+
         // Both should receive
         assert!(rx1.try_recv().is_ok());
         assert!(rx2.try_recv().is_ok());
     }
 }
-
-

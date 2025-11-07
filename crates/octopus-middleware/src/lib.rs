@@ -58,4 +58,3 @@ pub mod prelude {
     pub use crate::timeout::{Timeout, TimeoutConfig};
     pub use octopus_core::middleware::{Middleware, Next};
 }
-

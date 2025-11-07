@@ -65,7 +65,7 @@ impl Compressor {
     fn compress_brotli(data: &[u8], level: u32) -> Result<Bytes, std::io::Error> {
         let mut compressed = Vec::new();
         let quality = level.min(11);
-        
+
         brotli::BrotliCompress(
             &mut std::io::Cursor::new(data),
             &mut compressed,
@@ -74,7 +74,7 @@ impl Compressor {
                 ..Default::default()
             },
         )?;
-        
+
         Ok(Bytes::from(compressed))
     }
 
@@ -91,7 +91,7 @@ impl Compressor {
         preferred: &[String],
     ) -> Option<CompressionAlgorithm> {
         let accept = accept_encoding?;
-        
+
         // Parse Accept-Encoding header (e.g., "gzip, deflate, br")
         let accepted: Vec<&str> = accept
             .split(',')
@@ -143,7 +143,8 @@ mod tests {
     fn test_compress_gzip() {
         // Use larger, highly repetitive data that will definitely compress
         let data = "Hello, World! This is a test string that should compress well. ".repeat(100);
-        let compressed = Compressor::compress(data.as_bytes(), CompressionAlgorithm::Gzip, 6).unwrap();
+        let compressed =
+            Compressor::compress(data.as_bytes(), CompressionAlgorithm::Gzip, 6).unwrap();
         assert!(compressed.len() < data.len());
     }
 
@@ -151,7 +152,8 @@ mod tests {
     fn test_compress_brotli() {
         // Use larger, highly repetitive data that will definitely compress
         let data = "Hello, World! This is a test string that should compress well. ".repeat(100);
-        let compressed = Compressor::compress(data.as_bytes(), CompressionAlgorithm::Brotli, 6).unwrap();
+        let compressed =
+            Compressor::compress(data.as_bytes(), CompressionAlgorithm::Brotli, 6).unwrap();
         assert!(compressed.len() < data.len());
     }
 
@@ -159,17 +161,14 @@ mod tests {
     fn test_compress_zstd() {
         // Use larger, highly repetitive data that will definitely compress
         let data = "Hello, World! This is a test string that should compress well. ".repeat(100);
-        let compressed = Compressor::compress(data.as_bytes(), CompressionAlgorithm::Zstd, 6).unwrap();
+        let compressed =
+            Compressor::compress(data.as_bytes(), CompressionAlgorithm::Zstd, 6).unwrap();
         assert!(compressed.len() < data.len());
     }
 
     #[test]
     fn test_negotiate_algorithm() {
-        let preferred = vec![
-            "br".to_string(),
-            "zstd".to_string(),
-            "gzip".to_string(),
-        ];
+        let preferred = vec!["br".to_string(), "zstd".to_string(), "gzip".to_string()];
 
         // Client accepts brotli
         let algo = Compressor::negotiate_algorithm(Some("gzip, br"), &preferred);
@@ -188,4 +187,3 @@ mod tests {
         assert_eq!(algo, None);
     }
 }
-

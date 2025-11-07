@@ -29,7 +29,10 @@ pub trait Middleware: Send + Sync + fmt::Debug {
 
 /// Type alias for the final handler function
 pub type HandlerFn = Box<
-    dyn Fn(Request<Body>) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Response<Body>>> + Send>>
+    dyn Fn(
+            Request<Body>,
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Response<Body>>> + Send>>
         + Send
         + Sync,
 >;
@@ -52,10 +55,7 @@ impl Next {
     }
 
     /// Create a new Next with a final handler
-    pub fn with_handler(
-        middleware_stack: Arc<[Arc<dyn Middleware>]>,
-        handler: HandlerFn,
-    ) -> Self {
+    pub fn with_handler(middleware_stack: Arc<[Arc<dyn Middleware>]>, handler: HandlerFn) -> Self {
         Self {
             middleware_stack,
             index: 0,
@@ -112,11 +112,7 @@ macro_rules! middleware_fn {
 
         #[async_trait]
         impl Middleware for $name {
-            async fn call(
-                &self,
-                req: Request<Body>,
-                next: Next,
-            ) -> Result<Response<Body>> {
+            async fn call(&self, req: Request<Body>, next: Next) -> Result<Response<Body>> {
                 $func(req, next).await
             }
         }
@@ -162,5 +158,3 @@ mod tests {
         assert!(result.is_err()); // Should error at end of chain
     }
 }
-
-

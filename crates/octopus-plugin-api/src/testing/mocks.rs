@@ -2,7 +2,7 @@
 
 use crate::auth::{AuthProvider, AuthResult, Credentials, Principal};
 use crate::context::{RequestContext, ResponseContext};
-use crate::interceptor::{InterceptorAction, RequestInterceptor, ResponseInterceptor, Body};
+use crate::interceptor::{Body, InterceptorAction, RequestInterceptor, ResponseInterceptor};
 use crate::plugin::{HealthStatus, Plugin};
 use crate::PluginError;
 use async_trait::async_trait;
@@ -128,9 +128,7 @@ impl Plugin for MockAuthProvider {
 impl AuthProvider for MockAuthProvider {
     async fn authenticate(&self, _req: &Request<Body>) -> Result<AuthResult, PluginError> {
         if self.should_authenticate {
-            Ok(AuthResult::Authenticated(
-                self.principal.clone().unwrap(),
-            ))
+            Ok(AuthResult::Authenticated(self.principal.clone().unwrap()))
         } else {
             Ok(AuthResult::Unauthenticated)
         }
@@ -263,7 +261,10 @@ mod tests {
     async fn test_mock_plugin() {
         let mut plugin = MockPlugin::new("test");
 
-        plugin.init(serde_json::json!({"key": "value"})).await.unwrap();
+        plugin
+            .init(serde_json::json!({"key": "value"}))
+            .await
+            .unwrap();
         assert_eq!(plugin.init_call_count(), 1);
 
         plugin.start().await.unwrap();
@@ -289,14 +290,10 @@ mod tests {
         let interceptor = MockInterceptor::new("mock-interceptor");
 
         let mut req = Request::builder().body(Body::default()).unwrap();
-        let ctx = RequestContext::new(
-            "req-123".to_string(),
-            "127.0.0.1:8080".parse().unwrap(),
-        );
+        let ctx = RequestContext::new("req-123".to_string(), "127.0.0.1:8080".parse().unwrap());
 
         let result = interceptor.intercept_request(&mut req, &ctx).await.unwrap();
         assert!(result.is_continue());
         assert_eq!(interceptor.request_call_count(), 1);
     }
 }
-

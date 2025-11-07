@@ -57,12 +57,11 @@ impl RequestContext {
     /// Apply changes back to HTTP request
     pub fn apply_to_request<B>(&self, req: &mut http::Request<B>) -> Result<(), String> {
         // Update method
-        *req.method_mut() = Method::from_str(&self.method)
-            .map_err(|e| format!("Invalid method: {}", e))?;
+        *req.method_mut() =
+            Method::from_str(&self.method).map_err(|e| format!("Invalid method: {}", e))?;
 
         // Update URI
-        *req.uri_mut() = Uri::from_str(&self.uri)
-            .map_err(|e| format!("Invalid URI: {}", e))?;
+        *req.uri_mut() = Uri::from_str(&self.uri).map_err(|e| format!("Invalid URI: {}", e))?;
 
         // Update version
         *req.version_mut() = match self.version.as_str() {
@@ -89,7 +88,9 @@ impl RequestContext {
 
     /// Get body as string
     pub fn body_string(&self) -> Option<String> {
-        self.body.as_ref().and_then(|b| String::from_utf8(b.clone()).ok())
+        self.body
+            .as_ref()
+            .and_then(|b| String::from_utf8(b.clone()).ok())
     }
 
     /// Set body from string
@@ -99,7 +100,8 @@ impl RequestContext {
 
     /// Get body as JSON
     pub fn body_json(&self) -> Option<serde_json::Value> {
-        self.body_string().and_then(|s| serde_json::from_str(&s).ok())
+        self.body_string()
+            .and_then(|s| serde_json::from_str(&s).ok())
     }
 
     /// Set body from JSON
@@ -141,8 +143,8 @@ impl ResponseContext {
     /// Apply changes back to HTTP response
     pub fn apply_to_response<B>(&self, res: &mut http::Response<B>) -> Result<(), String> {
         // Update status
-        *res.status_mut() = StatusCode::from_u16(self.status)
-            .map_err(|e| format!("Invalid status code: {}", e))?;
+        *res.status_mut() =
+            StatusCode::from_u16(self.status).map_err(|e| format!("Invalid status code: {}", e))?;
 
         // Update headers
         res.headers_mut().clear();
@@ -159,7 +161,9 @@ impl ResponseContext {
 
     /// Get body as string
     pub fn body_string(&self) -> Option<String> {
-        self.body.as_ref().and_then(|b| String::from_utf8(b.clone()).ok())
+        self.body
+            .as_ref()
+            .and_then(|b| String::from_utf8(b.clone()).ok())
     }
 
     /// Set body from string
@@ -169,7 +173,8 @@ impl ResponseContext {
 
     /// Get body as JSON
     pub fn body_json(&self) -> Option<serde_json::Value> {
-        self.body_string().and_then(|s| serde_json::from_str(&s).ok())
+        self.body_string()
+            .and_then(|s| serde_json::from_str(&s).ok())
     }
 
     /// Set body from JSON
@@ -222,4 +227,3 @@ impl ScriptContext {
         }
     }
 }
-

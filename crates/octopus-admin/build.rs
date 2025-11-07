@@ -6,9 +6,7 @@ fn main() {
     println!("cargo:rerun-if-changed=templates/");
 
     // Check if npm is available
-    let npm_check = Command::new("npm")
-        .arg("--version")
-        .output();
+    let npm_check = Command::new("npm").arg("--version").output();
 
     if npm_check.is_err() {
         eprintln!("Warning: npm not found. Skipping CSS build.");
@@ -44,4 +42,3 @@ fn main() {
 
     println!("Tailwind CSS built successfully!");
 }
-

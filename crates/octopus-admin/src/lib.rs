@@ -28,7 +28,6 @@ pub mod filters {
 
     /// Serialize a value to JSON for use in templates
     pub fn json<T: Serialize>(value: &T) -> askama::Result<String> {
-        serde_json::to_string(value)
-            .map_err(|e| askama::Error::Custom(Box::new(e)))
+        serde_json::to_string(value).map_err(|e| askama::Error::Custom(Box::new(e)))
     }
 }

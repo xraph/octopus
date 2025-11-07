@@ -92,11 +92,12 @@ pub trait StateBackend: Send + Sync + Clone + 'static {
         // Default implementation: set and get a test key
         let test_key = "__health_check__";
         let test_value = b"ok".to_vec();
-        
-        self.set(test_key, test_value.clone(), Some(Duration::from_secs(1))).await?;
+
+        self.set(test_key, test_value.clone(), Some(Duration::from_secs(1)))
+            .await?;
         let result = self.get(test_key).await?;
         self.delete(test_key).await?;
-        
+
         if result == Some(test_value) {
             Ok(())
         } else {
@@ -104,4 +105,3 @@ pub trait StateBackend: Send + Sync + Clone + 'static {
         }
     }
 }
-

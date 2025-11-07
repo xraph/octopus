@@ -139,11 +139,7 @@ impl TestContext {
     }
 
     /// Build a ResponseContext
-    pub fn build_response_context(
-        &self,
-        duration: Duration,
-        status_code: u16,
-    ) -> ResponseContext {
+    pub fn build_response_context(&self, duration: Duration, status_code: u16) -> ResponseContext {
         ResponseContext::new(self.request_id.clone(), duration, status_code)
     }
 }
@@ -230,8 +226,7 @@ mod tests {
 
     #[test]
     fn test_context_builder() {
-        let ctx = TestContext::new()
-            .with_request_id("test-123");
+        let ctx = TestContext::new().with_request_id("test-123");
 
         let req_ctx = ctx.build_request_context();
         assert_eq!(req_ctx.request_id, "test-123");
@@ -241,4 +236,3 @@ mod tests {
         assert_eq!(res_ctx.status_code, 200);
     }
 }
-

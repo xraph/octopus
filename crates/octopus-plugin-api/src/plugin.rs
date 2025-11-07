@@ -311,4 +311,3 @@ mod tests {
         assert_eq!(state.to_string(), "failed: error");
     }
 }
-

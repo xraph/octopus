@@ -14,7 +14,11 @@ use tracing::{info, warn};
 /// Load certificates from a PEM file
 pub fn load_certificates(path: &Path) -> Result<Vec<CertificateDer<'static>>> {
     let file = File::open(path).map_err(|e| {
-        Error::Config(format!("Failed to open certificate file {}: {}", path.display(), e))
+        Error::Config(format!(
+            "Failed to open certificate file {}: {}",
+            path.display(),
+            e
+        ))
     })?;
 
     let mut reader = BufReader::new(file);
@@ -41,15 +45,17 @@ pub fn load_certificates(path: &Path) -> Result<Vec<CertificateDer<'static>>> {
 /// Load private key from a PEM file
 pub fn load_private_key(path: &Path) -> Result<PrivateKeyDer<'static>> {
     let file = File::open(path).map_err(|e| {
-        Error::Config(format!("Failed to open private key file {}: {}", path.display(), e))
+        Error::Config(format!(
+            "Failed to open private key file {}: {}",
+            path.display(),
+            e
+        ))
     })?;
 
     let mut reader = BufReader::new(file);
     let key = private_key(&mut reader)
         .map_err(|e| Error::Config(format!("Failed to parse private key: {}", e)))?
-        .ok_or_else(|| {
-            Error::Config(format!("No private key found in {}", path.display()))
-        })?;
+        .ok_or_else(|| Error::Config(format!("No private key found in {}", path.display())))?;
 
     info!(path = %path.display(), "Loaded TLS private key");
 
@@ -74,22 +80,17 @@ pub struct CertificateReloader {
 
 impl CertificateReloader {
     /// Create a new certificate reloader
-    pub fn new(
-        cert_path: &Path,
-        key_path: &Path,
-        reload_interval: Duration,
-    ) -> Result<Self> {
+    pub fn new(cert_path: &Path, key_path: &Path, reload_interval: Duration) -> Result<Self> {
         // Load initial certificates
         let certificates = load_certificates(cert_path)?;
         let private_key = load_private_key(key_path)?;
 
         // Get initial modification time
-        let cert_metadata = std::fs::metadata(cert_path).map_err(|e| {
-            Error::Config(format!("Failed to read cert metadata: {}", e))
-        })?;
-        let last_modified = cert_metadata.modified().map_err(|e| {
-            Error::Config(format!("Failed to get cert modification time: {}", e))
-        })?;
+        let cert_metadata = std::fs::metadata(cert_path)
+            .map_err(|e| Error::Config(format!("Failed to read cert metadata: {}", e)))?;
+        let last_modified = cert_metadata
+            .modified()
+            .map_err(|e| Error::Config(format!("Failed to get cert modification time: {}", e)))?;
 
         let metadata = CertificateMetadata {
             cert_path: cert_path.into(),
@@ -120,13 +121,12 @@ impl CertificateReloader {
         let metadata = self.metadata.read().await;
 
         // Check if certificate file was modified
-        let cert_metadata = std::fs::metadata(&metadata.cert_path).map_err(|e| {
-            Error::Internal(format!("Failed to read cert metadata: {}", e))
-        })?;
+        let cert_metadata = std::fs::metadata(&metadata.cert_path)
+            .map_err(|e| Error::Internal(format!("Failed to read cert metadata: {}", e)))?;
 
-        let current_modified = cert_metadata.modified().map_err(|e| {
-            Error::Internal(format!("Failed to get cert modification time: {}", e))
-        })?;
+        let current_modified = cert_metadata
+            .modified()
+            .map_err(|e| Error::Internal(format!("Failed to get cert modification time: {}", e)))?;
 
         if current_modified <= metadata.last_modified {
             return Ok(false);
@@ -162,12 +162,11 @@ impl CertificateReloader {
         *self.private_key.write().await = new_key;
 
         // Update modification time
-        let cert_metadata = std::fs::metadata(&metadata.cert_path).map_err(|e| {
-            Error::Internal(format!("Failed to read cert metadata: {}", e))
-        })?;
-        let new_modified = cert_metadata.modified().map_err(|e| {
-            Error::Internal(format!("Failed to get cert modification time: {}", e))
-        })?;
+        let cert_metadata = std::fs::metadata(&metadata.cert_path)
+            .map_err(|e| Error::Internal(format!("Failed to read cert metadata: {}", e)))?;
+        let new_modified = cert_metadata
+            .modified()
+            .map_err(|e| Error::Internal(format!("Failed to get cert modification time: {}", e)))?;
 
         drop(metadata);
         self.metadata.write().await.last_modified = new_modified;
@@ -200,4 +199,3 @@ mod tests {
         assert!(result.is_err());
     }
 }
-

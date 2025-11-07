@@ -13,10 +13,10 @@ use std::sync::Arc;
 pub struct ProxyConfig {
     /// Whether to preserve the Host header
     pub preserve_host: bool,
-    
+
     /// Whether to add X-Forwarded-* headers
     pub add_forwarded_headers: bool,
-    
+
     /// Custom headers to add to upstream requests
     pub upstream_headers: Vec<(String, String)>,
 }
@@ -58,16 +58,16 @@ impl HttpProxy {
     ) -> Result<Response<Full<Bytes>>> {
         // Build upstream URI
         let upstream_uri = self.build_upstream_uri(&req, upstream)?;
-        
+
         // Update request URI
         *req.uri_mut() = upstream_uri;
-        
+
         // Transform headers
         self.transform_headers(&mut req, upstream)?;
-        
+
         // Send request
         let response = self.client.send(req, upstream).await?;
-        
+
         // Convert response body
         // Note: In production, this should stream the body, not collect it all
         let (parts, body) = response.into_parts();
@@ -76,7 +76,7 @@ impl HttpProxy {
             .await
             .map_err(|e| Error::UpstreamConnection(e.to_string()))?
             .to_bytes();
-        
+
         Ok(Response::from_parts(parts, Full::new(body_bytes)))
     }
 
@@ -87,12 +87,12 @@ impl HttpProxy {
             .path_and_query()
             .map(|pq| pq.as_str())
             .unwrap_or("/");
-        
+
         let upstream_uri = format!(
             "http://{}:{}{}",
             upstream.address, upstream.port, path_and_query
         );
-        
+
         upstream_uri
             .parse()
             .map_err(|e| Error::UpstreamConnection(format!("Invalid upstream URI: {}", e)))
@@ -105,7 +105,7 @@ impl HttpProxy {
         upstream: &UpstreamInstance,
     ) -> Result<()> {
         let headers = req.headers_mut();
-        
+
         // Update Host header if not preserving
         if !self.config.preserve_host {
             let host = format!("{}:{}", upstream.address, upstream.port);
@@ -115,7 +115,7 @@ impl HttpProxy {
                     .map_err(|e| Error::InvalidRequest(format!("Invalid host: {}", e)))?,
             );
         }
-        
+
         // Add X-Forwarded-* headers
         if self.config.add_forwarded_headers {
             // X-Forwarded-For (would need client IP from connection)
@@ -125,7 +125,7 @@ impl HttpProxy {
                 http::HeaderValue::from_static("http"),
             );
         }
-        
+
         // Add custom headers
         for (name, value) in &self.config.upstream_headers {
             headers.insert(
@@ -135,7 +135,7 @@ impl HttpProxy {
                     .map_err(|e| Error::InvalidRequest(format!("Invalid header value: {}", e)))?,
             );
         }
-        
+
         Ok(())
     }
 }
@@ -157,17 +157,15 @@ mod tests {
         let client = HttpClient::new();
         let pool = Arc::new(ConnectionPool::new(PoolConfig::default()));
         let proxy = HttpProxy::new(client, pool, ProxyConfig::default());
-        
+
         let req = Request::builder()
             .uri("/test?foo=bar")
             .body(Full::new(Bytes::new()))
             .unwrap();
-        
+
         let upstream = UpstreamInstance::new("test", "localhost", 8080);
-        
+
         let uri = proxy.build_upstream_uri(&req, &upstream).unwrap();
         assert_eq!(uri.to_string(), "http://localhost:8080/test?foo=bar");
     }
 }
-
-

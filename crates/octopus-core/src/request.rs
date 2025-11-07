@@ -162,5 +162,3 @@ mod tests {
         assert!(!auth.has_scopes(&["read", "admin"]));
     }
 }
-
-

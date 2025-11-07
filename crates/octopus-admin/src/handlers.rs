@@ -73,7 +73,6 @@ pub struct LegacyOverviewEnhancedTemplate {
     pub plugin_cards: Vec<PluginStatsCard>,
 }
 
-
 /// Routes page template (shadcn design with Alpine.js enhancements)
 #[derive(Template)]
 #[template(path = "shadcn_routes_enhanced.html")]
@@ -289,9 +288,7 @@ pub struct LogsTemplate {
 
 /// Logs page handler
 pub async fn logs_handler(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
-    let template = LogsTemplate {
-        total_logs: 0,
-    };
+    let template = LogsTemplate { total_logs: 0 };
 
     HtmlTemplate(template)
 }
@@ -305,9 +302,7 @@ pub struct ConfigTemplate {
 
 /// Configuration page handler
 pub async fn config_handler(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
-    let template = ConfigTemplate {
-        total_config: 0,
-    };
+    let template = ConfigTemplate { total_config: 0 };
 
     HtmlTemplate(template)
 }
@@ -325,15 +320,13 @@ pub async fn api_stats_handler(State(_state): State<Arc<AppState>>) -> impl Into
 /// API: Get recent activity (for HTMX auto-refresh)
 pub async fn api_activity_handler(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
     // TODO: Fetch real activity logs
-    let activities = vec![
-        ActivityLogEntry {
-            timestamp: "2024-01-15 10:30:00".to_string(),
-            level: "info".to_string(),
-            message: "Route /api/users registered".to_string(),
-            details: None,
-            source: Some("router".to_string()),
-        },
-    ];
+    let activities = vec![ActivityLogEntry {
+        timestamp: "2024-01-15 10:30:00".to_string(),
+        level: "info".to_string(),
+        message: "Route /api/users registered".to_string(),
+        details: None,
+        source: Some("router".to_string()),
+    }];
 
     Json(activities)
 }
@@ -341,17 +334,15 @@ pub async fn api_activity_handler(State(_state): State<Arc<AppState>>) -> impl I
 /// API: Get health checks (for HTMX auto-refresh)
 pub async fn api_health_handler(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
     // TODO: Fetch real health checks
-    let health_checks = vec![
-        HealthCheckInfo {
-            name: "Database".to_string(),
-            status: "passing".to_string(),
-            response_time_ms: 12,
-            message: Some("Connected successfully".to_string()),
-            endpoint: Some("postgresql://localhost:5432".to_string()),
-            last_check: "2024-01-15 10:30:00".to_string(),
-            consecutive_failures: 0,
-        },
-    ];
+    let health_checks = vec![HealthCheckInfo {
+        name: "Database".to_string(),
+        status: "passing".to_string(),
+        response_time_ms: 12,
+        message: Some("Connected successfully".to_string()),
+        endpoint: Some("postgresql://localhost:5432".to_string()),
+        last_check: "2024-01-15 10:30:00".to_string(),
+        consecutive_failures: 0,
+    }];
 
     Json(health_checks)
 }

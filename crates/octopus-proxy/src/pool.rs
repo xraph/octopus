@@ -10,13 +10,13 @@ use std::time::Duration;
 pub struct PoolConfig {
     /// Maximum idle connections per upstream
     pub max_idle_per_upstream: usize,
-    
+
     /// Maximum connections per upstream
     pub max_per_upstream: usize,
-    
+
     /// Idle connection timeout
     pub idle_timeout: Duration,
-    
+
     /// Connection timeout
     pub connect_timeout: Duration,
 }
@@ -114,15 +114,15 @@ mod tests {
     #[test]
     fn test_connection_pool() {
         let pool = ConnectionPool::default();
-        
+
         let instance = UpstreamInstance::new("test-1", "localhost", 8080);
         pool.register(instance.clone());
-        
+
         assert_eq!(pool.pool_count(), 1);
-        
+
         let retrieved = pool.get("test-1").unwrap();
         assert_eq!(retrieved.id, "test-1");
-        
+
         assert!(pool.remove("test-1"));
         assert_eq!(pool.pool_count(), 0);
     }
@@ -134,5 +134,3 @@ mod tests {
         assert_eq!(config.max_per_upstream, 128);
     }
 }
-
-

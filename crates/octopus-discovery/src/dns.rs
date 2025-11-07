@@ -25,10 +25,10 @@ pub struct DnsDiscovery {
 pub struct DnsConfig {
     /// Default port for discovered services
     pub default_port: u16,
-    
+
     /// Watch interval for DNS changes
     pub watch_interval: Duration,
-    
+
     /// Custom DNS resolver config
     pub resolver_config: Option<ResolverConfig>,
 }
@@ -49,10 +49,7 @@ impl DnsDiscovery {
         let resolver = if let Some(resolver_config) = config.resolver_config {
             TokioAsyncResolver::tokio(resolver_config, ResolverOpts::default())
         } else {
-            TokioAsyncResolver::tokio(
-                ResolverConfig::default(),
-                ResolverOpts::default(),
-            )
+            TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default())
         };
 
         Ok(Self {
@@ -181,7 +178,7 @@ impl DiscoveryProvider for DnsDiscovery {
         // DNS watching is not implemented as DNS doesn't provide change notifications
         // This would require periodic polling of specific service names
         info!("DNS watching not implemented - use periodic discover_service calls instead");
-        
+
         // Keep alive
         let mut interval = time::interval(self.watch_interval);
         loop {
@@ -215,4 +212,3 @@ mod tests {
         assert_eq!(instances[0].name, "localhost");
     }
 }
-

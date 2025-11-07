@@ -45,7 +45,7 @@ impl ActivityEntry {
         // Convert to human-readable time
         let secs = self.timestamp / 1000;
         let millis = self.timestamp % 1000;
-        
+
         // Simple formatting (in production, use chrono)
         format!("{}.{:03}s", secs, millis)
     }
@@ -80,7 +80,9 @@ impl ActivityLog {
     /// Create a new activity log
     pub fn new(max_entries: usize) -> Self {
         Self {
-            entries: Arc::new(parking_lot::Mutex::new(VecDeque::with_capacity(max_entries))),
+            entries: Arc::new(parking_lot::Mutex::new(VecDeque::with_capacity(
+                max_entries,
+            ))),
             max_entries,
         }
     }
@@ -110,12 +112,7 @@ impl ActivityLog {
     /// Get recent entries (most recent first)
     pub fn recent_entries(&self, limit: usize) -> Vec<ActivityEntry> {
         let entries = self.entries.lock();
-        entries
-            .iter()
-            .rev()
-            .take(limit)
-            .cloned()
-            .collect()
+        entries.iter().rev().take(limit).cloned().collect()
     }
 
     /// Get all entries
@@ -168,7 +165,7 @@ mod tests {
     #[test]
     fn test_activity_log() {
         let log = ActivityLog::new(10);
-        
+
         log.record(
             Method::GET,
             "/users".to_string(),
@@ -186,7 +183,7 @@ mod tests {
         );
 
         assert_eq!(log.count(), 2);
-        
+
         let entries = log.recent_entries(1);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].path, "/posts"); // Most recent first
@@ -195,7 +192,7 @@ mod tests {
     #[test]
     fn test_activity_log_limit() {
         let log = ActivityLog::new(3);
-        
+
         for i in 0..5 {
             log.record(
                 Method::GET,
@@ -207,10 +204,9 @@ mod tests {
         }
 
         assert_eq!(log.count(), 3); // Should only keep last 3
-        
+
         let entries = log.all_entries();
         assert_eq!(entries[0].path, "/path4"); // Most recent
         assert_eq!(entries[2].path, "/path2"); // Oldest kept
     }
 }
-

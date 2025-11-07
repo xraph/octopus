@@ -394,8 +394,7 @@ mod tests {
     async fn test_accept_normal_request() {
         let limits = ConnectionLimits::default();
         let handler = TestHandler;
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(limits), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(limits), Arc::new(handler)]);
 
         let req = Request::builder()
             .uri("/test")
@@ -415,13 +414,12 @@ mod tests {
             ..Default::default()
         };
         let limits = ConnectionLimits::with_config(config);
-        
+
         // Manually set high connection count
         limits.total_connections.store(10, Ordering::SeqCst);
-        
+
         let handler = TestHandler;
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(limits), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(limits), Arc::new(handler)]);
 
         let req = Request::builder()
             .uri("/test")
@@ -443,15 +441,14 @@ mod tests {
         let limits = ConnectionLimits::with_config(config.clone());
 
         let ip: IpAddr = "192.168.1.100".parse().unwrap();
-        
+
         // Manually set IP connection count
         let info = Arc::new(ConnectionInfo::new());
         info.count.store(3, Ordering::SeqCst);
         limits.connections_per_ip.insert(ip, info);
 
         let handler = TestHandler;
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(limits), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(limits), Arc::new(handler)]);
 
         let req = Request::builder()
             .uri("/test")
@@ -474,13 +471,12 @@ mod tests {
             ..Default::default()
         };
         let limits = ConnectionLimits::with_config(config);
-        
+
         // Set connection count above limit
         limits.total_connections.store(10, Ordering::SeqCst);
 
         let handler = TestHandler;
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(limits), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(limits), Arc::new(handler)]);
 
         let req = Request::builder()
             .uri("/test")
@@ -505,8 +501,7 @@ mod tests {
         let limits = ConnectionLimits::with_config(config);
 
         let handler = TestHandler;
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(limits), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(limits), Arc::new(handler)]);
 
         let req = Request::builder()
             .uri("/test")
@@ -520,4 +515,3 @@ mod tests {
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     }
 }
-

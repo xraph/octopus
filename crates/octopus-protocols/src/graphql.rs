@@ -16,17 +16,17 @@ use tracing::debug;
 pub struct GraphQLHandler {
     /// GraphQL endpoint path
     pub endpoint: String,
-    
+
     /// Enable GraphQL Playground/IDE
     pub enable_playground: bool,
-    
+
     /// Federated services
     #[allow(dead_code)]
     services: HashMap<String, String>,
-    
+
     /// Maximum query depth
     pub max_depth: usize,
-    
+
     /// Enable introspection
     pub enable_introspection: bool,
 }
@@ -36,11 +36,11 @@ pub struct GraphQLHandler {
 pub struct GraphQLRequest {
     /// GraphQL query
     pub query: String,
-    
+
     /// Operation name (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation_name: Option<String>,
-    
+
     /// Variables (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub variables: Option<Value>,
@@ -52,11 +52,11 @@ pub struct GraphQLResponse {
     /// Response data
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<Value>,
-    
+
     /// Errors (if any)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub errors: Option<Vec<GraphQLError>>,
-    
+
     /// Extensions (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extensions: Option<Value>,
@@ -67,15 +67,15 @@ pub struct GraphQLResponse {
 pub struct GraphQLError {
     /// Error message
     pub message: String,
-    
+
     /// Error locations
     #[serde(skip_serializing_if = "Option::is_none")]
     pub locations: Option<Vec<ErrorLocation>>,
-    
+
     /// Error path
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<Vec<Value>>,
-    
+
     /// Extensions
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extensions: Option<Value>,
@@ -86,7 +86,7 @@ pub struct GraphQLError {
 pub struct ErrorLocation {
     /// Line number
     pub line: usize,
-    
+
     /// Column number
     pub column: usize,
 }
@@ -214,7 +214,8 @@ impl GraphQLHandler {
   </script>
 </body>
 </html>
-"#.to_string()
+"#
+        .to_string()
     }
 
     /// Build error response
@@ -250,7 +251,9 @@ impl ProtocolHandler for GraphQLHandler {
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, "text/html")
                 .body(Full::new(Bytes::from(html)))
-                .map_err(|e| Error::Internal(format!("Failed to build playground response: {}", e)));
+                .map_err(|e| {
+                    Error::Internal(format!("Failed to build playground response: {}", e))
+                });
         }
 
         // Parse GraphQL request
@@ -391,4 +394,3 @@ mod tests {
         assert_eq!(response.errors.unwrap()[0].message, "Test error");
     }
 }
-

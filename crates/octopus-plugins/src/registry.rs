@@ -31,27 +31,27 @@ impl PluginRegistry {
     /// Register a plugin
     pub async fn register(&self, plugin: Box<dyn Plugin>) -> Result<()> {
         let name = plugin.metadata().name.clone();
-        
+
         let mut plugins = self.plugins.write().await;
-        
+
         if plugins.contains_key(&name) {
             return Err(Error::Plugin {
                 plugin: name,
                 message: "Plugin already registered".to_string(),
             });
         }
-        
+
         plugins.insert(name.clone(), Arc::new(RwLock::new(plugin)));
-        
+
         tracing::info!(plugin = %name, "Plugin registered");
-        
+
         Ok(())
     }
 
     /// Unregister a plugin
     pub async fn unregister(&self, name: &str) -> Result<()> {
         let mut plugins = self.plugins.write().await;
-        
+
         if plugins.remove(name).is_some() {
             tracing::info!(plugin = %name, "Plugin unregistered");
             Ok(())
@@ -84,17 +84,15 @@ impl PluginRegistry {
     /// Initialize all plugins
     pub async fn init_all(&self) -> Result<()> {
         let plugins = self.plugins.read().await;
-        
+
         for (name, plugin) in plugins.iter() {
             let mut plugin = plugin.write().await;
-            plugin.init().await.map_err(|e| {
-                Error::Plugin {
-                    plugin: name.clone(),
-                    message: format!("Failed to initialize: {}", e),
-                }
+            plugin.init().await.map_err(|e| Error::Plugin {
+                plugin: name.clone(),
+                message: format!("Failed to initialize: {}", e),
             })?;
         }
-        
+
         tracing::info!("All plugins initialized");
         Ok(())
     }
@@ -102,17 +100,15 @@ impl PluginRegistry {
     /// Start all plugins
     pub async fn start_all(&self) -> Result<()> {
         let plugins = self.plugins.read().await;
-        
+
         for (name, plugin) in plugins.iter() {
             let mut plugin = plugin.write().await;
-            plugin.start().await.map_err(|e| {
-                Error::Plugin {
-                    plugin: name.clone(),
-                    message: format!("Failed to start: {}", e),
-                }
+            plugin.start().await.map_err(|e| Error::Plugin {
+                plugin: name.clone(),
+                message: format!("Failed to start: {}", e),
             })?;
         }
-        
+
         tracing::info!("All plugins started");
         Ok(())
     }
@@ -120,17 +116,15 @@ impl PluginRegistry {
     /// Stop all plugins
     pub async fn stop_all(&self) -> Result<()> {
         let plugins = self.plugins.read().await;
-        
+
         for (name, plugin) in plugins.iter() {
             let mut plugin = plugin.write().await;
-            plugin.stop().await.map_err(|e| {
-                Error::Plugin {
-                    plugin: name.clone(),
-                    message: format!("Failed to stop: {}", e),
-                }
+            plugin.stop().await.map_err(|e| Error::Plugin {
+                plugin: name.clone(),
+                message: format!("Failed to stop: {}", e),
             })?;
         }
-        
+
         tracing::info!("All plugins stopped");
         Ok(())
     }
@@ -138,17 +132,15 @@ impl PluginRegistry {
     /// Shutdown all plugins
     pub async fn shutdown_all(&self) -> Result<()> {
         let plugins = self.plugins.read().await;
-        
+
         for (name, plugin) in plugins.iter() {
             let mut plugin = plugin.write().await;
-            plugin.shutdown().await.map_err(|e| {
-                Error::Plugin {
-                    plugin: name.clone(),
-                    message: format!("Failed to shutdown: {}", e),
-                }
+            plugin.shutdown().await.map_err(|e| Error::Plugin {
+                plugin: name.clone(),
+                message: format!("Failed to shutdown: {}", e),
             })?;
         }
-        
+
         tracing::info!("All plugins shutdown");
         Ok(())
     }
@@ -186,11 +178,11 @@ mod tests {
     #[tokio::test]
     async fn test_register_plugin() {
         let registry = PluginRegistry::new();
-        
+
         let plugin = Box::new(TestPlugin {
             metadata: PluginMetadata::new("test", "1.0.0"),
         });
-        
+
         registry.register(plugin).await.unwrap();
         assert_eq!(registry.count().await, 1);
     }
@@ -198,35 +190,33 @@ mod tests {
     #[tokio::test]
     async fn test_duplicate_registration() {
         let registry = PluginRegistry::new();
-        
+
         let plugin1 = Box::new(TestPlugin {
             metadata: PluginMetadata::new("test", "1.0.0"),
         });
-        
+
         let plugin2 = Box::new(TestPlugin {
             metadata: PluginMetadata::new("test", "1.0.0"),
         });
-        
+
         registry.register(plugin1).await.unwrap();
         let result = registry.register(plugin2).await;
-        
+
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_list_plugins() {
         let registry = PluginRegistry::new();
-        
+
         let plugin = Box::new(TestPlugin {
             metadata: PluginMetadata::new("test", "1.0.0"),
         });
-        
+
         registry.register(plugin).await.unwrap();
-        
+
         let list = registry.list().await;
         assert_eq!(list.len(), 1);
         assert!(list.contains(&"test".to_string()));
     }
 }
-
-

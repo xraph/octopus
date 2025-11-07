@@ -23,10 +23,9 @@ impl HttpClient {
     /// Create a new HTTP client
     pub fn new() -> Self {
         let connector = hyper_util::client::legacy::connect::HttpConnector::new();
-        
-        let client = Client::builder(TokioExecutor::new())
-            .build(connector);
-        
+
+        let client = Client::builder(TokioExecutor::new()).build(connector);
+
         Self {
             client,
             timeout: Duration::from_secs(30),
@@ -36,10 +35,9 @@ impl HttpClient {
     /// Create a new HTTP client with custom timeout
     pub fn with_timeout(timeout: Duration) -> Self {
         let connector = hyper_util::client::legacy::connect::HttpConnector::new();
-        
-        let client = Client::builder(TokioExecutor::new())
-            .build(connector);
-        
+
+        let client = Client::builder(TokioExecutor::new()).build(connector);
+
         Self { client, timeout }
     }
 
@@ -51,7 +49,7 @@ impl HttpClient {
     ) -> Result<Response<Incoming>> {
         // Apply timeout
         let timeout = tokio::time::timeout(self.timeout, self.client.request(req));
-        
+
         match timeout.await {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(e)) => Err(Error::UpstreamConnection(e.to_string())),
@@ -87,5 +85,3 @@ mod tests {
         assert_eq!(client.timeout(), Duration::from_secs(10));
     }
 }
-
-

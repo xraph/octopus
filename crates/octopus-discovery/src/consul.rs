@@ -1,8 +1,7 @@
 //! Consul service discovery implementation
 
 use crate::provider::{
-    DiscoveryEvent, DiscoveryProvider, ServiceHealth, ServiceInstance,
-    ServiceMetadata,
+    DiscoveryEvent, DiscoveryProvider, ServiceHealth, ServiceInstance, ServiceMetadata,
 };
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -23,13 +22,13 @@ use tracing::{debug, error, info, warn};
 pub struct ConsulDiscovery {
     /// Consul HTTP API address
     address: String,
-    
+
     /// Consul datacenter
     datacenter: Option<String>,
-    
+
     /// HTTP client
     client: Arc<Client<hyper_util::client::legacy::connect::HttpConnector, Empty<Bytes>>>,
-    
+
     /// Watch interval
     watch_interval: Duration,
 }
@@ -39,10 +38,10 @@ pub struct ConsulDiscovery {
 pub struct ConsulConfig {
     /// Consul address (default: http://127.0.0.1:8500)
     pub address: String,
-    
+
     /// Datacenter filter
     pub datacenter: Option<String>,
-    
+
     /// Watch interval for changes
     pub watch_interval: Duration,
 }
@@ -98,12 +97,13 @@ impl ConsulDiscovery {
     /// Build Consul API URL
     fn build_url(&self, path: &str) -> Result<Uri> {
         let mut url = format!("{}{}", self.address, path);
-        
+
         if let Some(dc) = &self.datacenter {
             url.push_str(&format!("?dc={}", dc));
         }
-        
-        url.parse().map_err(|e| Error::Discovery(format!("Invalid Consul URL: {}", e)))
+
+        url.parse()
+            .map_err(|e| Error::Discovery(format!("Invalid Consul URL: {}", e)))
     }
 
     /// Make HTTP request to Consul
@@ -184,7 +184,7 @@ impl DiscoveryProvider for ConsulDiscovery {
         // Get all services
         let uri = self.build_url("/v1/catalog/services")?;
         let body = self.request(uri).await?;
-        
+
         let services: HashMap<String, Vec<String>> = serde_json::from_slice(&body)
             .map_err(|e| Error::Discovery(format!("Failed to parse services: {}", e)))?;
 
@@ -349,21 +349,29 @@ mod tests {
     #[test]
     fn test_parse_health() {
         let discovery = ConsulDiscovery::with_defaults();
-        
+
         let healthy_checks = vec![ConsulHealthCheck {
             status: "passing".to_string(),
         }];
-        assert_eq!(discovery.parse_health(&healthy_checks), ServiceHealth::Healthy);
+        assert_eq!(
+            discovery.parse_health(&healthy_checks),
+            ServiceHealth::Healthy
+        );
 
         let critical_checks = vec![ConsulHealthCheck {
             status: "critical".to_string(),
         }];
-        assert_eq!(discovery.parse_health(&critical_checks), ServiceHealth::Unhealthy);
+        assert_eq!(
+            discovery.parse_health(&critical_checks),
+            ServiceHealth::Unhealthy
+        );
 
         let warning_checks = vec![ConsulHealthCheck {
             status: "warning".to_string(),
         }];
-        assert_eq!(discovery.parse_health(&warning_checks), ServiceHealth::Warning);
+        assert_eq!(
+            discovery.parse_health(&warning_checks),
+            ServiceHealth::Warning
+        );
     }
 }
-

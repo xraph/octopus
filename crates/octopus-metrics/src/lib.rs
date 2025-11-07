@@ -12,15 +12,15 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-pub mod collector;
 pub mod activity;
-pub mod snapshot;
+pub mod collector;
 pub mod prometheus;
+pub mod snapshot;
 
+pub use activity::{ActivityEntry, ActivityLog};
 pub use collector::MetricsCollector;
-pub use activity::{ActivityLog, ActivityEntry};
-pub use snapshot::{MetricsSnapshot, RouteMetrics};
 pub use prometheus::PrometheusExporter;
+pub use snapshot::{MetricsSnapshot, RouteMetrics};
 
 /// Request outcome
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

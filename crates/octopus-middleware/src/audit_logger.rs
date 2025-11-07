@@ -106,31 +106,31 @@ pub trait AuditHandler: Send + Sync + std::fmt::Debug {
 pub struct AuditLoggerConfig {
     /// Output destination
     pub output: AuditOutput,
-    
+
     /// Log successful authentication
     pub log_auth_success: bool,
-    
+
     /// Log failed authentication
     pub log_auth_failure: bool,
-    
+
     /// Log authorization failures
     pub log_authz_failure: bool,
-    
+
     /// Log rate limit violations
     pub log_rate_limit: bool,
-    
+
     /// Log TLS failures
     pub log_tls_failure: bool,
-    
+
     /// Log admin access
     pub log_admin_access: bool,
-    
+
     /// Log configuration changes
     pub log_config_change: bool,
-    
+
     /// Log suspicious activity
     pub log_suspicious: bool,
-    
+
     /// Pretty print JSON (for readability)
     pub pretty_print: bool,
 }
@@ -405,13 +405,12 @@ mod tests {
             output: AuditOutput::File(temp_file.path().to_path_buf()),
             ..Default::default()
         };
-        
+
         let logger = AuditLogger::with_config(config).await.unwrap();
         let handler = TestHandler {
             status: StatusCode::UNAUTHORIZED,
         };
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(logger), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(logger), Arc::new(handler)]);
 
         let req = Request::builder()
             .uri("/api/test")
@@ -438,13 +437,12 @@ mod tests {
             output: AuditOutput::File(temp_file.path().to_path_buf()),
             ..Default::default()
         };
-        
+
         let logger = AuditLogger::with_config(config).await.unwrap();
         let handler = TestHandler {
             status: StatusCode::TOO_MANY_REQUESTS,
         };
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(logger), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(logger), Arc::new(handler)]);
 
         let req = Request::builder()
             .uri("/api/test")
@@ -469,13 +467,12 @@ mod tests {
             output: AuditOutput::File(temp_file.path().to_path_buf()),
             ..Default::default()
         };
-        
+
         let logger = AuditLogger::with_config(config).await.unwrap();
         let handler = TestHandler {
             status: StatusCode::OK,
         };
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(logger), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(logger), Arc::new(handler)]);
 
         let req = Request::builder()
             .uri("/admin/config")
@@ -500,8 +497,7 @@ mod tests {
         let handler = TestHandler {
             status: StatusCode::FORBIDDEN,
         };
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(logger), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(logger), Arc::new(handler)]);
 
         let req = Request::builder()
             .uri("/api/test")
@@ -514,4 +510,3 @@ mod tests {
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
 }
-

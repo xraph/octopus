@@ -30,25 +30,15 @@ pub struct JwtStats {
 #[component]
 pub fn JwtAuthDashboard() -> impl IntoView {
     // Fetch JWT stats
-    let stats_resource = create_resource(
-        || (),
-        |_| async move {
-            fetch_jwt_stats().await
-        },
-    );
-    
+    let stats_resource = create_resource(|| (), |_| async move { fetch_jwt_stats().await });
+
     // Fetch recent tokens
-    let tokens_resource = create_resource(
-        || (),
-        |_| async move {
-            fetch_recent_tokens().await
-        },
-    );
-    
+    let tokens_resource = create_resource(|| (), |_| async move { fetch_recent_tokens().await });
+
     view! {
         <div>
             <h1 class="text-2xl font-bold mb-6 text-gray-800">"JWT Authentication"</h1>
-            
+
             // Stats cards
             <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
                 <Suspense fallback=|| view! { <div>"Loading..."</div> }>
@@ -57,22 +47,22 @@ pub fn JwtAuthDashboard() -> impl IntoView {
                             match result {
                                 Ok(stats) => view! {
                                     <>
-                                        <StatCard 
+                                        <StatCard
                                             title="Total Issued"
                                             value=stats.total_tokens_issued
                                             icon="🎫"
                                         />
-                                        <StatCard 
+                                        <StatCard
                                             title="Active"
                                             value=stats.active_tokens
                                             icon="✅"
                                         />
-                                        <StatCard 
+                                        <StatCard
                                             title="Expired"
                                             value=stats.expired_tokens
                                             icon="⏰"
                                         />
-                                        <StatCard 
+                                        <StatCard
                                             title="Revoked"
                                             value=stats.revoked_tokens
                                             icon="🚫"
@@ -89,7 +79,7 @@ pub fn JwtAuthDashboard() -> impl IntoView {
                     }}
                 </Suspense>
             </div>
-            
+
             // Recent tokens table
             <div class="bg-white rounded-lg shadow p-6">
                 <h3 class="text-lg font-semibold mb-4 text-gray-800">"Recent Tokens"</h3>
@@ -201,7 +191,7 @@ fn TokenCard(token: JwtTokenInfo) -> impl IntoView {
 /// Fetch JWT statistics from the API
 async fn fetch_jwt_stats() -> Result<JwtStats, String> {
     use gloo_net::http::Request;
-    
+
     Request::get("/admin/api/auth/jwt/stats")
         .send()
         .await
@@ -214,7 +204,7 @@ async fn fetch_jwt_stats() -> Result<JwtStats, String> {
 /// Fetch recent JWT tokens from the API
 async fn fetch_recent_tokens() -> Result<Vec<JwtTokenInfo>, String> {
     use gloo_net::http::Request;
-    
+
     Request::get("/admin/api/auth/jwt/tokens")
         .send()
         .await
@@ -227,7 +217,7 @@ async fn fetch_recent_tokens() -> Result<Vec<JwtTokenInfo>, String> {
 /// Register the JWT auth dashboard plugin
 pub fn register_jwt_dashboard_plugin() -> Result<(), String> {
     use octopus_admin::register_plugin;
-    
+
     let plugin = Box::new(JwtDashboardPlugin);
     register_plugin(plugin)
 }
@@ -245,47 +235,39 @@ impl DashboardPlugin for JwtDashboardPlugin {
             author: Some("Octopus Team".to_string()),
         }
     }
-    
+
     fn register_views(&self) -> Vec<DashboardView> {
-        vec![
-            DashboardView {
-                id: "jwt-auth".to_string(),
-                title: "JWT Auth".to_string(),
-                icon: "🔑".to_string(),
-                path: "/auth/jwt".to_string(),
-                priority: 50,
-                component: || view! { <JwtAuthDashboard/> },
-            }
-        ]
+        vec![DashboardView {
+            id: "jwt-auth".to_string(),
+            title: "JWT Auth".to_string(),
+            icon: "🔑".to_string(),
+            path: "/auth/jwt".to_string(),
+            priority: 50,
+            component: || view! { <JwtAuthDashboard/> },
+        }]
     }
-    
+
     fn register_stats_cards(&self) -> Vec<StatsCard> {
-        vec![
-            StatsCard {
-                id: "jwt-active-tokens".to_string(),
-                title: "Active Tokens".to_string(),
-                icon: "🎫".to_string(),
-                priority: 40,
-                fetch_value: || {
-                    create_resource(|| (), |_| async move {
-                        fetch_jwt_stats()
-                            .await
-                            .map(|stats| stats.active_tokens)
-                    })
-                },
-            }
-        ]
+        vec![StatsCard {
+            id: "jwt-active-tokens".to_string(),
+            title: "Active Tokens".to_string(),
+            icon: "🎫".to_string(),
+            priority: 40,
+            fetch_value: || {
+                create_resource(
+                    || (),
+                    |_| async move { fetch_jwt_stats().await.map(|stats| stats.active_tokens) },
+                )
+            },
+        }]
     }
-    
+
     fn register_nav_items(&self) -> Vec<NavItem> {
-        vec![
-            NavItem {
-                label: "JWT Auth".to_string(),
-                icon: "🔑".to_string(),
-                path: "/auth/jwt".to_string(),
-                priority: 50,
-            }
-        ]
+        vec![NavItem {
+            label: "JWT Auth".to_string(),
+            icon: "🔑".to_string(),
+            path: "/auth/jwt".to_string(),
+            priority: 50,
+        }]
     }
 }
-

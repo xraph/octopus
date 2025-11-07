@@ -23,4 +23,3 @@ pub mod loader;
 pub use acceptor::TlsAcceptor;
 pub use config::TlsConfig;
 pub use loader::{load_certificates, load_private_key, CertificateReloader};
-

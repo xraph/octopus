@@ -97,7 +97,11 @@ impl TransformConfig {
     }
 
     /// Rewrite path
-    pub fn with_path_rewrite(mut self, pattern: impl Into<String>, replacement: impl Into<String>) -> Self {
+    pub fn with_path_rewrite(
+        mut self,
+        pattern: impl Into<String>,
+        replacement: impl Into<String>,
+    ) -> Self {
         self.rewrite_path = Some(PathRewrite {
             pattern: pattern.into(),
             replacement: replacement.into(),
@@ -190,7 +194,10 @@ mod tests {
             .without_header("X-Remove")
             .with_path_rewrite("^/old", "/new");
 
-        assert_eq!(config.add_headers.get("X-Custom"), Some(&"value".to_string()));
+        assert_eq!(
+            config.add_headers.get("X-Custom"),
+            Some(&"value".to_string())
+        );
         assert_eq!(config.remove_headers, vec!["X-Remove"]);
         assert!(config.rewrite_path.is_some());
     }
@@ -206,4 +213,3 @@ mod tests {
         assert!(serialized.contains("\"op\":\"add\""));
     }
 }
-

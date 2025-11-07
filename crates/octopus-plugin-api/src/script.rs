@@ -27,23 +27,23 @@ pub enum ScriptLanguage {
 pub struct ScriptConfig {
     /// Script language
     pub language: ScriptLanguage,
-    
+
     /// Inline script code (if provided)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
-    
+
     /// Script file path (if provided)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file: Option<String>,
-    
+
     /// Whether to run on requests
     #[serde(default = "default_true")]
     pub on_request: bool,
-    
+
     /// Whether to run on responses
     #[serde(default)]
     pub on_response: bool,
-    
+
     /// Timeout in milliseconds
     #[serde(default = "default_timeout")]
     pub timeout_ms: u64,
@@ -110,13 +110,13 @@ pub trait ScriptInterceptorPlugin: Plugin {
 pub struct ScriptCacheStats {
     /// Number of compiled scripts in cache
     pub cached_scripts: usize,
-    
+
     /// Cache hits
     pub hits: u64,
-    
+
     /// Cache misses
     pub misses: u64,
-    
+
     /// Total cache size in bytes
     pub size_bytes: usize,
 }
@@ -165,6 +165,3 @@ mod tests {
         assert_eq!(stats.hit_rate(), 0.9);
     }
 }
-
-
-

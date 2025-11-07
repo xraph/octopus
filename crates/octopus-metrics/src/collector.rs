@@ -42,8 +42,9 @@ impl RouteStats {
         }
 
         // Update latency stats
-        self.total_latency_ns.fetch_add(latency_ns, Ordering::Relaxed);
-        
+        self.total_latency_ns
+            .fetch_add(latency_ns, Ordering::Relaxed);
+
         // Update min latency
         let mut current_min = self.min_latency_ns.load(Ordering::Relaxed);
         while latency_ns < current_min {
@@ -173,7 +174,8 @@ impl MetricsCollector {
         }
 
         // Update route-specific stats
-        let stats = self.route_stats
+        let stats = self
+            .route_stats
             .entry(route.to_string())
             .or_insert_with(|| Arc::new(RouteStats::new()))
             .clone();
@@ -297,7 +299,7 @@ mod tests {
         let collector = MetricsCollector::new();
         collector.record_request("/users", Duration::from_millis(5), RequestOutcome::Success);
         collector.record_request("/posts", Duration::from_millis(10), RequestOutcome::Success);
-        
+
         assert_eq!(collector.total_requests(), 2);
         assert_eq!(collector.route_count(), 2);
     }
@@ -312,4 +314,3 @@ mod tests {
         assert_eq!(collector.active_connections(), 1);
     }
 }
-

@@ -64,5 +64,3 @@ mod tests {
         assert_ne!(ProtocolType::Http, ProtocolType::Grpc);
     }
 }
-
-

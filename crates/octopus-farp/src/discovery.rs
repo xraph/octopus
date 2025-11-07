@@ -62,7 +62,7 @@ impl DiscoveryWatcher {
     }
 
     /// Create a new discovery watcher with custom grace period
-    /// 
+    ///
     /// `max_missed_discoveries`: Number of consecutive missed discoveries before deregistering
     /// For example, with 5s watch_interval and max_missed=3, a service must be missing for
     /// 15 seconds before being deregistered
@@ -185,7 +185,7 @@ impl DiscoveryWatcher {
             if !current_instance_ids.contains_key(&tracked_service.instance_id) {
                 // Service not seen in this discovery cycle
                 tracked_service.missed_count += 1;
-                
+
                 if tracked_service.missed_count >= self.max_missed_discoveries {
                     info!(
                         service = %service_name,
@@ -254,11 +254,7 @@ impl DiscoveryWatcher {
             .unwrap_or_else(|| "unknown".to_string());
 
         // Create schema manifest using FARP v1.0.0 signature
-        let mut manifest = SchemaManifest::new(
-            instance.name.clone(),
-            version,
-            instance.id.clone(),
-        );
+        let mut manifest = SchemaManifest::new(instance.name.clone(), version, instance.id.clone());
 
         // Set up endpoints using FARP v1.0.0 standard metadata keys
         use crate::types::SchemaEndpoints;
@@ -268,7 +264,7 @@ impl DiscoveryWatcher {
             .or_else(|| metadata.custom.get("health"))
             .cloned()
             .unwrap_or_else(|| "/health".to_string());
-        
+
         // Try FARP standard key first, then fall back to legacy
         let openapi_path = metadata
             .custom
@@ -279,19 +275,28 @@ impl DiscoveryWatcher {
 
         manifest.endpoints = SchemaEndpoints {
             health: health_endpoint,
-            metrics: metadata.custom.get("farp.metrics.path")
-                .or_else(|| metadata.custom.get("metrics")).cloned(),
+            metrics: metadata
+                .custom
+                .get("farp.metrics.path")
+                .or_else(|| metadata.custom.get("metrics"))
+                .cloned(),
             openapi: Some(openapi_path.clone()),
-            asyncapi: metadata.custom.get("farp.asyncapi.path")
-                .or_else(|| metadata.custom.get("asyncapi")).cloned(),
+            asyncapi: metadata
+                .custom
+                .get("farp.asyncapi.path")
+                .or_else(|| metadata.custom.get("asyncapi"))
+                .cloned(),
             grpc_reflection: metadata
                 .custom
                 .get("farp.grpc.reflection")
                 .or_else(|| metadata.custom.get("grpc_reflection"))
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(false),
-            graphql: metadata.custom.get("farp.graphql.path")
-                .or_else(|| metadata.custom.get("graphql")).cloned(),
+            graphql: metadata
+                .custom
+                .get("farp.graphql.path")
+                .or_else(|| metadata.custom.get("graphql"))
+                .cloned(),
         };
 
         // Parse capabilities from FARP metadata (format: "[rest websocket grpc]")
@@ -322,17 +327,23 @@ impl DiscoveryWatcher {
 
         // Fetch and store the actual OpenAPI schema content
         let openapi_url = format!("{}{}", base_url, openapi_path);
-        match self.fetch_and_store_schema(&instance.name, &openapi_url).await {
+        match self
+            .fetch_and_store_schema(&instance.name, &openapi_url)
+            .await
+        {
             Ok(()) => {
                 info!(
                     service = %instance.name,
                     openapi_url = %openapi_url,
                     "Successfully fetched and stored OpenAPI schema"
                 );
-                
+
                 // Register routes from OpenAPI schema
                 if let Some(ref router) = self.router {
-                    if let Err(e) = self.register_routes_from_schema(router, &instance.name).await {
+                    if let Err(e) = self
+                        .register_routes_from_schema(router, &instance.name)
+                        .await
+                    {
                         warn!(
                             service = %instance.name,
                             error = %e,
@@ -436,10 +447,7 @@ impl DiscoveryWatcher {
         // Perform federation
         self.federation.federate_schemas(all_schemas)?;
 
-        info!(
-            schema_count = schema_count,
-            "Schema federation completed"
-        );
+        info!(schema_count = schema_count, "Schema federation completed");
 
         Ok(())
     }
@@ -460,11 +468,8 @@ impl DiscoveryWatcher {
         );
 
         let mut cluster = UpstreamCluster::new(service_name);
-        let instance = UpstreamInstance::new(
-            &format!("{}-instance-1", service_name),
-            address,
-            port,
-        );
+        let instance =
+            UpstreamInstance::new(&format!("{}-instance-1", service_name), address, port);
         cluster.add_instance(instance);
 
         router.register_upstream(cluster);
@@ -490,18 +495,25 @@ impl DiscoveryWatcher {
 
         // Get the schema from registry
         let schemas = self.registry.get_schemas(service_name)?;
-        
+
         // Find OpenAPI schema
-        let openapi_schema = schemas.iter()
+        let openapi_schema = schemas
+            .iter()
             .find(|s| matches!(s.format, SchemaFormat::OpenApi))
-            .ok_or_else(|| Error::Farp(format!("No OpenAPI schema found for service {}", service_name)))?;
+            .ok_or_else(|| {
+                Error::Farp(format!(
+                    "No OpenAPI schema found for service {}",
+                    service_name
+                ))
+            })?;
 
         // Parse the OpenAPI schema
         let schema_json: serde_json::Value = serde_json::from_str(&openapi_schema.content)
             .map_err(|e| Error::Farp(format!("Failed to parse OpenAPI schema: {}", e)))?;
 
         // Extract paths from OpenAPI schema
-        let paths = schema_json.get("paths")
+        let paths = schema_json
+            .get("paths")
             .and_then(|p| p.as_object())
             .ok_or_else(|| Error::Farp("No paths found in OpenAPI schema".to_string()))?;
 
@@ -509,7 +521,8 @@ impl DiscoveryWatcher {
 
         // Create routes for each path
         for (path, operations) in paths {
-            let operations = operations.as_object()
+            let operations = operations
+                .as_object()
                 .ok_or_else(|| Error::Farp(format!("Invalid operations for path {}", path)))?;
 
             // For each HTTP method in the path
@@ -608,7 +621,10 @@ mod tests {
             endpoints: vec![],
         };
 
-        watcher.register_discovered_service(&instance).await.unwrap();
+        watcher
+            .register_discovered_service(&instance)
+            .await
+            .unwrap();
 
         // Verify service was registered
         assert_eq!(registry.service_count(), 1);
@@ -618,4 +634,3 @@ mod tests {
         assert_eq!(service.manifest.instance_id, "test-1");
     }
 }
-

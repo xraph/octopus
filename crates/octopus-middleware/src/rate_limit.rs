@@ -125,7 +125,8 @@ pub struct RateLimit {
     /// Global rate limiter
     limiter: Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock>>,
     /// Per-route rate limiters (path -> limiter)
-    route_limiters: Arc<DashMap<String, Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock>>>>,
+    route_limiters:
+        Arc<DashMap<String, Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock>>>>,
 }
 
 impl RateLimit {
@@ -190,7 +191,11 @@ impl RateLimit {
     }
 
     /// Build rate limit error response
-    fn rate_limit_response(&self, window_size: Duration, custom_message: Option<&str>) -> Response<Body> {
+    fn rate_limit_response(
+        &self,
+        window_size: Duration,
+        custom_message: Option<&str>,
+    ) -> Response<Body> {
         let message = custom_message
             .or(self.config.error_message.as_deref())
             .unwrap_or("Rate limit exceeded");
@@ -199,7 +204,10 @@ impl RateLimit {
             .status(StatusCode::TOO_MANY_REQUESTS)
             .header("Content-Type", "application/json")
             .header("Retry-After", window_size.as_secs().to_string())
-            .header("X-RateLimit-Limit", self.config.requests_per_window.to_string())
+            .header(
+                "X-RateLimit-Limit",
+                self.config.requests_per_window.to_string(),
+            )
             .header("X-RateLimit-Remaining", "0")
             .header("X-RateLimit-Reset", window_size.as_secs().to_string())
             .body(Full::new(Bytes::from(
@@ -214,7 +222,14 @@ impl RateLimit {
     }
 
     /// Get the appropriate rate limiter for a request
-    fn get_limiter_for_request(&self, path: &str) -> (Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock>>, Duration, Option<String>) {
+    fn get_limiter_for_request(
+        &self,
+        path: &str,
+    ) -> (
+        Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock>>,
+        Duration,
+        Option<String>,
+    ) {
         // Check if there's a per-route limiter for this path
         if let Some(route_limiter) = self.route_limiters.get(path) {
             let route_config = self
@@ -257,10 +272,10 @@ impl fmt::Debug for RateLimit {
 impl Middleware for RateLimit {
     async fn call(&self, req: Request<Body>, next: Next) -> Result<Response<Body>> {
         let path = req.uri().path().to_string();
-        
+
         // Get the appropriate limiter for this request
         let (limiter, window_size, custom_message) = self.get_limiter_for_request(&path);
-        
+
         // Check rate limit
         match limiter.check() {
             Ok(_) => {
@@ -427,28 +442,19 @@ mod tests {
         let rate_limit = RateLimit::with_config(config);
         let handler = TestHandler;
 
-        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([
-            Arc::new(rate_limit),
-            Arc::new(handler),
-        ]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(rate_limit), Arc::new(handler)]);
 
         // Test /api endpoint (2 requests/sec limit)
         for _ in 0..2 {
             let next = Next::new(stack.clone());
-            let req = Request::builder()
-                .uri("/api")
-                .body(Body::from(""))
-                .unwrap();
+            let req = Request::builder().uri("/api").body(Body::from("")).unwrap();
             let response = next.run(req).await.unwrap();
             assert_eq!(response.status(), StatusCode::OK);
         }
 
         // Third request to /api should fail
         let next = Next::new(stack.clone());
-        let req = Request::builder()
-            .uri("/api")
-            .body(Body::from(""))
-            .unwrap();
+        let req = Request::builder().uri("/api").body(Body::from("")).unwrap();
         let response = next.run(req).await.unwrap();
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
 
@@ -502,10 +508,7 @@ mod tests {
         let rate_limit = RateLimit::with_config(config);
         let handler = TestHandler;
 
-        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([
-            Arc::new(rate_limit),
-            Arc::new(handler),
-        ]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(rate_limit), Arc::new(handler)]);
 
         // First request succeeds
         let next = Next::new(stack.clone());
@@ -553,10 +556,7 @@ mod tests {
         let rate_limit = RateLimit::with_config(config);
         let handler = TestHandler;
 
-        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([
-            Arc::new(rate_limit),
-            Arc::new(handler),
-        ]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(rate_limit), Arc::new(handler)]);
 
         // Exceed premium endpoint limit
         let next = Next::new(stack.clone());

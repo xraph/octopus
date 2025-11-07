@@ -178,19 +178,19 @@ impl ManifestValidator {
         {
             let schema_value: serde_json::Value = serde_json::from_str(MANIFEST_JSON_SCHEMA)
                 .map_err(|e| Error::Farp(format!("Failed to parse JSON Schema: {}", e)))?;
-            
+
             let schema = JSONSchema::compile(&schema_value)
                 .map_err(|e| Error::Farp(format!("Failed to compile JSON Schema: {}", e)))?;
-            
+
             Ok(Self { schema })
         }
-        
+
         #[cfg(not(feature = "validation"))]
         {
             Ok(Self {})
         }
     }
-    
+
     /// Validate a schema manifest
     pub fn validate(&self, manifest: &SchemaManifest) -> Result<()> {
         #[cfg(feature = "validation")]
@@ -198,7 +198,7 @@ impl ManifestValidator {
             // Convert manifest to JSON value
             let manifest_json = serde_json::to_value(manifest)
                 .map_err(|e| Error::Farp(format!("Failed to serialize manifest: {}", e)))?;
-            
+
             // Validate against schema
             match self.schema.validate(&manifest_json) {
                 Ok(_) => Ok(()),
@@ -206,7 +206,7 @@ impl ManifestValidator {
                     let error_messages: Vec<String> = errors
                         .map(|e| format!("{}: {}", e.instance_path, e))
                         .collect();
-                    
+
                     Err(Error::Farp(format!(
                         "Manifest validation failed:\n  {}",
                         error_messages.join("\n  ")
@@ -214,21 +214,21 @@ impl ManifestValidator {
                 }
             }
         }
-        
+
         #[cfg(not(feature = "validation"))]
         {
             // Fallback to basic validation
             manifest.validate()
         }
     }
-    
+
     /// Validate and provide detailed errors
     pub fn validate_detailed(&self, manifest: &SchemaManifest) -> Result<Vec<String>> {
         #[cfg(feature = "validation")]
         {
             let manifest_json = serde_json::to_value(manifest)
                 .map_err(|e| Error::Farp(format!("Failed to serialize manifest: {}", e)))?;
-            
+
             match self.schema.validate(&manifest_json) {
                 Ok(_) => Ok(vec![]),
                 Err(errors) => {
@@ -239,7 +239,7 @@ impl ManifestValidator {
                 }
             }
         }
-        
+
         #[cfg(not(feature = "validation"))]
         {
             // Fallback to basic validation
@@ -271,14 +271,14 @@ mod tests {
     #[test]
     fn test_valid_manifest() {
         let validator = ManifestValidator::new().unwrap();
-        
+
         let mut manifest = SchemaManifest::new("test-service", "1.0.0", "inst-123");
         manifest.endpoints = SchemaEndpoints {
             health: "/health".to_string(),
             ..Default::default()
         };
         manifest.add_capability("rest");
-        
+
         let schema = SchemaDescriptor::new(
             SchemaType::OpenAPI,
             "3.1.0",
@@ -289,12 +289,12 @@ mod tests {
         );
         manifest.add_schema(schema);
         manifest.update_checksum().unwrap();
-        
+
         let result = validator.validate(&manifest);
         if let Err(e) = &result {
             eprintln!("Validation error: {}", e);
         }
-        
+
         #[cfg(feature = "validation")]
         assert!(result.is_ok());
     }
@@ -302,13 +302,13 @@ mod tests {
     #[test]
     fn test_invalid_manifest_missing_health() {
         let validator = ManifestValidator::new().unwrap();
-        
+
         let mut manifest = SchemaManifest::new("test-service", "1.0.0", "inst-123");
         // Missing health endpoint
         manifest.endpoints = SchemaEndpoints::default();
-        
+
         let result = validator.validate(&manifest);
-        
+
         // Should fail validation (health is required)
         assert!(result.is_err());
     }
@@ -316,18 +316,17 @@ mod tests {
     #[test]
     fn test_invalid_checksum_format() {
         let validator = ManifestValidator::new().unwrap();
-        
+
         let mut manifest = SchemaManifest::new("test-service", "1.0.0", "inst-123");
         manifest.endpoints = SchemaEndpoints {
             health: "/health".to_string(),
             ..Default::default()
         };
         manifest.checksum = "invalid-checksum".to_string(); // Invalid format
-        
+
         let result = validator.validate(&manifest);
-        
+
         #[cfg(feature = "validation")]
         assert!(result.is_err());
     }
 }
-

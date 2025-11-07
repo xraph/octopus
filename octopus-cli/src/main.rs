@@ -23,19 +23,19 @@ enum Commands {
         /// Path to configuration file
         #[arg(short, long, default_value = "config.yaml")]
         config: PathBuf,
-        
+
         /// Log level (trace, debug, info, warn, error)
         #[arg(short, long, default_value = "info")]
         log_level: String,
     },
-    
+
     /// Validate configuration file
     Validate {
         /// Path to configuration file
         #[arg(short, long, default_value = "config.yaml")]
         config: PathBuf,
     },
-    
+
     /// Show version information
     Version,
 }
@@ -48,46 +48,42 @@ async fn main() -> Result<()> {
         Commands::Serve { config, log_level } => {
             // Initialize tracing
             init_tracing(&log_level)?;
-            
+
             tracing::info!("Starting Octopus API Gateway");
             tracing::info!("Config file: {}", config.display());
-            
+
             // Load configuration
             let config = load_config(config, true)?;
-            
+
             tracing::info!(
                 listen = %config.gateway.listen,
                 workers = config.gateway.workers,
                 "Configuration loaded"
             );
-            
+
             // Build server
-            let server = ServerBuilder::new()
-                .config(config)
-                .build()?;
-            
+            let server = ServerBuilder::new().config(config).build()?;
+
             // Setup signal handler
             let shutdown_signal = server.shutdown_signal();
             tokio::spawn(async move {
                 let handler = SignalHandler::new(shutdown_signal);
                 handler.run().await;
             });
-            
+
             // Run server
             tracing::info!("Server starting...");
             server.run().await?;
-            
+
             tracing::info!("Server stopped");
             Ok(())
         }
-        
+
         Commands::Validate { config } => {
-            tracing_subscriber::fmt()
-                .with_target(false)
-                .init();
-            
+            tracing_subscriber::fmt().with_target(false).init();
+
             tracing::info!("Validating configuration: {}", config.display());
-            
+
             match load_config(&config, true) {
                 Ok(cfg) => {
                     tracing::info!("✓ Configuration is valid");
@@ -103,7 +99,7 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        
+
         Commands::Version => {
             println!("Octopus API Gateway");
             println!("Version: {}", env!("CARGO_PKG_VERSION"));
@@ -122,22 +118,21 @@ fn init_tracing(level: &str) -> Result<()> {
         "error" => tracing::Level::ERROR,
         _ => tracing::Level::INFO,
     };
-    
+
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
                 .with_target(false)
-                .with_level(true)
+                .with_level(true),
         )
         .with(
             tracing_subscriber::EnvFilter::from_default_env()
                 .add_directive(filter.into())
                 // Suppress mdns-sd VPN errors - these are harmless library-level logs
                 // that occur when attempting multicast on VPN tunnel interfaces (utun*)
-                .add_directive("mdns_sd=warn".parse()?)  // Only show WARN and above (suppress ERROR)
+                .add_directive("mdns_sd=warn".parse()?), // Only show WARN and above (suppress ERROR)
         )
         .init();
-    
+
     Ok(())
 }
-

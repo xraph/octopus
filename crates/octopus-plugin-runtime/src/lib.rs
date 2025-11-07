@@ -62,4 +62,3 @@ pub mod prelude {
     pub use crate::registry::{PluginEntry, PluginRegistry};
     pub use octopus_plugin_api::prelude::*;
 }
-

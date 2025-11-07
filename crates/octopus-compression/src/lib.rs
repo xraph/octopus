@@ -13,10 +13,9 @@
 //! - Automatic Content-Encoding header handling
 
 pub mod compressor;
-pub mod middleware;
 pub mod config;
+pub mod middleware;
 
-pub use compressor::{Compressor, CompressionAlgorithm};
-pub use middleware::CompressionMiddleware;
+pub use compressor::{CompressionAlgorithm, Compressor};
 pub use config::CompressionConfig;
-
+pub use middleware::CompressionMiddleware;

@@ -40,7 +40,7 @@ impl PluginLoader {
         // 2. Find the `create_plugin` symbol
         // 3. Call it to get a PluginBuilder
         // 4. Use the builder to create the plugin
-        
+
         Err(Error::Plugin {
             plugin: "loader".to_string(),
             message: "Dynamic plugin loading not yet implemented".to_string(),
@@ -77,5 +77,3 @@ mod tests {
         assert!(result.is_err());
     }
 }
-
-

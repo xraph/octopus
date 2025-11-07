@@ -37,7 +37,7 @@ impl std::fmt::Debug for K8sDiscovery {
 pub struct K8sConfig {
     /// Namespace filter (None = all namespaces)
     pub namespace: Option<String>,
-    
+
     /// Label selector for filtering services
     pub label_selector: Option<String>,
 }
@@ -189,7 +189,10 @@ impl DiscoveryProvider for K8sDiscovery {
             }
         }
 
-        info!(count = all_instances.len(), "Discovered services from Kubernetes");
+        info!(
+            count = all_instances.len(),
+            "Discovered services from Kubernetes"
+        );
         Ok(all_instances)
     }
 
@@ -242,7 +245,7 @@ impl DiscoveryProvider for K8sDiscovery {
                 watcher::Event::Apply(svc) => {
                     if let Some(name) = &svc.metadata.name {
                         debug!(service = %name, "Service applied/updated");
-                        
+
                         // Fetch endpoints to get full instance info
                         if let Ok(instances) = self.discover_service(name).await {
                             for instance in instances {
@@ -281,4 +284,3 @@ mod tests {
         assert!(config.label_selector.is_none());
     }
 }
-

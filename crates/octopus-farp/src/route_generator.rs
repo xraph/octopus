@@ -14,13 +14,13 @@ pub struct RouteGenerator;
 pub struct GeneratedRoute {
     /// HTTP method
     pub method: String,
-    
+
     /// Path pattern
     pub path: String,
-    
+
     /// Upstream service name
     pub upstream: String,
-    
+
     /// Route metadata
     pub metadata: RouteMetadata,
 }
@@ -30,16 +30,16 @@ pub struct GeneratedRoute {
 pub struct RouteMetadata {
     /// Operation ID (if available)
     pub operation_id: Option<String>,
-    
+
     /// Summary/description
     pub summary: Option<String>,
-    
+
     /// Tags
     pub tags: Vec<String>,
-    
+
     /// Required authentication
     pub requires_auth: bool,
-    
+
     /// Rate limit (requests per second)
     pub rate_limit: Option<u32>,
 }
@@ -87,7 +87,9 @@ impl RouteGenerator {
                 if let Some(methods_obj) = methods.as_object() {
                     for (method, operation) in methods_obj {
                         // Skip non-HTTP methods
-                        if !["get", "post", "put", "delete", "patch", "options", "head"].contains(&method.as_str()) {
+                        if !["get", "post", "put", "delete", "patch", "options", "head"]
+                            .contains(&method.as_str())
+                        {
                             continue;
                         }
 
@@ -110,13 +112,16 @@ impl RouteGenerator {
     /// Extract metadata from OpenAPI operation
     fn extract_openapi_metadata(&self, operation: &Value) -> RouteMetadata {
         RouteMetadata {
-            operation_id: operation.get("operationId")
+            operation_id: operation
+                .get("operationId")
                 .and_then(|v| v.as_str())
                 .map(String::from),
-            summary: operation.get("summary")
+            summary: operation
+                .get("summary")
                 .and_then(|v| v.as_str())
                 .map(String::from),
-            tags: operation.get("tags")
+            tags: operation
+                .get("tags")
                 .and_then(|v| v.as_array())
                 .map(|arr| {
                     arr.iter()
@@ -125,7 +130,8 @@ impl RouteGenerator {
                 })
                 .unwrap_or_default(),
             requires_auth: operation.get("security").is_some(),
-            rate_limit: operation.get("x-rate-limit")
+            rate_limit: operation
+                .get("x-rate-limit")
                 .and_then(|v| v.as_u64())
                 .map(|v| v as u32),
         }
@@ -142,7 +148,8 @@ impl RouteGenerator {
             for (channel, definition) in channels {
                 // For AsyncAPI, create WebSocket/SSE routes
                 let metadata = RouteMetadata {
-                    summary: definition.get("description")
+                    summary: definition
+                        .get("description")
                         .and_then(|v| v.as_str())
                         .map(String::from),
                     ..Default::default()
@@ -202,9 +209,7 @@ impl RouteGenerator {
     pub fn filter_by_tags(routes: Vec<GeneratedRoute>, tags: &[String]) -> Vec<GeneratedRoute> {
         routes
             .into_iter()
-            .filter(|route| {
-                route.metadata.tags.iter().any(|t| tags.contains(t))
-            })
+            .filter(|route| route.metadata.tags.iter().any(|t| tags.contains(t)))
             .collect()
     }
 }
@@ -242,7 +247,8 @@ mod tests {
                         }
                     }
                 }
-            }"#.to_string(),
+            }"#
+            .to_string(),
             checksum: None,
         };
 
@@ -283,4 +289,3 @@ mod tests {
         assert_eq!(routes[0].path, "/graphql");
     }
 }
-

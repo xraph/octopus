@@ -6,13 +6,13 @@ use bytes::Bytes;
 use http::{Method, Response, StatusCode};
 use http_body_util::Full;
 use octopus_admin::{
-    AppState, OverviewTemplate, RoutesTemplate, HealthTemplate,
-    PluginsTemplate, AnalyticsTemplate, LogsTemplate, ConfigTemplate,
-    RouteInfo, HealthCheckInfo, PluginInfo, DashboardStats, PluginStatsCard,
+    AnalyticsTemplate, AppState, ConfigTemplate, DashboardStats, HealthCheckInfo, HealthTemplate,
+    LogsTemplate, OverviewTemplate, PluginInfo, PluginStatsCard, PluginsTemplate, RouteInfo,
+    RoutesTemplate,
 };
 use octopus_core::{Error, Result};
 use octopus_health::{CircuitBreaker, HealthTracker};
-use octopus_metrics::{MetricsCollector, ActivityLog};
+use octopus_metrics::{ActivityLog, MetricsCollector};
 use octopus_plugin_runtime::PluginManager;
 use octopus_router::Router;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -112,7 +112,7 @@ impl AdminHandler {
             (&Method::GET, "/admin/analytics") => self.analytics_page(),
             (&Method::GET, "/admin/logs") => self.logs_page(),
             (&Method::GET, "/admin/config") => self.config_page(),
-            
+
             // Prometheus metrics endpoint (supports both /__metrics and /metrics)
             (&Method::GET, "/metrics") | (&Method::GET, "/__metrics") => self.metrics_endpoint(),
 
@@ -122,7 +122,7 @@ impl AdminHandler {
             (&Method::GET, "/admin/api/health") => self.api_health_checks(),
             (&Method::GET, "/admin/api/routes") => self.api_routes_list(),
             (&Method::GET, "/admin/api/plugins") => self.api_plugins_list(),
-            
+
             // New API endpoints for enhanced dashboard
             (&Method::GET, p) if p.starts_with("/admin/api/analytics") => self.api_analytics(),
             (&Method::GET, p) if p.starts_with("/admin/api/metrics/") => self.api_metrics(path),
@@ -133,7 +133,7 @@ impl AdminHandler {
 
             // Static files (CSS, JS, etc.)
             (&Method::GET, p) if p.starts_with("/admin/static/") => self.serve_static(path),
-            
+
             // Astro UI (experimental alternative interface)
             (&Method::GET, p) if p.starts_with("/admin/ui") => self.serve_ui(path),
 
@@ -146,20 +146,21 @@ impl AdminHandler {
 
     fn overview_page(&self) -> Result<Response<Full<Bytes>>> {
         // Use metrics collector if available, otherwise fall back to basic counter
-        let (total_requests, active_routes, avg_latency_ms) = if let Some(metrics) = &self.metrics_collector {
-            (
-                metrics.total_requests(),
-                metrics.route_count(),
-                metrics.global_avg_latency_ms(),
-            )
-        } else {
-            (
-                self.request_count.load(Ordering::Relaxed) as u64,
-                self.router.total_route_count(),
-                0.0,
-            )
-        };
-        
+        let (total_requests, active_routes, avg_latency_ms) =
+            if let Some(metrics) = &self.metrics_collector {
+                (
+                    metrics.total_requests(),
+                    metrics.route_count(),
+                    metrics.global_avg_latency_ms(),
+                )
+            } else {
+                (
+                    self.request_count.load(Ordering::Relaxed) as u64,
+                    self.router.total_route_count(),
+                    0.0,
+                )
+            };
+
         // Determine health status from metrics or health tracker
         let health_status = if let Some(metrics) = &self.metrics_collector {
             let error_rate = metrics.global_error_rate();
@@ -172,8 +173,14 @@ impl AdminHandler {
             }
         } else if let Some(health_tracker) = &self.health_tracker {
             let snapshots = health_tracker.get_all_snapshots();
-            let all_healthy = snapshots.iter().all(|(_, s)| s.error_rate < 0.5 && s.total_requests >= 10);
-            if all_healthy { "healthy" } else { "degraded" }
+            let all_healthy = snapshots
+                .iter()
+                .all(|(_, s)| s.error_rate < 0.5 && s.total_requests >= 10);
+            if all_healthy {
+                "healthy"
+            } else {
+                "degraded"
+            }
         } else {
             "healthy"
         };
@@ -210,62 +217,69 @@ impl AdminHandler {
     fn routes_page(&self) -> Result<Response<Full<Bytes>>> {
         // Get all routes from router
         let router_routes = self.router.get_all_routes();
-        
+
         // Debug logging
         debug!(
             route_count = router_routes.len(),
             upstream_count = self.router.upstream_count(),
             "Loading routes for dashboard"
         );
-        
+
         // Convert router routes to RouteInfo for display with real metrics
-        let routes: Vec<RouteInfo> = router_routes.iter().enumerate().map(|(idx, route)| {
-            let path = &route.path;
-            
-            // Get real request count from metrics if available
-            let request_count = if let Some(metrics) = &self.metrics_collector {
-                metrics.route_stats(path)
-                    .map(|stats| stats.request_count.load(Ordering::Relaxed))
-                    .unwrap_or(0)
-            } else {
-                0
-            };
-            
-            // Check upstream health from health tracker if available
-            let is_healthy = if let Some(health_tracker) = &self.health_tracker {
-                // Check if any instance of this upstream is healthy
-                let snapshots = health_tracker.get_all_snapshots();
-                snapshots.iter().any(|(_, snapshot)| {
-                    snapshot.error_rate < 0.5 && snapshot.total_requests >= 1
-                })
-            } else {
-                true // Assume healthy if no health tracker
-            };
-            
-            RouteInfo {
-                id: format!("route-{}", idx),
-                path: path.clone(),
-                method: route.method.to_string(),
-                upstream: route.upstream_name.clone(),
-                request_count,
-                is_healthy,
-                avg_latency_ms: if let Some(metrics) = &self.metrics_collector {
-                    metrics.route_stats(path)
-                        .map(|stats| stats.avg_latency_ms())
-                        .unwrap_or(0.0)
-                } else {
-                    0.0
-                },
-                error_count: if let Some(metrics) = &self.metrics_collector {
-                    metrics.route_stats(path)
-                        .map(|stats| stats.error_count.load(Ordering::Relaxed))
+        let routes: Vec<RouteInfo> = router_routes
+            .iter()
+            .enumerate()
+            .map(|(idx, route)| {
+                let path = &route.path;
+
+                // Get real request count from metrics if available
+                let request_count = if let Some(metrics) = &self.metrics_collector {
+                    metrics
+                        .route_stats(path)
+                        .map(|stats| stats.request_count.load(Ordering::Relaxed))
                         .unwrap_or(0)
                 } else {
                     0
-                },
-                last_accessed: Some(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()),
-            }
-        }).collect();
+                };
+
+                // Check upstream health from health tracker if available
+                let is_healthy = if let Some(health_tracker) = &self.health_tracker {
+                    // Check if any instance of this upstream is healthy
+                    let snapshots = health_tracker.get_all_snapshots();
+                    snapshots.iter().any(|(_, snapshot)| {
+                        snapshot.error_rate < 0.5 && snapshot.total_requests >= 1
+                    })
+                } else {
+                    true // Assume healthy if no health tracker
+                };
+
+                RouteInfo {
+                    id: format!("route-{}", idx),
+                    path: path.clone(),
+                    method: route.method.to_string(),
+                    upstream: route.upstream_name.clone(),
+                    request_count,
+                    is_healthy,
+                    avg_latency_ms: if let Some(metrics) = &self.metrics_collector {
+                        metrics
+                            .route_stats(path)
+                            .map(|stats| stats.avg_latency_ms())
+                            .unwrap_or(0.0)
+                    } else {
+                        0.0
+                    },
+                    error_count: if let Some(metrics) = &self.metrics_collector {
+                        metrics
+                            .route_stats(path)
+                            .map(|stats| stats.error_count.load(Ordering::Relaxed))
+                            .unwrap_or(0)
+                    } else {
+                        0
+                    },
+                    last_accessed: Some(chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()),
+                }
+            })
+            .collect();
 
         let total_routes = routes.len();
         let page_start = if total_routes > 0 { 1 } else { 0 };
@@ -288,7 +302,7 @@ impl AdminHandler {
         // Get health information from health tracker if available
         if let Some(health_tracker) = &self.health_tracker {
             let all_snapshots = health_tracker.get_all_snapshots();
-            
+
             for (instance_id, snapshot) in &all_snapshots {
                 // Instance is healthy if error rate is below 50% and has enough requests
                 let is_healthy = snapshot.error_rate < 0.5 && snapshot.total_requests >= 10;
@@ -352,18 +366,21 @@ impl AdminHandler {
     fn plugins_page(&self) -> Result<Response<Full<Bytes>>> {
         let plugins = if let Some(plugin_manager) = &self.plugin_manager {
             let plugin_infos = plugin_manager.list();
-            plugin_infos.into_iter().map(|info| {
-                PluginInfo {
-                    id: info.metadata.name.clone(),
-                    name: info.metadata.name.clone(),
-                    version: info.metadata.version.clone(),
-                    description: info.metadata.description.clone(),
-                    author: Some(info.metadata.author.clone()),
-                    enabled: info.state.is_started(),
-                    has_dashboard: false, // TODO: Check if plugin has dashboard
-                    config: None, // TODO: Get plugin configuration
-                }
-            }).collect()
+            plugin_infos
+                .into_iter()
+                .map(|info| {
+                    PluginInfo {
+                        id: info.metadata.name.clone(),
+                        name: info.metadata.name.clone(),
+                        version: info.metadata.version.clone(),
+                        description: info.metadata.description.clone(),
+                        author: Some(info.metadata.author.clone()),
+                        enabled: info.state.is_started(),
+                        has_dashboard: false, // TODO: Check if plugin has dashboard
+                        config: None,         // TODO: Get plugin configuration
+                    }
+                })
+                .collect()
         } else {
             vec![]
         };
@@ -410,11 +427,12 @@ impl AdminHandler {
     fn api_stats(&self) -> Result<Response<Full<Bytes>>> {
         let total_requests = self.request_count.load(Ordering::Relaxed) as u64;
         let active_routes = self.router.total_route_count();
-        
+
         let avg_latency_ms = if let Some(health_tracker) = &self.health_tracker {
             let snapshots = health_tracker.get_all_snapshots();
             if !snapshots.is_empty() {
-                let total_latency: u128 = snapshots.iter()
+                let total_latency: u128 = snapshots
+                    .iter()
                     .map(|(_, s)| s.avg_latency.as_millis())
                     .sum();
                 (total_latency / snapshots.len() as u128) as f64
@@ -427,8 +445,14 @@ impl AdminHandler {
 
         let health_status = if let Some(health_tracker) = &self.health_tracker {
             let snapshots = health_tracker.get_all_snapshots();
-            let all_healthy = snapshots.iter().all(|(_, s)| s.error_rate < 0.5 && s.total_requests >= 10);
-            if all_healthy { "healthy" } else { "degraded" }
+            let all_healthy = snapshots
+                .iter()
+                .all(|(_, s)| s.error_rate < 0.5 && s.total_requests >= 10);
+            if all_healthy {
+                "healthy"
+            } else {
+                "degraded"
+            }
         } else {
             "healthy"
         };
@@ -445,8 +469,8 @@ impl AdminHandler {
                 0.0
             },
             active_connections: 0, // TODO: Track active connections
-            cpu_usage: 0.0, // TODO: Get CPU usage from system metrics
-            memory_usage: 0.0, // TODO: Get memory usage from system metrics
+            cpu_usage: 0.0,        // TODO: Get CPU usage from system metrics
+            memory_usage: 0.0,     // TODO: Get memory usage from system metrics
         };
 
         let json = serde_json::to_string(&stats)
@@ -480,15 +504,11 @@ impl AdminHandler {
         // Get health information from health tracker if available
         if let Some(health_tracker) = &self.health_tracker {
             let all_snapshots = health_tracker.get_all_snapshots();
-            
+
             for (instance_id, snapshot) in &all_snapshots {
                 // Instance is healthy if error rate is below 50% and has enough requests
                 let is_healthy = snapshot.error_rate < 0.5 && snapshot.total_requests >= 10;
-                let status = if is_healthy {
-                    "passing"
-                } else {
-                    "failing"
-                };
+                let status = if is_healthy { "passing" } else { "failing" };
 
                 checks.push(HealthCheckInfo {
                     name: instance_id.clone(),
@@ -534,8 +554,10 @@ impl AdminHandler {
 
     fn api_routes_list(&self) -> Result<Response<Full<Bytes>>> {
         let router_routes = self.router.get_all_routes();
-        let routes: Vec<RouteInfo> = router_routes.iter().enumerate().map(|(idx, route)| {
-            RouteInfo {
+        let routes: Vec<RouteInfo> = router_routes
+            .iter()
+            .enumerate()
+            .map(|(idx, route)| RouteInfo {
                 id: format!("route-{}", idx),
                 path: route.path.clone(),
                 method: route.method.to_string(),
@@ -545,8 +567,8 @@ impl AdminHandler {
                 avg_latency_ms: 0.0,
                 error_count: 0,
                 last_accessed: None,
-            }
-        }).collect();
+            })
+            .collect();
 
         let json = serde_json::to_string(&routes)
             .map_err(|e| Error::Internal(format!("Failed to serialize routes: {}", e)))?;
@@ -561,8 +583,9 @@ impl AdminHandler {
     fn api_plugins_list(&self) -> Result<Response<Full<Bytes>>> {
         let plugins = if let Some(plugin_manager) = &self.plugin_manager {
             let plugin_infos = plugin_manager.list();
-            plugin_infos.into_iter().map(|info| {
-                PluginInfo {
+            plugin_infos
+                .into_iter()
+                .map(|info| PluginInfo {
                     id: info.metadata.name.clone(),
                     name: info.metadata.name.clone(),
                     version: info.metadata.version.clone(),
@@ -571,8 +594,8 @@ impl AdminHandler {
                     enabled: info.state.is_started(),
                     has_dashboard: false,
                     config: None,
-                }
-            }).collect()
+                })
+                .collect()
         } else {
             vec![]
         };
@@ -614,7 +637,7 @@ impl AdminHandler {
         if path.contains("/realtime") {
             return self.api_stats();
         }
-        
+
         // Return mock timeseries or performance data
         let json = r#"[]"#;
 
@@ -738,7 +761,8 @@ impl AdminHandler {
     /// Serve static files (CSS, JS, etc.)
     fn serve_static(&self, path: &str) -> Result<Response<Full<Bytes>>> {
         // Strip the /admin/static/ prefix
-        let file_path = path.strip_prefix("/admin/static/")
+        let file_path = path
+            .strip_prefix("/admin/static/")
             .ok_or_else(|| Error::InvalidRequest("Invalid static file path".to_string()))?;
 
         // Prevent directory traversal attacks
@@ -773,7 +797,7 @@ impl AdminHandler {
     }
 
     /// Serve Astro UI files with SPA fallback
-    /// 
+    ///
     /// This implements robust SPA serving:
     /// - Serves actual files (JS, CSS, images) when they exist
     /// - Falls back to index.html for client-side routes
@@ -782,7 +806,8 @@ impl AdminHandler {
         use std::path::Path;
 
         // Strip the /admin/ui prefix
-        let relative_path = path.strip_prefix("/admin/ui")
+        let relative_path = path
+            .strip_prefix("/admin/ui")
             .unwrap_or("")
             .trim_start_matches('/');
 
@@ -791,7 +816,11 @@ impl AdminHandler {
             return Err(Error::InvalidRequest("Invalid file path".to_string()));
         }
 
-        debug!(requested_path = path, relative_path = relative_path, "Serving UI file");
+        debug!(
+            requested_path = path,
+            relative_path = relative_path,
+            "Serving UI file"
+        );
 
         // Determine what file to serve
         let file_to_serve = if relative_path.is_empty() {
@@ -839,18 +868,16 @@ impl AdminHandler {
             }
             Err(e) => {
                 debug!(error = %e, "File not found, falling back to index.html");
-                
+
                 // Fall back to index.html for SPA client-side routing
                 let index_path = Path::new(ui_dist).join("index.html");
                 match std::fs::read(&index_path) {
-                    Ok(contents) => {
-                        Response::builder()
-                            .status(StatusCode::OK)
-                            .header("content-type", "text/html; charset=utf-8")
-                            .header("cache-control", "no-cache")
-                            .body(Full::new(Bytes::from(contents)))
-                            .map_err(|e| Error::Internal(format!("Failed to build response: {}", e)))
-                    }
+                    Ok(contents) => Response::builder()
+                        .status(StatusCode::OK)
+                        .header("content-type", "text/html; charset=utf-8")
+                        .header("cache-control", "no-cache")
+                        .body(Full::new(Bytes::from(contents)))
+                        .map_err(|e| Error::Internal(format!("Failed to build response: {}", e))),
                     Err(e) => {
                         debug!(error = %e, "index.html not found");
                         self.not_found()
@@ -864,7 +891,7 @@ impl AdminHandler {
     fn metrics_endpoint(&self) -> Result<Response<Full<Bytes>>> {
         if let Some(ref metrics_collector) = self.metrics_collector {
             let metrics_text = octopus_metrics::PrometheusExporter::export(metrics_collector);
-            
+
             Ok(Response::builder()
                 .status(StatusCode::OK)
                 .header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")

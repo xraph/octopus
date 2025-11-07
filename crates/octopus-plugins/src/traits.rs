@@ -18,19 +18,19 @@ pub enum PluginType {
 pub struct PluginMetadata {
     /// Plugin name
     pub name: String,
-    
+
     /// Plugin version
     pub version: String,
-    
+
     /// Plugin author
     pub author: String,
-    
+
     /// Plugin description
     pub description: String,
-    
+
     /// Plugin type
     pub plugin_type: PluginType,
-    
+
     /// Plugin dependencies
     pub dependencies: Vec<String>,
 }
@@ -54,27 +54,27 @@ impl PluginMetadata {
 pub trait Plugin: Send + Sync {
     /// Get plugin metadata
     fn metadata(&self) -> &PluginMetadata;
-    
+
     /// Initialize the plugin
     async fn init(&mut self) -> Result<()> {
         Ok(())
     }
-    
+
     /// Start the plugin
     async fn start(&mut self) -> Result<()> {
         Ok(())
     }
-    
+
     /// Stop the plugin
     async fn stop(&mut self) -> Result<()> {
         Ok(())
     }
-    
+
     /// Shutdown the plugin
     async fn shutdown(&mut self) -> Result<()> {
         Ok(())
     }
-    
+
     /// Get plugin as middleware (if applicable)
     fn as_middleware(&self) -> Option<&dyn Middleware> {
         None
@@ -105,5 +105,3 @@ mod tests {
         assert_ne!(PluginType::Static, PluginType::Dynamic);
     }
 }
-
-

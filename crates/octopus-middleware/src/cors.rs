@@ -44,10 +44,7 @@ impl Default for CorsConfig {
                 "Authorization".to_string(),
                 "X-Request-ID".to_string(),
             ],
-            exposed_headers: vec![
-                "Content-Length".to_string(),
-                "X-Request-ID".to_string(),
-            ],
+            exposed_headers: vec!["Content-Length".to_string(), "X-Request-ID".to_string()],
             max_age: Duration::from_secs(3600),
             allow_credentials: false,
         }
@@ -168,7 +165,11 @@ impl Cors {
     }
 
     /// Add CORS headers to response
-    fn add_cors_headers(&self, req: &Request<Body>, mut response: Response<Body>) -> Response<Body> {
+    fn add_cors_headers(
+        &self,
+        req: &Request<Body>,
+        mut response: Response<Body>,
+    ) -> Response<Body> {
         let origin = req
             .headers()
             .get(header::ORIGIN)
@@ -255,10 +256,8 @@ mod tests {
         let cors = Cors::permissive();
         let handler = TestHandler;
 
-        let stack: std::sync::Arc<[std::sync::Arc<dyn Middleware>]> = std::sync::Arc::new([
-            std::sync::Arc::new(cors),
-            std::sync::Arc::new(handler),
-        ]);
+        let stack: std::sync::Arc<[std::sync::Arc<dyn Middleware>]> =
+            std::sync::Arc::new([std::sync::Arc::new(cors), std::sync::Arc::new(handler)]);
 
         let next = Next::new(stack);
 
@@ -272,7 +271,10 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
-            response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN).unwrap(),
+            response
+                .headers()
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .unwrap(),
             "*"
         );
     }
@@ -282,10 +284,8 @@ mod tests {
         let cors = Cors::permissive();
         let handler = TestHandler;
 
-        let stack: std::sync::Arc<[std::sync::Arc<dyn Middleware>]> = std::sync::Arc::new([
-            std::sync::Arc::new(cors),
-            std::sync::Arc::new(handler),
-        ]);
+        let stack: std::sync::Arc<[std::sync::Arc<dyn Middleware>]> =
+            std::sync::Arc::new([std::sync::Arc::new(cors), std::sync::Arc::new(handler)]);
 
         let next = Next::new(stack);
 
@@ -300,9 +300,15 @@ mod tests {
         let response = next.run(req).await.unwrap();
 
         assert_eq!(response.status(), StatusCode::NO_CONTENT);
-        assert!(response.headers().contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN));
-        assert!(response.headers().contains_key(header::ACCESS_CONTROL_ALLOW_METHODS));
-        assert!(response.headers().contains_key(header::ACCESS_CONTROL_MAX_AGE));
+        assert!(response
+            .headers()
+            .contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN));
+        assert!(response
+            .headers()
+            .contains_key(header::ACCESS_CONTROL_ALLOW_METHODS));
+        assert!(response
+            .headers()
+            .contains_key(header::ACCESS_CONTROL_MAX_AGE));
     }
 
     #[tokio::test]
@@ -310,10 +316,8 @@ mod tests {
         let cors = Cors::for_origins(vec!["https://allowed.com".to_string()]);
         let handler = TestHandler;
 
-        let stack: std::sync::Arc<[std::sync::Arc<dyn Middleware>]> = std::sync::Arc::new([
-            std::sync::Arc::new(cors),
-            std::sync::Arc::new(handler),
-        ]);
+        let stack: std::sync::Arc<[std::sync::Arc<dyn Middleware>]> =
+            std::sync::Arc::new([std::sync::Arc::new(cors), std::sync::Arc::new(handler)]);
 
         // Allowed origin
         let next = Next::new(stack.clone());
@@ -325,7 +329,10 @@ mod tests {
 
         let response = next.run(req).await.unwrap();
         assert_eq!(
-            response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN).unwrap(),
+            response
+                .headers()
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .unwrap(),
             "https://allowed.com"
         );
 
@@ -338,7 +345,9 @@ mod tests {
             .unwrap();
 
         let response = next.run(req).await.unwrap();
-        assert!(!response.headers().contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN));
+        assert!(!response
+            .headers()
+            .contains_key(header::ACCESS_CONTROL_ALLOW_ORIGIN));
     }
 
     #[tokio::test]
@@ -352,10 +361,8 @@ mod tests {
         let cors = Cors::with_config(config);
         let handler = TestHandler;
 
-        let stack: std::sync::Arc<[std::sync::Arc<dyn Middleware>]> = std::sync::Arc::new([
-            std::sync::Arc::new(cors),
-            std::sync::Arc::new(handler),
-        ]);
+        let stack: std::sync::Arc<[std::sync::Arc<dyn Middleware>]> =
+            std::sync::Arc::new([std::sync::Arc::new(cors), std::sync::Arc::new(handler)]);
 
         let next = Next::new(stack);
 
@@ -368,7 +375,10 @@ mod tests {
         let response = next.run(req).await.unwrap();
 
         assert_eq!(
-            response.headers().get(header::ACCESS_CONTROL_ALLOW_CREDENTIALS).unwrap(),
+            response
+                .headers()
+                .get(header::ACCESS_CONTROL_ALLOW_CREDENTIALS)
+                .unwrap(),
             "true"
         );
     }

@@ -173,8 +173,7 @@ mod tests {
     #[test]
     fn test_api_key_expiration() {
         let past = SystemTime::now() - Duration::from_secs(3600);
-        let key = ApiKey::new("key-123", "secret-key", "user-456", "Test key")
-            .expires_at(past);
+        let key = ApiKey::new("key-123", "secret-key", "user-456", "Test key").expires_at(past);
 
         assert!(key.is_expired());
         assert!(!key.is_valid());
@@ -183,8 +182,8 @@ mod tests {
     #[test]
     fn test_api_key_store() {
         let store = ApiKeyStore::new();
-        let key = ApiKey::new("key-123", "secret-key-xyz", "user-456", "Test key")
-            .with_scope("admin");
+        let key =
+            ApiKey::new("key-123", "secret-key-xyz", "user-456", "Test key").with_scope("admin");
 
         store.add_key(key.clone());
 
@@ -220,5 +219,3 @@ mod tests {
         assert_eq!(user2_keys.len(), 1);
     }
 }
-
-

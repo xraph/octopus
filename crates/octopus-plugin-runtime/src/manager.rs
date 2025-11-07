@@ -3,8 +3,11 @@
 use crate::error::Result;
 use crate::registry::{PluginEntry, PluginRegistry};
 use octopus_plugin_api::{
-    auth::AuthProvider, interceptor::{RequestInterceptor, ResponseInterceptor},
-    protocol::ProtocolHandler, transform::TransformPlugin, Plugin, PluginInfo,
+    auth::AuthProvider,
+    interceptor::{RequestInterceptor, ResponseInterceptor},
+    protocol::ProtocolHandler,
+    transform::TransformPlugin,
+    Plugin, PluginInfo,
 };
 use std::sync::Arc;
 use tracing::info;
@@ -13,8 +16,7 @@ use tracing::info;
 ///
 /// Provides convenience methods for managing plugins, including
 /// type-specific accessors and batch operations.
-#[derive(Clone)]
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct PluginManager {
     registry: Arc<PluginRegistry>,
 }
@@ -38,20 +40,12 @@ impl PluginManager {
     }
 
     /// Register a plugin
-    pub async fn register(
-        &self,
-        name: impl Into<String>,
-        plugin: Box<dyn Plugin>,
-    ) -> Result<()> {
+    pub async fn register(&self, name: impl Into<String>, plugin: Box<dyn Plugin>) -> Result<()> {
         self.registry.register(name, plugin).await
     }
 
     /// Initialize a plugin with configuration
-    pub async fn initialize(
-        &self,
-        name: &str,
-        config: serde_json::Value,
-    ) -> Result<()> {
+    pub async fn initialize(&self, name: &str, config: serde_json::Value) -> Result<()> {
         self.registry.initialize(name, config).await
     }
 
@@ -236,7 +230,10 @@ mod tests {
             "1.0.0"
         }
 
-        async fn init(&mut self, _config: serde_json::Value) -> std::result::Result<(), PluginError> {
+        async fn init(
+            &mut self,
+            _config: serde_json::Value,
+        ) -> std::result::Result<(), PluginError> {
             Ok(())
         }
 
@@ -290,4 +287,3 @@ mod tests {
         assert_eq!(stats.started, 1);
     }
 }
-

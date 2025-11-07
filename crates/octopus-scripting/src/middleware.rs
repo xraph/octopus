@@ -144,7 +144,7 @@ impl ScriptMiddleware {
     /// Execute script on request
     async fn execute_on_request(&self, req: &mut Request<Body>) -> ScriptResult<bool> {
         let start = std::time::Instant::now();
-        
+
         // Extract request context
         let req_ctx = RequestContext::from_request(req);
 
@@ -182,7 +182,8 @@ impl ScriptMiddleware {
 
         // Apply changes back to request
         if let Some(req_ctx) = ctx.as_request() {
-            req_ctx.apply_to_request(req)
+            req_ctx
+                .apply_to_request(req)
                 .map_err(|e| ScriptError::runtime(e))?;
         }
 
@@ -192,7 +193,7 @@ impl ScriptMiddleware {
     /// Execute script on response
     async fn execute_on_response(&self, res: &mut Response<Body>) -> ScriptResult<bool> {
         let start = std::time::Instant::now();
-        
+
         // Extract response context
         let res_ctx = ResponseContext::from_response(res);
 
@@ -216,7 +217,8 @@ impl ScriptMiddleware {
 
         // Apply changes back to response
         if let Some(res_ctx) = ctx.as_response() {
-            res_ctx.apply_to_response(res)
+            res_ctx
+                .apply_to_response(res)
                 .map_err(|e| ScriptError::runtime(e))?;
         }
 
@@ -317,4 +319,3 @@ mod tests {
         assert_eq!(config.timeout_ms, 200);
     }
 }
-

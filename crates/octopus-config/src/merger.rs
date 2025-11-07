@@ -7,7 +7,7 @@
 //! - secrets.yaml (sensitive values)
 //! - local.yaml (developer overrides)
 
-use crate::types::{Config, GatewayConfig, RouteConfig, UpstreamConfig, PluginConfig};
+use crate::types::{Config, GatewayConfig, PluginConfig, RouteConfig, UpstreamConfig};
 use octopus_core::Result;
 use std::collections::HashMap;
 
@@ -86,10 +86,8 @@ fn merge_upstreams(
     mut base: Vec<UpstreamConfig>,
     overlay: Vec<UpstreamConfig>,
 ) -> Vec<UpstreamConfig> {
-    let mut upstream_map: HashMap<String, UpstreamConfig> = base
-        .drain(..)
-        .map(|u| (u.name.clone(), u))
-        .collect();
+    let mut upstream_map: HashMap<String, UpstreamConfig> =
+        base.drain(..).map(|u| (u.name.clone(), u)).collect();
 
     // Override or add upstreams from overlay
     for upstream in overlay {
@@ -101,10 +99,8 @@ fn merge_upstreams(
 
 /// Merge routes by path
 fn merge_routes(mut base: Vec<RouteConfig>, overlay: Vec<RouteConfig>) -> Vec<RouteConfig> {
-    let mut route_map: HashMap<String, RouteConfig> = base
-        .drain(..)
-        .map(|r| (r.path.clone(), r))
-        .collect();
+    let mut route_map: HashMap<String, RouteConfig> =
+        base.drain(..).map(|r| (r.path.clone(), r)).collect();
 
     // Override or add routes from overlay
     for route in overlay {
@@ -116,10 +112,8 @@ fn merge_routes(mut base: Vec<RouteConfig>, overlay: Vec<RouteConfig>) -> Vec<Ro
 
 /// Merge plugins by name
 fn merge_plugins(mut base: Vec<PluginConfig>, overlay: Vec<PluginConfig>) -> Vec<PluginConfig> {
-    let mut plugin_map: HashMap<String, PluginConfig> = base
-        .drain(..)
-        .map(|p| (p.name.clone(), p))
-        .collect();
+    let mut plugin_map: HashMap<String, PluginConfig> =
+        base.drain(..).map(|p| (p.name.clone(), p)).collect();
 
     // Override or add plugins from overlay
     for plugin in overlay {
@@ -132,14 +126,16 @@ fn merge_plugins(mut base: Vec<PluginConfig>, overlay: Vec<PluginConfig>) -> Vec
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{ObservabilityConfig, CompressionConfig};
+    use crate::types::{CompressionConfig, ObservabilityConfig};
     use std::net::SocketAddr;
     use std::time::Duration;
 
     fn create_test_config(listen_port: u16, workers: usize) -> Config {
         Config {
             gateway: GatewayConfig {
-                listen: format!("127.0.0.1:{}", listen_port).parse::<SocketAddr>().unwrap(),
+                listen: format!("127.0.0.1:{}", listen_port)
+                    .parse::<SocketAddr>()
+                    .unwrap(),
                 workers,
                 request_timeout: Duration::from_secs(30),
                 shutdown_timeout: Duration::from_secs(10),
@@ -199,7 +195,7 @@ mod tests {
         let merged = merge_upstreams(base, overlay);
 
         assert_eq!(merged.len(), 2);
-        
+
         // Find service1 and verify it was overridden
         let service1 = merged.iter().find(|u| u.name == "service1").unwrap();
         assert_eq!(service1.lb_policy, "least_conn");
@@ -224,4 +220,3 @@ mod tests {
         assert!(result.is_err());
     }
 }
-

@@ -97,50 +97,42 @@ pub mod responses {
 
     /// 400 Bad Request
     pub fn bad_request(message: impl Into<String>) -> Result<Response<Body>> {
-        ResponseBuilder::new(StatusCode::BAD_REQUEST)
-            .text(message)
+        ResponseBuilder::new(StatusCode::BAD_REQUEST).text(message)
     }
 
     /// 401 Unauthorized
     pub fn unauthorized(message: impl Into<String>) -> Result<Response<Body>> {
-        ResponseBuilder::new(StatusCode::UNAUTHORIZED)
-            .text(message)
+        ResponseBuilder::new(StatusCode::UNAUTHORIZED).text(message)
     }
 
     /// 403 Forbidden
     pub fn forbidden(message: impl Into<String>) -> Result<Response<Body>> {
-        ResponseBuilder::new(StatusCode::FORBIDDEN)
-            .text(message)
+        ResponseBuilder::new(StatusCode::FORBIDDEN).text(message)
     }
 
     /// 404 Not Found
     pub fn not_found(message: impl Into<String>) -> Result<Response<Body>> {
-        ResponseBuilder::new(StatusCode::NOT_FOUND)
-            .text(message)
+        ResponseBuilder::new(StatusCode::NOT_FOUND).text(message)
     }
 
     /// 429 Too Many Requests
     pub fn too_many_requests() -> Result<Response<Body>> {
-        ResponseBuilder::new(StatusCode::TOO_MANY_REQUESTS)
-            .text("Rate limit exceeded")
+        ResponseBuilder::new(StatusCode::TOO_MANY_REQUESTS).text("Rate limit exceeded")
     }
 
     /// 500 Internal Server Error
     pub fn internal_error(message: impl Into<String>) -> Result<Response<Body>> {
-        ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR)
-            .text(message)
+        ResponseBuilder::new(StatusCode::INTERNAL_SERVER_ERROR).text(message)
     }
 
     /// 502 Bad Gateway
     pub fn bad_gateway(message: impl Into<String>) -> Result<Response<Body>> {
-        ResponseBuilder::new(StatusCode::BAD_GATEWAY)
-            .text(message)
+        ResponseBuilder::new(StatusCode::BAD_GATEWAY).text(message)
     }
 
     /// 503 Service Unavailable
     pub fn service_unavailable(message: impl Into<String>) -> Result<Response<Body>> {
-        ResponseBuilder::new(StatusCode::SERVICE_UNAVAILABLE)
-            .text(message)
+        ResponseBuilder::new(StatusCode::SERVICE_UNAVAILABLE).text(message)
     }
 }
 
@@ -156,10 +148,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(
-            response.headers().get("x-custom").unwrap(),
-            "value"
-        );
+        assert_eq!(response.headers().get("x-custom").unwrap(), "value");
     }
 
     #[test]
@@ -181,5 +170,3 @@ mod tests {
         );
     }
 }
-
-

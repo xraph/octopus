@@ -9,12 +9,12 @@
 
 use crate::handler::{ProtocolHandler, ProtocolType};
 use async_trait::async_trait;
+use base64::{engine::general_purpose, Engine as _};
 use bytes::Bytes;
 use http::{header, Request, Response, StatusCode};
 use http_body_util::Full;
-use octopus_core::{Error, Result, ResponseBuilder};
+use octopus_core::{Error, ResponseBuilder, Result};
 use sha1::{Digest, Sha1};
-use base64::{Engine as _, engine::general_purpose};
 
 /// WebSocket protocol handler
 #[derive(Debug, Clone)]
@@ -51,7 +51,8 @@ impl WebSocketHandler {
                 .get(header::CONNECTION)
                 .and_then(|v| v.to_str().ok())
                 .map_or(false, |v| {
-                    v.split(',').any(|s| s.trim().eq_ignore_ascii_case("upgrade"))
+                    v.split(',')
+                        .any(|s| s.trim().eq_ignore_ascii_case("upgrade"))
                 })
     }
 }
@@ -86,7 +87,7 @@ impl ProtocolHandler for WebSocketHandler {
             .headers()
             .get("Sec-WebSocket-Version")
             .and_then(|v| v.to_str().ok());
-        
+
         if ws_version != Some("13") {
             return Err(Error::InvalidRequest(
                 "Unsupported WebSocket version (only version 13 supported)".to_string(),
@@ -122,19 +123,19 @@ impl ProtocolHandler for WebSocketHandler {
 
 impl WebSocketHandler {
     /// Generate Sec-WebSocket-Accept value from Sec-WebSocket-Key
-    /// 
+    ///
     /// As per RFC 6455 Section 1.3:
     /// The server takes the value of the Sec-WebSocket-Key and concatenates
     /// it with the GUID "258EAFA5-E914-47DA-95CA-C5AB0DC85B11", then SHA-1
     /// hashes the result and base64 encodes it.
     fn generate_accept_key(key: &str) -> String {
         const WS_GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-        
+
         let mut sha1 = Sha1::new();
         sha1.update(key.as_bytes());
         sha1.update(WS_GUID.as_bytes());
         let hash = sha1.finalize();
-        
+
         general_purpose::STANDARD.encode(&hash)
     }
 }
@@ -154,7 +155,7 @@ mod tests {
         // Test vector from RFC 6455 Section 1.3
         let key = "dGhlIHNhbXBsZSBub25jZQ==";
         let expected = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
-        
+
         let result = WebSocketHandler::generate_accept_key(key);
         assert_eq!(result, expected);
     }
@@ -201,5 +202,3 @@ mod tests {
         assert!(!handler.can_handle(&http_req));
     }
 }
-
-

@@ -184,5 +184,3 @@ mod tests {
         assert_eq!(CircuitBreakerState::HalfOpen.to_string(), "half_open");
     }
 }
-
-

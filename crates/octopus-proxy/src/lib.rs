@@ -29,4 +29,3 @@ pub mod prelude {
     pub use crate::pool::{ConnectionPool, PoolConfig};
     pub use crate::proxy::{HttpProxy, ProxyConfig};
 }
-

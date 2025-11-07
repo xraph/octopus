@@ -48,10 +48,7 @@ impl UpstreamCluster {
 
     /// Get all healthy instances
     pub fn healthy_instances(&self) -> Vec<&UpstreamInstance> {
-        self.instances
-            .iter()
-            .filter(|i| i.is_healthy())
-            .collect()
+        self.instances.iter().filter(|i| i.is_healthy()).collect()
     }
 
     /// Get total instance count
@@ -198,5 +195,3 @@ mod tests {
         assert_eq!(instance.active_connections(), 1);
     }
 }
-
-

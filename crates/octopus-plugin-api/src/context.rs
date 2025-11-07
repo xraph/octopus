@@ -155,4 +155,3 @@ mod tests {
         assert!(ctx.is_server_error());
     }
 }
-

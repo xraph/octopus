@@ -5,8 +5,8 @@ use bytes::Bytes;
 use http::Uri;
 use http_body_util::Full;
 use hyper::Request;
-use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
+use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use octopus_core::{Error, Result};
 use std::time::Duration;
@@ -60,7 +60,9 @@ impl FarpClient {
 
         // Verify checksum if present
         if !manifest.verify_checksum()? {
-            return Err(Error::Farp("Manifest checksum verification failed".to_string()));
+            return Err(Error::Farp(
+                "Manifest checksum verification failed".to_string(),
+            ));
         }
 
         Ok(manifest)
@@ -129,7 +131,10 @@ mod tests {
     use super::*;
     use crate::manifest::ServiceInfo;
     use std::collections::HashMap;
-    use wiremock::{matchers::{method, path}, Mock, MockServer, ResponseTemplate};
+    use wiremock::{
+        matchers::{method, path},
+        Mock, MockServer, ResponseTemplate,
+    };
 
     #[tokio::test]
     async fn test_fetch_manifest() {
@@ -198,5 +203,3 @@ mod tests {
         assert!(result.is_err());
     }
 }
-
-

@@ -100,11 +100,13 @@ impl ScriptSource {
     pub async fn get_code(&self) -> Result<String> {
         match self {
             Self::Inline { code, .. } => Ok(code.clone()),
-            Self::File { path } => tokio::fs::read_to_string(path)
-                .await
-                .map_err(|e| ScriptError::IoError {
-                    message: format!("Failed to read script file {:?}: {}", path, e),
-                }),
+            Self::File { path } => {
+                tokio::fs::read_to_string(path)
+                    .await
+                    .map_err(|e| ScriptError::IoError {
+                        message: format!("Failed to read script file {:?}: {}", path, e),
+                    })
+            }
         }
     }
 
@@ -139,11 +141,8 @@ pub trait ScriptEngine: Send + Sync + fmt::Debug {
     /// Execute script on request (before routing)
     ///
     /// Returns whether to continue processing (true) or short-circuit (false)
-    async fn execute_request(
-        &self,
-        source: &ScriptSource,
-        ctx: &mut ScriptContext,
-    ) -> Result<bool>;
+    async fn execute_request(&self, source: &ScriptSource, ctx: &mut ScriptContext)
+        -> Result<bool>;
 
     /// Execute script on response (after upstream)
     ///
@@ -189,6 +188,3 @@ impl CacheStats {
         }
     }
 }
-
-
-

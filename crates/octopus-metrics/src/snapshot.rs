@@ -1,7 +1,7 @@
 //! Metrics snapshot for exporting current state
 
 use super::*;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Snapshot of route-specific metrics
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -132,10 +132,14 @@ mod tests {
     fn test_snapshot_from_collector() {
         let collector = MetricsCollector::new();
         collector.record_request("/users", Duration::from_millis(50), RequestOutcome::Success);
-        collector.record_request("/posts", Duration::from_millis(100), RequestOutcome::Success);
-        
+        collector.record_request(
+            "/posts",
+            Duration::from_millis(100),
+            RequestOutcome::Success,
+        );
+
         let snapshot = MetricsSnapshot::from_collector(&collector);
-        
+
         assert_eq!(snapshot.total_requests, 2);
         assert_eq!(snapshot.route_count, 2);
         assert_eq!(snapshot.routes.len(), 2);
@@ -206,4 +210,3 @@ mod tests {
         assert_eq!(top[0].path, "/users");
     }
 }
-

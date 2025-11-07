@@ -42,7 +42,7 @@ impl ConfigBuilder {
         let gateway = self
             .gateway
             .ok_or_else(|| octopus_core::Error::Config("gateway is required".to_string()))?;
-        
+
         Ok(Config {
             gateway,
             upstreams: Vec::new(),
@@ -61,12 +61,9 @@ mod tests {
     #[test]
     fn test_config_builder() {
         let addr: SocketAddr = "127.0.0.1:8080".parse().unwrap();
-        
-        let config = ConfigBuilder::new()
-            .listen(addr)
-            .build()
-            .unwrap();
-        
+
+        let config = ConfigBuilder::new().listen(addr).build().unwrap();
+
         assert_eq!(config.gateway.listen, addr);
     }
 
@@ -76,5 +73,3 @@ mod tests {
         assert!(result.is_err());
     }
 }
-
-

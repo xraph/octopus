@@ -22,7 +22,7 @@ pub mod types;
 pub mod validator;
 
 pub use builder::ConfigBuilder;
-pub use loader::{load_config, load_from_file, load_from_str, load_and_merge};
+pub use loader::{load_and_merge, load_config, load_from_file, load_from_str};
 pub use merger::merge_configs;
 pub use types::{Config, GatewayConfig, PluginConfig, UpstreamConfig};
 pub use validator::validate_config;
@@ -58,7 +58,7 @@ impl ConfigFormat {
             .extension()
             .and_then(|s| s.to_str())
             .ok_or_else(|| Error::Config("Unable to detect config format".to_string()))?;
-        
+
         match ext {
             "yaml" | "yml" => Ok(ConfigFormat::Yaml),
             "toml" => Ok(ConfigFormat::Toml),
@@ -95,4 +95,3 @@ mod tests {
         assert!(result.is_err());
     }
 }
-

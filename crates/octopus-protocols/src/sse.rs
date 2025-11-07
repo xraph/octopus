@@ -64,7 +64,7 @@ impl ProtocolHandler for SseHandler {
         // 3. Forward events from upstream
 
         let body = Self::format_comment("connected");
-        
+
         Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "text/event-stream")
@@ -148,5 +148,3 @@ mod tests {
         );
     }
 }
-
-

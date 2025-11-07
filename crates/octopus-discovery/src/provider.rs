@@ -12,22 +12,22 @@ use std::net::SocketAddr;
 pub struct ServiceInstance {
     /// Service ID
     pub id: String,
-    
+
     /// Service name
     pub name: String,
-    
+
     /// Service address (IP or hostname)
     pub address: String,
-    
+
     /// Service port
     pub port: u16,
-    
+
     /// Service health status
     pub health: ServiceHealth,
-    
+
     /// Service metadata/tags
     pub metadata: ServiceMetadata,
-    
+
     /// Service endpoints
     pub endpoints: Vec<ServiceEndpoint>,
 }
@@ -45,13 +45,13 @@ impl ServiceInstance {
 pub enum ServiceHealth {
     /// Service is healthy
     Healthy,
-    
+
     /// Service is unhealthy
     Unhealthy,
-    
+
     /// Service health is unknown
     Unknown,
-    
+
     /// Service is in warning state
     Warning,
 }
@@ -72,13 +72,13 @@ impl fmt::Display for ServiceHealth {
 pub struct ServiceMetadata {
     /// Service version
     pub version: Option<String>,
-    
+
     /// Service tags
     pub tags: Vec<String>,
-    
+
     /// Service datacenter/region
     pub datacenter: Option<String>,
-    
+
     /// Custom metadata
     pub custom: HashMap<String, String>,
 }
@@ -88,10 +88,10 @@ pub struct ServiceMetadata {
 pub struct ServiceEndpoint {
     /// Endpoint path
     pub path: String,
-    
+
     /// HTTP methods
     pub methods: Vec<String>,
-    
+
     /// Endpoint metadata
     pub metadata: HashMap<String, String>,
 }
@@ -101,16 +101,16 @@ pub struct ServiceEndpoint {
 pub enum DiscoveryEvent {
     /// New service registered
     ServiceRegistered(ServiceInstance),
-    
+
     /// Service deregistered
     /// Service deregistered event
     ServiceDeregistered {
         /// Service ID
         service_id: String,
         /// Service name
-        service_name: String
+        service_name: String,
     },
-    
+
     /// Service health changed
     HealthChanged {
         /// Service ID
@@ -120,7 +120,7 @@ pub enum DiscoveryEvent {
         /// New health status
         new_health: ServiceHealth,
     },
-    
+
     /// Service updated
     ServiceUpdated(ServiceInstance),
 }
@@ -130,19 +130,19 @@ pub enum DiscoveryEvent {
 pub trait DiscoveryProvider: Send + Sync + fmt::Debug {
     /// Get the provider name
     fn name(&self) -> &str;
-    
+
     /// Discover all services
     async fn discover_services(&self) -> Result<Vec<ServiceInstance>>;
-    
+
     /// Discover instances of a specific service
     async fn discover_service(&self, service_name: &str) -> Result<Vec<ServiceInstance>>;
-    
+
     /// Watch for service changes
     async fn watch_services(
         &self,
         callback: Box<dyn Fn(DiscoveryEvent) + Send + Sync>,
     ) -> Result<()>;
-    
+
     /// Register a service (if supported)
     async fn register_service(&self, instance: ServiceInstance) -> Result<()> {
         let _ = instance;
@@ -150,7 +150,7 @@ pub trait DiscoveryProvider: Send + Sync + fmt::Debug {
             "Service registration not supported by this provider".to_string(),
         ))
     }
-    
+
     /// Deregister a service (if supported)
     async fn deregister_service(&self, service_id: &str) -> Result<()> {
         let _ = service_id;
@@ -158,7 +158,7 @@ pub trait DiscoveryProvider: Send + Sync + fmt::Debug {
             "Service deregistration not supported by this provider".to_string(),
         ))
     }
-    
+
     /// Health check a service (if supported)
     async fn health_check(&self, service_id: &str) -> Result<ServiceHealth> {
         let _ = service_id;
@@ -194,4 +194,3 @@ mod tests {
         assert_eq!(ServiceHealth::Warning.to_string(), "warning");
     }
 }
-

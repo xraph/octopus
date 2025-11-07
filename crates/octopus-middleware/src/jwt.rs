@@ -21,25 +21,25 @@ pub type Body = Full<Bytes>;
 pub struct JwtConfig {
     /// Secret key for HMAC algorithms (HS256, HS384, HS512)
     pub secret: Option<String>,
-    
+
     /// Public key for RSA/ECDSA algorithms (RS256, ES256, etc.)
     pub public_key: Option<String>,
-    
+
     /// Algorithm to use for validation
     pub algorithm: Algorithm,
-    
+
     /// Header name to extract JWT from (default: "Authorization")
     pub header_name: String,
-    
+
     /// Token prefix (default: "Bearer ")
     pub token_prefix: String,
-    
+
     /// Required audience ("aud" claim)
     pub audience: Option<String>,
-    
+
     /// Required issuer ("iss" claim)
     pub issuer: Option<String>,
-    
+
     /// Skip paths that don't require authentication
     pub skip_paths: Vec<String>,
 }
@@ -79,22 +79,22 @@ impl fmt::Debug for JwtConfig {
 pub struct Claims {
     /// Subject (user ID)
     pub sub: String,
-    
+
     /// Expiration time (Unix timestamp)
     pub exp: usize,
-    
+
     /// Issued at (Unix timestamp)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub iat: Option<usize>,
-    
+
     /// Issuer
     #[serde(skip_serializing_if = "Option::is_none")]
     pub iss: Option<String>,
-    
+
     /// Audience
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aud: Option<String>,
-    
+
     /// Custom claims (extensible)
     #[serde(flatten)]
     pub custom: serde_json::Value,
@@ -117,17 +117,17 @@ impl JwtAuth {
             algorithm: Algorithm::HS256,
             ..Default::default()
         };
-        
+
         let validation = Validation::new(Algorithm::HS256);
         let decoding_key = DecodingKey::from_secret(secret.as_bytes());
-        
+
         Self {
             config: Arc::new(config),
             validation,
             decoding_key: Arc::new(decoding_key),
         }
     }
-    
+
     /// Create a new JWT authentication middleware with custom config
     pub fn with_config(config: JwtConfig) -> CoreResult<Self> {
         let decoding_key = if let Some(ref secret) = config.secret {
@@ -135,12 +135,14 @@ impl JwtAuth {
         } else if let Some(ref public_key) = config.public_key {
             match config.algorithm {
                 Algorithm::RS256 | Algorithm::RS384 | Algorithm::RS512 => {
-                    DecodingKey::from_rsa_pem(public_key.as_bytes())
-                        .map_err(|e| octopus_core::Error::Internal(format!("Invalid RSA public key: {}", e)))?
+                    DecodingKey::from_rsa_pem(public_key.as_bytes()).map_err(|e| {
+                        octopus_core::Error::Internal(format!("Invalid RSA public key: {}", e))
+                    })?
                 }
                 Algorithm::ES256 | Algorithm::ES384 => {
-                    DecodingKey::from_ec_pem(public_key.as_bytes())
-                        .map_err(|e| octopus_core::Error::Internal(format!("Invalid EC public key: {}", e)))?
+                    DecodingKey::from_ec_pem(public_key.as_bytes()).map_err(|e| {
+                        octopus_core::Error::Internal(format!("Invalid EC public key: {}", e))
+                    })?
                 }
                 _ => {
                     return Err(octopus_core::Error::Internal(
@@ -153,26 +155,26 @@ impl JwtAuth {
                 "Either secret or public_key must be provided".to_string(),
             ));
         };
-        
+
         let mut validation = Validation::new(config.algorithm);
-        
+
         // Set audience if configured
         if let Some(ref aud) = config.audience {
             validation.set_audience(&[aud]);
         }
-        
+
         // Set issuer if configured
         if let Some(ref iss) = config.issuer {
             validation.set_issuer(&[iss]);
         }
-        
+
         Ok(Self {
             config: Arc::new(config),
             validation,
             decoding_key: Arc::new(decoding_key),
         })
     }
-    
+
     /// Extract token from request
     fn extract_token(&self, req: &Request<Body>) -> Option<String> {
         req.headers()
@@ -186,7 +188,7 @@ impl JwtAuth {
                 }
             })
     }
-    
+
     /// Check if path should skip authentication
     fn should_skip(&self, path: &str) -> bool {
         self.config.skip_paths.iter().any(|skip_path| {
@@ -199,14 +201,14 @@ impl JwtAuth {
             }
         })
     }
-    
+
     /// Build unauthorized response
     fn unauthorized_response(&self, message: &str) -> Response<Body> {
         let body = serde_json::json!({
             "error": "unauthorized",
             "message": message
         });
-        
+
         Response::builder()
             .status(StatusCode::UNAUTHORIZED)
             .header(header::CONTENT_TYPE, "application/json")
@@ -228,12 +230,12 @@ impl fmt::Debug for JwtAuth {
 impl Middleware for JwtAuth {
     async fn call(&self, req: Request<Body>, next: Next) -> CoreResult<Response<Body>> {
         let path = req.uri().path();
-        
+
         // Skip authentication for configured paths
         if self.should_skip(path) {
             return next.run(req).await;
         }
-        
+
         // Extract token
         let token = match self.extract_token(&req) {
             Some(token) => token,
@@ -242,7 +244,7 @@ impl Middleware for JwtAuth {
                 return Ok(self.unauthorized_response("Missing authentication token"));
             }
         };
-        
+
         // Validate token
         match decode::<Claims>(&token, &self.decoding_key, &self.validation) {
             Ok(token_data) => {
@@ -251,7 +253,7 @@ impl Middleware for JwtAuth {
                     sub = %token_data.claims.sub,
                     "Authentication successful"
                 );
-                
+
                 // TODO: Add claims to request extensions for downstream middleware
                 next.run(req).await
             }
@@ -265,7 +267,7 @@ impl Middleware for JwtAuth {
                     jsonwebtoken::errors::ErrorKind::InvalidAudience => "Invalid token audience",
                     _ => "Token validation failed",
                 };
-                
+
                 Ok(self.unauthorized_response(message))
             }
         }
@@ -278,10 +280,10 @@ mod tests {
     use jsonwebtoken::{encode, EncodingKey, Header};
     use octopus_core::Error;
     use std::time::{SystemTime, UNIX_EPOCH};
-    
+
     #[derive(Debug)]
     struct TestHandler;
-    
+
     #[async_trait]
     impl Middleware for TestHandler {
         async fn call(&self, _req: Request<Body>, _next: Next) -> CoreResult<Response<Body>> {
@@ -291,13 +293,13 @@ mod tests {
                 .map_err(|e| Error::Internal(e.to_string()))
         }
     }
-    
+
     fn create_test_token(secret: &str, exp_offset: i64) -> String {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs() as usize;
-        
+
         let claims = Claims {
             sub: "test-user".to_string(),
             exp: (now as i64 + exp_offset) as usize,
@@ -306,7 +308,7 @@ mod tests {
             aud: None,
             custom: serde_json::json!({}),
         };
-        
+
         encode(
             &Header::default(),
             &claims,
@@ -314,99 +316,87 @@ mod tests {
         )
         .unwrap()
     }
-    
+
     #[tokio::test]
     async fn test_jwt_auth_success() {
         let secret = "test-secret";
         let jwt_auth = JwtAuth::new(secret);
         let handler = TestHandler;
-        
-        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([
-            Arc::new(jwt_auth),
-            Arc::new(handler),
-        ]);
-        
+
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(jwt_auth), Arc::new(handler)]);
+
         // Create valid token (expires in 1 hour)
         let token = create_test_token(secret, 3600);
-        
+
         let next = Next::new(stack.clone());
         let req = Request::builder()
             .uri("/protected")
             .header("Authorization", format!("Bearer {}", token))
             .body(Body::from(""))
             .unwrap();
-        
+
         let response = next.run(req).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
     }
-    
+
     #[tokio::test]
     async fn test_jwt_auth_missing_token() {
         let jwt_auth = JwtAuth::new("test-secret");
         let handler = TestHandler;
-        
-        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([
-            Arc::new(jwt_auth),
-            Arc::new(handler),
-        ]);
-        
+
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(jwt_auth), Arc::new(handler)]);
+
         let next = Next::new(stack.clone());
         let req = Request::builder()
             .uri("/protected")
             .body(Body::from(""))
             .unwrap();
-        
+
         let response = next.run(req).await.unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
         assert!(response.headers().contains_key("WWW-Authenticate"));
     }
-    
+
     #[tokio::test]
     async fn test_jwt_auth_invalid_token() {
         let jwt_auth = JwtAuth::new("test-secret");
         let handler = TestHandler;
-        
-        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([
-            Arc::new(jwt_auth),
-            Arc::new(handler),
-        ]);
-        
+
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(jwt_auth), Arc::new(handler)]);
+
         let next = Next::new(stack.clone());
         let req = Request::builder()
             .uri("/protected")
             .header("Authorization", "Bearer invalid-token")
             .body(Body::from(""))
             .unwrap();
-        
+
         let response = next.run(req).await.unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
-    
+
     #[tokio::test]
     async fn test_jwt_auth_expired_token() {
         let secret = "test-secret";
         let jwt_auth = JwtAuth::new(secret);
         let handler = TestHandler;
-        
-        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([
-            Arc::new(jwt_auth),
-            Arc::new(handler),
-        ]);
-        
+
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(jwt_auth), Arc::new(handler)]);
+
         // Create expired token (expired 1 hour ago)
         let token = create_test_token(secret, -3600);
-        
+
         let next = Next::new(stack.clone());
         let req = Request::builder()
             .uri("/protected")
             .header("Authorization", format!("Bearer {}", token))
             .body(Body::from(""))
             .unwrap();
-        
+
         let response = next.run(req).await.unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
-    
+
     #[tokio::test]
     async fn test_jwt_auth_skip_paths() {
         let config = JwtConfig {
@@ -414,15 +404,12 @@ mod tests {
             skip_paths: vec!["/health".to_string(), "/public/*".to_string()],
             ..Default::default()
         };
-        
+
         let jwt_auth = JwtAuth::with_config(config).unwrap();
         let handler = TestHandler;
-        
-        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([
-            Arc::new(jwt_auth),
-            Arc::new(handler),
-        ]);
-        
+
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(jwt_auth), Arc::new(handler)]);
+
         // Test exact match
         let next = Next::new(stack.clone());
         let req = Request::builder()
@@ -431,7 +418,7 @@ mod tests {
             .unwrap();
         let response = next.run(req).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        
+
         // Test wildcard match
         let next = Next::new(stack.clone());
         let req = Request::builder()
@@ -441,29 +428,25 @@ mod tests {
         let response = next.run(req).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
     }
-    
+
     #[tokio::test]
     async fn test_jwt_auth_wrong_secret() {
         let jwt_auth = JwtAuth::new("correct-secret");
         let handler = TestHandler;
-        
-        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([
-            Arc::new(jwt_auth),
-            Arc::new(handler),
-        ]);
-        
+
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(jwt_auth), Arc::new(handler)]);
+
         // Create token with wrong secret
         let token = create_test_token("wrong-secret", 3600);
-        
+
         let next = Next::new(stack.clone());
         let req = Request::builder()
             .uri("/protected")
             .header("Authorization", format!("Bearer {}", token))
             .body(Body::from(""))
             .unwrap();
-        
+
         let response = next.run(req).await.unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }
-

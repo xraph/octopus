@@ -39,11 +39,10 @@ impl MiddlewareBuilder {
     /// Add Timeout middleware with default config (30s timeout)
     #[must_use]
     pub fn with_timeout(mut self) -> Self {
-        self.middlewares
-            .push(Arc::new(Timeout::new()));
+        self.middlewares.push(Arc::new(Timeout::new()));
         self
     }
-    
+
     /// Add Timeout middleware with custom duration
     #[must_use]
     pub fn with_timeout_duration(mut self, timeout: Duration) -> Self {
@@ -82,8 +81,7 @@ impl MiddlewareBuilder {
     /// Add Rate Limiting middleware with default config
     #[must_use]
     pub fn with_rate_limit(mut self) -> Self {
-        self.middlewares
-            .push(Arc::new(RateLimit::new()));
+        self.middlewares.push(Arc::new(RateLimit::new()));
         self
     }
 
@@ -118,8 +116,7 @@ impl MiddlewareBuilder {
     /// Add CORS middleware with custom configuration
     #[must_use]
     pub fn with_cors_config(mut self, config: CorsConfig) -> Self {
-        self.middlewares
-            .push(Arc::new(Cors::with_config(config)));
+        self.middlewares.push(Arc::new(Cors::with_config(config)));
         self
     }
 
@@ -219,4 +216,3 @@ mod tests {
         assert!(!builder.is_empty());
     }
 }
-

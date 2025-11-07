@@ -28,7 +28,9 @@ pub use client::{FarpClient, FarpClientConfig};
 pub use discovery::DiscoveryWatcher;
 pub use federation::{FederatedSchema, SchemaFederation};
 pub use fetcher::{RegistryBackend, SchemaFetcher};
-pub use manifest::{SchemaManifest, ManifestDiff, SchemaChangeDiff, calculate_schema_checksum, diff_manifests};
+pub use manifest::{
+    calculate_schema_checksum, diff_manifests, ManifestDiff, SchemaChangeDiff, SchemaManifest,
+};
 pub use registry::{SchemaRegistry, ServiceRegistration};
 pub use route_generator::{GeneratedRoute, RouteGenerator, RouteMetadata};
 pub use schema::{SchemaDescriptor as LegacySchemaDescriptor, SchemaFormat, SchemaProvider};
@@ -43,9 +45,8 @@ pub mod prelude {
     pub use crate::api::{FarpApiHandler, RegistrationRequest, RegistrationResponse};
     pub use crate::client::{FarpClient, FarpClientConfig};
     pub use crate::federation::{FederatedSchema, SchemaFederation};
-    pub use crate::manifest::{SchemaManifest, ManifestDiff, SchemaChangeDiff};
+    pub use crate::manifest::{ManifestDiff, SchemaChangeDiff, SchemaManifest};
     pub use crate::registry::{SchemaRegistry, ServiceRegistration};
     pub use crate::route_generator::{GeneratedRoute, RouteGenerator, RouteMetadata};
     pub use crate::schema::{SchemaDescriptor, SchemaFormat, SchemaProvider};
 }
-

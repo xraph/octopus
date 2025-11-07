@@ -2,8 +2,8 @@
 
 use async_trait::async_trait;
 use http::{Method, StatusCode, Uri};
-use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
+use hyper_util::client::legacy::Client;
 use hyper_util::rt::TokioExecutor;
 use std::collections::HashMap;
 use std::fmt;
@@ -191,9 +191,7 @@ impl HealthCheck for HttpHealthCheck {
             }
         };
 
-        let mut req_builder = http::Request::builder()
-            .method(&self.method)
-            .uri(uri);
+        let mut req_builder = http::Request::builder().method(&self.method).uri(uri);
 
         // Add custom headers
         for (key, value) in &self.headers {
@@ -337,7 +335,6 @@ impl HealthChecker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
 
     #[tokio::test]
     async fn test_health_check_result() {

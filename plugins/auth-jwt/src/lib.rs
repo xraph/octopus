@@ -31,15 +31,15 @@ pub struct Claims {
 pub struct JwtConfig {
     /// JWT secret key
     pub secret: String,
-    
+
     /// Algorithm (HS256, HS384, HS512, RS256, etc.)
     #[serde(default = "default_algorithm")]
     pub algorithm: String,
-    
+
     /// Header name for JWT token
     #[serde(default = "default_header_name")]
     pub header_name: String,
-    
+
     /// Required scopes (if any)
     #[serde(default)]
     pub required_scopes: Vec<String>,
@@ -81,17 +81,17 @@ impl JwtAuthPlugin {
             "HS512" => Algorithm::HS512,
             _ => Algorithm::HS256,
         };
-        
+
         let mut validation = Validation::new(algorithm);
         validation.validate_exp = true;
-        
+
         let decoding_key = DecodingKey::from_secret(config.secret.as_bytes());
-        
+
         let mut metadata = PluginMetadata::new("jwt-auth", "1.0.0");
         metadata.author = "Octopus Team".to_string();
         metadata.description = "JWT authentication middleware".to_string();
         metadata.plugin_type = PluginType::Static;
-        
+
         Ok(Self {
             metadata,
             config,
@@ -99,12 +99,12 @@ impl JwtAuthPlugin {
             decoding_key,
         })
     }
-    
+
     /// Extract token from request
     fn extract_token(&self, req: &Request<Full<Bytes>>) -> Option<String> {
         let header_value = req.headers().get(&self.config.header_name)?;
         let header_str = header_value.to_str().ok()?;
-        
+
         // Support both "Bearer TOKEN" and just "TOKEN"
         if header_str.starts_with("Bearer ") {
             Some(header_str.trim_start_matches("Bearer ").to_string())
@@ -112,21 +112,21 @@ impl JwtAuthPlugin {
             Some(header_str.to_string())
         }
     }
-    
+
     /// Validate JWT token
     fn validate_token(&self, token: &str) -> Result<Claims> {
         let token_data = decode::<Claims>(token, &self.decoding_key, &self.validation)
             .map_err(|e| Error::Authentication(format!("Invalid JWT: {}", e)))?;
-        
+
         Ok(token_data.claims)
     }
-    
+
     /// Check if claims have required scopes
     fn check_scopes(&self, claims: &Claims) -> bool {
         if self.config.required_scopes.is_empty() {
             return true;
         }
-        
+
         self.config
             .required_scopes
             .iter()
@@ -148,7 +148,7 @@ impl Plugin for JwtAuthPlugin {
     fn metadata(&self) -> &PluginMetadata {
         &self.metadata
     }
-    
+
     async fn init(&mut self) -> Result<()> {
         tracing::info!("JWT authentication plugin initialized");
         Ok(())
@@ -159,26 +159,24 @@ impl Plugin for JwtAuthPlugin {
 impl Middleware for JwtAuthPlugin {
     async fn call(&self, req: Request<Full<Bytes>>, next: Next) -> Result<Response<Full<Bytes>>> {
         // Extract token
-        let token = self.extract_token(&req).ok_or_else(|| {
-            Error::Authentication("Missing authentication token".to_string())
-        })?;
-        
+        let token = self
+            .extract_token(&req)
+            .ok_or_else(|| Error::Authentication("Missing authentication token".to_string()))?;
+
         // Validate token
         let claims = self.validate_token(&token)?;
-        
+
         // Check scopes
         if !self.check_scopes(&claims) {
-            return Err(Error::Authorization(
-                "Insufficient permissions".to_string(),
-            ));
+            return Err(Error::Authorization("Insufficient permissions".to_string()));
         }
-        
+
         tracing::debug!(
             user = %claims.sub,
             scopes = ?claims.scopes,
             "Request authenticated"
         );
-        
+
         // Continue with request
         next.run(req).await
     }
@@ -196,7 +194,7 @@ mod tests {
             iat: chrono::Utc::now().timestamp() as usize,
             scopes,
         };
-        
+
         encode(
             &Header::default(),
             &claims,
@@ -211,7 +209,7 @@ mod tests {
             secret: "test-secret".to_string(),
             ..Default::default()
         };
-        
+
         let plugin = JwtAuthPlugin::new(config).unwrap();
         assert_eq!(plugin.metadata().name, "jwt-auth");
     }
@@ -223,10 +221,10 @@ mod tests {
             secret: secret.to_string(),
             ..Default::default()
         };
-        
+
         let plugin = JwtAuthPlugin::new(config).unwrap();
         let token = create_test_token(secret, "user123", vec![]);
-        
+
         let claims = plugin.validate_token(&token).unwrap();
         assert_eq!(claims.sub, "user123");
     }
@@ -238,25 +236,24 @@ mod tests {
             required_scopes: vec!["read".to_string(), "write".to_string()],
             ..Default::default()
         };
-        
+
         let plugin = JwtAuthPlugin::new(config).unwrap();
-        
+
         let claims_with_scopes = Claims {
             sub: "user".to_string(),
             exp: 0,
             iat: 0,
             scopes: vec!["read".to_string(), "write".to_string(), "admin".to_string()],
         };
-        
+
         let claims_without_scopes = Claims {
             sub: "user".to_string(),
             exp: 0,
             iat: 0,
             scopes: vec!["read".to_string()],
         };
-        
+
         assert!(plugin.check_scopes(&claims_with_scopes));
         assert!(!plugin.check_scopes(&claims_without_scopes));
     }
 }
-

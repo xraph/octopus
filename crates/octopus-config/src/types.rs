@@ -10,23 +10,23 @@ use std::time::Duration;
 pub struct Config {
     /// Gateway configuration
     pub gateway: GatewayConfig,
-    
+
     /// Upstream services
     #[serde(default)]
     pub upstreams: Vec<UpstreamConfig>,
-    
+
     /// Routes
     #[serde(default)]
     pub routes: Vec<RouteConfig>,
-    
+
     /// Plugins
     #[serde(default)]
     pub plugins: Vec<PluginConfig>,
-    
+
     /// FARP (service discovery and auto-routing)
     #[serde(default)]
     pub farp: FarpConfig,
-    
+
     /// Observability
     #[serde(default)]
     pub observability: ObservabilityConfig,
@@ -37,31 +37,31 @@ pub struct Config {
 pub struct GatewayConfig {
     /// Listen address
     pub listen: SocketAddr,
-    
+
     /// Worker threads (0 = auto)
     #[serde(default)]
     pub workers: usize,
-    
+
     /// Request timeout
     #[serde(default = "default_timeout", with = "humantime_serde")]
     pub request_timeout: Duration,
-    
+
     /// Graceful shutdown timeout (wait for in-flight requests)
     #[serde(default = "default_shutdown_timeout", with = "humantime_serde")]
     pub shutdown_timeout: Duration,
-    
+
     /// Max request body size (bytes)
     #[serde(default = "default_max_body_size")]
     pub max_body_size: usize,
-    
+
     /// TLS configuration
     #[serde(default)]
     pub tls: Option<TlsConfig>,
-    
+
     /// Compression configuration
     #[serde(default)]
     pub compression: CompressionConfig,
-    
+
     /// Internal route prefix (default: "__")
     /// Internal endpoints like admin, metrics, farp will use this prefix
     /// Example: "/__admin", "/__metrics", "/__farp"
@@ -78,26 +78,26 @@ fn default_internal_prefix() -> Option<String> {
 pub struct TlsConfig {
     /// Certificate file path
     pub cert_file: String,
-    
+
     /// Private key file path
     pub key_file: String,
-    
+
     /// Optional client CA certificate for mTLS
     #[serde(default)]
     pub client_ca_file: Option<String>,
-    
+
     /// Require client certificates (mutual TLS)
     #[serde(default)]
     pub require_client_cert: bool,
-    
+
     /// Minimum TLS version (1.2 or 1.3)
     #[serde(default = "default_min_tls_version")]
     pub min_tls_version: String,
-    
+
     /// Enable certificate reloading
     #[serde(default = "default_tls_cert_reload")]
     pub enable_cert_reload: bool,
-    
+
     /// Certificate reload check interval in seconds
     #[serde(default = "default_tls_reload_interval")]
     pub reload_interval_secs: u64,
@@ -130,9 +130,9 @@ impl Default for CompressionConfig {
             level: 6,
             min_size: 1024, // 1KB
             algorithms: vec![
-                "br".to_string(),    // brotli (best compression)
-                "zstd".to_string(),  // zstd (fast)
-                "gzip".to_string(),  // gzip (universal)
+                "br".to_string(),   // brotli (best compression)
+                "zstd".to_string(), // zstd (fast)
+                "gzip".to_string(), // gzip (universal)
             ],
         }
     }
@@ -144,15 +144,15 @@ impl Default for CompressionConfig {
 pub struct FarpConfig {
     /// Enable FARP service discovery and auto-routing
     pub enabled: bool,
-    
+
     /// Watch interval for discovering service changes
     #[serde(with = "humantime_serde")]
     pub watch_interval: Duration,
-    
+
     /// Schema cache TTL
     #[serde(with = "humantime_serde")]
     pub schema_cache_ttl: Duration,
-    
+
     /// Discovery backend configuration
     #[serde(skip_serializing_if = "Option::is_none")]
     pub discovery: Option<FarpDiscoveryConfig>,
@@ -283,18 +283,18 @@ fn default_true() -> bool {
 pub struct UpstreamConfig {
     /// Unique name
     pub name: String,
-    
+
     /// Service instances
     pub instances: Vec<InstanceConfig>,
-    
+
     /// Load balancing policy
     #[serde(default = "default_lb_policy")]
     pub lb_policy: String,
-    
+
     /// Health check configuration
     #[serde(default)]
     pub health_check: Option<HealthCheckConfig>,
-    
+
     /// Circuit breaker configuration
     #[serde(default)]
     pub circuit_breaker: Option<CircuitBreakerConfig>,
@@ -305,17 +305,17 @@ pub struct UpstreamConfig {
 pub struct InstanceConfig {
     /// Instance ID
     pub id: String,
-    
+
     /// Host address
     pub host: String,
-    
+
     /// Port
     pub port: u16,
-    
+
     /// Weight for load balancing
     #[serde(default = "default_weight")]
     pub weight: u32,
-    
+
     /// Metadata
     #[serde(default)]
     pub metadata: HashMap<String, String>,
@@ -327,23 +327,23 @@ pub struct HealthCheckConfig {
     /// Check type (http, tcp, grpc)
     #[serde(rename = "type")]
     pub check_type: String,
-    
+
     /// Path for HTTP checks
     #[serde(default)]
     pub path: Option<String>,
-    
+
     /// Interval between checks
     #[serde(with = "humantime_serde")]
     pub interval: Duration,
-    
+
     /// Timeout for each check
     #[serde(with = "humantime_serde")]
     pub timeout: Duration,
-    
+
     /// Healthy threshold
     #[serde(default = "default_healthy_threshold")]
     pub healthy_threshold: u32,
-    
+
     /// Unhealthy threshold
     #[serde(default = "default_unhealthy_threshold")]
     pub unhealthy_threshold: u32,
@@ -354,10 +354,10 @@ pub struct HealthCheckConfig {
 pub struct CircuitBreakerConfig {
     /// Error threshold percentage
     pub error_threshold: f32,
-    
+
     /// Minimum requests before activation
     pub min_requests: u32,
-    
+
     /// Open state timeout
     #[serde(with = "humantime_serde")]
     pub timeout: Duration,
@@ -368,26 +368,26 @@ pub struct CircuitBreakerConfig {
 pub struct RouteConfig {
     /// Route path pattern
     pub path: String,
-    
+
     /// HTTP methods
     #[serde(default)]
     pub methods: Vec<String>,
-    
+
     /// Upstream name
     pub upstream: String,
-    
+
     /// Priority (higher = matched first)
     #[serde(default)]
     pub priority: i32,
-    
+
     /// Strip prefix
     #[serde(default)]
     pub strip_prefix: Option<String>,
-    
+
     /// Add prefix
     #[serde(default)]
     pub add_prefix: Option<String>,
-    
+
     /// Metadata
     #[serde(default)]
     pub metadata: HashMap<String, String>,
@@ -398,19 +398,19 @@ pub struct RouteConfig {
 pub struct PluginConfig {
     /// Plugin name
     pub name: String,
-    
+
     /// Plugin type (static, dynamic)
     #[serde(default = "default_plugin_type")]
     pub plugin_type: String,
-    
+
     /// Enabled
     #[serde(default = "default_enabled")]
     pub enabled: bool,
-    
+
     /// Priority (higher = runs first)
     #[serde(default)]
     pub priority: i32,
-    
+
     /// Configuration
     #[serde(default)]
     pub config: HashMap<String, serde_json::Value>,
@@ -422,10 +422,10 @@ pub struct PluginConfig {
 pub struct ObservabilityConfig {
     /// Logging configuration
     pub logging: LoggingConfig,
-    
+
     /// Metrics configuration
     pub metrics: MetricsConfig,
-    
+
     /// Tracing configuration
     pub tracing: TracingConfig,
 }
@@ -435,7 +435,7 @@ pub struct ObservabilityConfig {
 pub struct LoggingConfig {
     /// Log level
     pub level: String,
-    
+
     /// Log format (json, text)
     pub format: String,
 }
@@ -445,7 +445,7 @@ pub struct LoggingConfig {
 pub struct MetricsConfig {
     /// Enable metrics
     pub enabled: bool,
-    
+
     /// Metrics endpoint
     pub endpoint: String,
 }
@@ -455,7 +455,7 @@ pub struct MetricsConfig {
 pub struct TracingConfig {
     /// Enable tracing
     pub enabled: bool,
-    
+
     /// Jaeger endpoint
     pub jaeger_endpoint: Option<String>,
 }
@@ -510,11 +510,7 @@ fn default_compression_min_size() -> usize {
 }
 
 fn default_compression_algorithms() -> Vec<String> {
-    vec![
-        "br".to_string(),
-        "zstd".to_string(),
-        "gzip".to_string(),
-    ]
+    vec!["br".to_string(), "zstd".to_string(), "gzip".to_string()]
 }
 
 fn default_min_tls_version() -> String {
@@ -568,5 +564,3 @@ mod tests {
         assert!(!config.tracing.enabled);
     }
 }
-
-

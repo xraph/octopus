@@ -24,15 +24,15 @@ pub mod types;
 pub mod upstream;
 
 pub use error::{Error, Result};
-pub use middleware::{Middleware, Next, Body};
+pub use middleware::{Body, Middleware, Next};
 pub use request::RequestContext;
 pub use response::ResponseBuilder;
 pub use types::*;
 pub use upstream::{UpstreamCluster, UpstreamInstance};
 
 // Re-export commonly used HTTP types
-pub use http::{Request, Response, StatusCode, Method};
 pub use bytes::Bytes;
+pub use http::{Method, Request, Response, StatusCode};
 
 /// Re-export commonly used types
 pub mod prelude {
@@ -52,5 +52,3 @@ mod tests {
         assert_eq!(2 + 2, 4);
     }
 }
-
-

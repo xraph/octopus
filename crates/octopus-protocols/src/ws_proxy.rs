@@ -8,9 +8,7 @@ use http::{HeaderMap, Uri};
 use octopus_core::{Error, Result};
 use tokio::net::TcpStream;
 use tokio_tungstenite::{
-    connect_async,
-    tungstenite::protocol::Message,
-    MaybeTlsStream, WebSocketStream,
+    connect_async, tungstenite::protocol::Message, MaybeTlsStream, WebSocketStream,
 };
 use tracing::{debug, error, info, warn};
 
@@ -44,9 +42,10 @@ impl WebSocketProxy {
         );
 
         // Connect to upstream WebSocket server
-        let (upstream_stream, _response) = connect_async(upstream_uri.to_string())
-            .await
-            .map_err(|e| Error::Internal(format!("Failed to connect to upstream WebSocket: {}", e)))?;
+        let (upstream_stream, _response) =
+            connect_async(upstream_uri.to_string()).await.map_err(|e| {
+                Error::Internal(format!("Failed to connect to upstream WebSocket: {}", e))
+            })?;
 
         debug!("WebSocket connection to upstream established");
 
@@ -138,4 +137,3 @@ mod tests {
         assert_eq!(proxy.max_message_size, 64 * 1024 * 1024);
     }
 }
-

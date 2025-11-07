@@ -80,26 +80,20 @@ impl RequestBuilder {
     /// Set JSON body
     pub fn json_body(mut self, value: &serde_json::Value) -> Self {
         self.body = value.to_string().into_bytes();
-        self.headers.insert(
-            "content-type".to_string(),
-            "application/json".to_string(),
-        );
+        self.headers
+            .insert("content-type".to_string(), "application/json".to_string());
         self
     }
 
     /// Build the HTTP request
     pub fn build(self) -> Request<Full<Bytes>> {
-        let mut builder = Request::builder()
-            .method(self.method)
-            .uri(self.uri);
+        let mut builder = Request::builder().method(self.method).uri(self.uri);
 
         for (name, value) in self.headers {
             builder = builder.header(name, value);
         }
 
-        builder
-            .body(Full::new(Bytes::from(self.body)))
-            .unwrap()
+        builder.body(Full::new(Bytes::from(self.body))).unwrap()
     }
 
     /// Build with a request context
@@ -186,10 +180,8 @@ impl ResponseBuilder {
     /// Set JSON body
     pub fn json_body(mut self, value: &serde_json::Value) -> Self {
         self.body = value.to_string().into_bytes();
-        self.headers.insert(
-            "content-type".to_string(),
-            "application/json".to_string(),
-        );
+        self.headers
+            .insert("content-type".to_string(), "application/json".to_string());
         self
     }
 
@@ -201,18 +193,16 @@ impl ResponseBuilder {
             builder = builder.header(name, value);
         }
 
-        builder
-            .body(Full::new(Bytes::from(self.body)))
-            .unwrap()
+        builder.body(Full::new(Bytes::from(self.body))).unwrap()
     }
 
     /// Build with a response context
-    pub fn build_with_context(self, request_id: String) -> (Response<Full<Bytes>>, ResponseContext) {
-        let ctx = ResponseContext::new(
-            request_id,
-            Duration::from_millis(100),
-            self.status.as_u16(),
-        );
+    pub fn build_with_context(
+        self,
+        request_id: String,
+    ) -> (Response<Full<Bytes>>, ResponseContext) {
+        let ctx =
+            ResponseContext::new(request_id, Duration::from_millis(100), self.status.as_u16());
         (self.build(), ctx)
     }
 }
@@ -242,9 +232,7 @@ mod tests {
     #[test]
     fn test_request_builder_json() {
         let json = serde_json::json!({"key": "value"});
-        let req = RequestBuilder::post("/api")
-            .json_body(&json)
-            .build();
+        let req = RequestBuilder::post("/api").json_body(&json).build();
 
         assert_eq!(req.method(), Method::POST);
         assert_eq!(
@@ -267,9 +255,7 @@ mod tests {
     #[test]
     fn test_response_builder_json() {
         let json = serde_json::json!({"status": "success"});
-        let res = ResponseBuilder::ok()
-            .json_body(&json)
-            .build();
+        let res = ResponseBuilder::ok().json_body(&json).build();
 
         assert_eq!(
             res.headers().get("content-type").unwrap(),
@@ -277,4 +263,3 @@ mod tests {
         );
     }
 }
-

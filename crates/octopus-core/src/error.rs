@@ -1,6 +1,5 @@
 //! Error types for Octopus Gateway
 
-
 /// Result type alias using [`Error`]
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -108,9 +107,7 @@ impl Error {
         match self {
             Error::Http(_) | Error::InvalidRequest(_) => StatusCode::BAD_REQUEST,
             Error::RouteNotFound(_) => StatusCode::NOT_FOUND,
-            Error::UpstreamConnection(_) | Error::UpstreamTimeout => {
-                StatusCode::BAD_GATEWAY
-            }
+            Error::UpstreamConnection(_) | Error::UpstreamTimeout => StatusCode::BAD_GATEWAY,
             Error::NoHealthyUpstream => StatusCode::SERVICE_UNAVAILABLE,
             Error::Authentication(_) => StatusCode::UNAUTHORIZED,
             Error::Authorization(_) => StatusCode::FORBIDDEN,
@@ -157,5 +154,3 @@ mod tests {
         assert!(err.to_string().contains("jwt-auth"));
     }
 }
-
-

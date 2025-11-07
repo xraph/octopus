@@ -33,10 +33,7 @@ pub struct HotReloadWatcher {
 
 impl HotReloadWatcher {
     /// Create a new hot reload watcher
-    pub fn new(
-        manager: Arc<PluginManager>,
-        config_dir: impl Into<PathBuf>,
-    ) -> Self {
+    pub fn new(manager: Arc<PluginManager>, config_dir: impl Into<PathBuf>) -> Self {
         Self {
             manager,
             config_dir: config_dir.into(),
@@ -63,15 +60,11 @@ impl HotReloadWatcher {
             },
             Config::default().with_poll_interval(Duration::from_secs(2)),
         )
-        .map_err(|e| {
-            PluginRuntimeError::other(format!("Failed to create file watcher: {}", e))
-        })?;
+        .map_err(|e| PluginRuntimeError::other(format!("Failed to create file watcher: {}", e)))?;
 
         watcher
             .watch(&self.config_dir, RecursiveMode::Recursive)
-            .map_err(|e| {
-                PluginRuntimeError::other(format!("Failed to watch directory: {}", e))
-            })?;
+            .map_err(|e| PluginRuntimeError::other(format!("Failed to watch directory: {}", e)))?;
 
         self.watcher = Some(watcher);
 
@@ -94,9 +87,10 @@ impl HotReloadWatcher {
     ///
     /// This method will block until the watcher is stopped.
     pub async fn run(&mut self) -> Result<()> {
-        let rx = self.rx.take().ok_or_else(|| {
-            PluginRuntimeError::invalid_state("Watcher not started")
-        })?;
+        let rx = self
+            .rx
+            .take()
+            .ok_or_else(|| PluginRuntimeError::invalid_state("Watcher not started"))?;
 
         let mut last_reload = std::time::Instant::now();
         let debounce = self.debounce_duration;
@@ -114,16 +108,19 @@ impl HotReloadWatcher {
                         }
 
                         // Only process config files (json, yaml, toml)
-                        let should_process = matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_))
-                            && event.paths.iter().any(|path| {
-                                path.extension()
-                                    .and_then(|s| s.to_str())
-                                    .map(|ext| matches!(ext, "json" | "yaml" | "yml" | "toml"))
-                                    .unwrap_or(false)
-                            });
+                        let should_process =
+                            matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_))
+                                && event.paths.iter().any(|path| {
+                                    path.extension()
+                                        .and_then(|s| s.to_str())
+                                        .map(|ext| matches!(ext, "json" | "yaml" | "yml" | "toml"))
+                                        .unwrap_or(false)
+                                });
 
                         if should_process {
-                            if let Err(e) = Self::handle_event_static(event, &manager, &config_dir).await {
+                            if let Err(e) =
+                                Self::handle_event_static(event, &manager, &config_dir).await
+                            {
                                 error!(error = %e, "Failed to handle file change event");
                             } else {
                                 last_reload = std::time::Instant::now();
@@ -197,9 +194,7 @@ impl HotReloadWatcher {
     }
 
     fn extract_plugin_name_static(path: &Path) -> Option<String> {
-        path.file_stem()
-            .and_then(|s| s.to_str())
-            .map(String::from)
+        path.file_stem().and_then(|s| s.to_str()).map(String::from)
     }
 
     /// Load configuration from file
@@ -226,7 +221,8 @@ impl HotReloadWatcher {
             }
             "toml" => {
                 // Convert TOML to JSON value
-                let toml: toml::Value = content.parse()
+                let toml: toml::Value = content
+                    .parse()
                     .map_err(|e| PluginRuntimeError::config(format!("TOML parse error: {}", e)))?;
                 serde_json::to_value(toml).map_err(Into::into)
             }
@@ -260,10 +256,7 @@ mod tests {
 
     #[test]
     fn test_extract_plugin_name() {
-        let watcher = HotReloadWatcher::new(
-            Arc::new(PluginManager::new()),
-            "/tmp/plugins",
-        );
+        let watcher = HotReloadWatcher::new(Arc::new(PluginManager::new()), "/tmp/plugins");
 
         let path = PathBuf::from("/tmp/plugins/my-plugin.yaml");
         assert_eq!(
@@ -272,18 +265,12 @@ mod tests {
         );
 
         let path = PathBuf::from("/tmp/plugins/auth.json");
-        assert_eq!(
-            watcher.extract_plugin_name(&path),
-            Some("auth".to_string())
-        );
+        assert_eq!(watcher.extract_plugin_name(&path), Some("auth".to_string()));
     }
 
     #[test]
     fn test_should_process_event() {
-        let watcher = HotReloadWatcher::new(
-            Arc::new(PluginManager::new()),
-            "/tmp/plugins",
-        );
+        let watcher = HotReloadWatcher::new(Arc::new(PluginManager::new()), "/tmp/plugins");
 
         let event = Event::new(EventKind::Modify(notify::event::ModifyKind::Data(
             notify::event::DataChange::Content,
@@ -300,4 +287,3 @@ mod tests {
         assert!(!watcher.should_process_event(&event));
     }
 }
-

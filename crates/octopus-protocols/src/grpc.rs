@@ -14,7 +14,7 @@ use tracing::{debug, warn};
 pub struct GrpcHandler {
     /// Configured services and their upstreams
     services: HashMap<String, String>,
-    
+
     /// Enable gRPC reflection
     #[allow(dead_code)]
     enable_reflection: bool,
@@ -129,7 +129,8 @@ impl ProtocolHandler for GrpcHandler {
         // Check if service is registered
         if !self.services.is_empty() && !self.services.contains_key(&service) {
             warn!(service = %service, "Service not found");
-            return Self::error_response(5, &format!("Service '{}' not found", service)); // NOT_FOUND
+            return Self::error_response(5, &format!("Service '{}' not found", service));
+            // NOT_FOUND
         }
 
         // In a real implementation, this would:
@@ -248,4 +249,3 @@ mod tests {
         assert!(!handler.can_handle(&http_req));
     }
 }
-

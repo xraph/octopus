@@ -91,11 +91,11 @@ mod tests {
     #[tokio::test]
     async fn test_manager_register() {
         let manager = PluginManager::new();
-        
+
         let plugin = Box::new(TestPlugin {
             metadata: PluginMetadata::new("test", "1.0.0"),
         });
-        
+
         manager.register(plugin).await.unwrap();
         assert_eq!(manager.plugin_count().await, 1);
     }
@@ -103,13 +103,13 @@ mod tests {
     #[tokio::test]
     async fn test_manager_lifecycle() {
         let manager = PluginManager::new();
-        
+
         let plugin = Box::new(TestPlugin {
             metadata: PluginMetadata::new("test", "1.0.0"),
         });
-        
+
         manager.register(plugin).await.unwrap();
-        
+
         // Test lifecycle methods
         manager.init_all().await.unwrap();
         manager.start_all().await.unwrap();
@@ -117,5 +117,3 @@ mod tests {
         manager.shutdown_all().await.unwrap();
     }
 }
-
-

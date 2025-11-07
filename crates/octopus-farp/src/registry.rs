@@ -78,7 +78,7 @@ impl SchemaRegistry {
     pub fn new() -> Self {
         Self::with_rate_limit(60)
     }
-    
+
     /// Create a new schema registry with custom rate limit
     pub fn with_rate_limit(max_updates_per_minute: u32) -> Self {
         Self {
@@ -87,18 +87,19 @@ impl SchemaRegistry {
             max_updates_per_minute,
         }
     }
-    
+
     /// Check rate limit for a service
     fn check_rate_limit(&self, service_name: &str) -> Result<()> {
         // Get or create rate limiter for this service
-        let limiter = self.rate_limiters.entry(service_name.to_string())
+        let limiter = self
+            .rate_limiters
+            .entry(service_name.to_string())
             .or_insert_with(|| {
-                let quota = Quota::per_minute(
-                    NonZeroU32::new(self.max_updates_per_minute).unwrap()
-                );
+                let quota =
+                    Quota::per_minute(NonZeroU32::new(self.max_updates_per_minute).unwrap());
                 Arc::new(RateLimiter::direct(quota))
             });
-        
+
         // Check if we can proceed
         match limiter.check() {
             Ok(_) => Ok(()),
@@ -119,13 +120,13 @@ impl SchemaRegistry {
     /// Register a service
     pub fn register_service(&self, manifest: SchemaManifest) -> Result<()> {
         let service_name = manifest.service_name.clone();
-        
+
         // Check rate limit for updates
         self.check_rate_limit(&service_name)?;
-        
+
         let registration = ServiceRegistration::new(manifest);
         self.services.insert(service_name.clone(), registration);
-        
+
         info!(service = %service_name, "Service registered");
         Ok(())
     }
@@ -133,16 +134,19 @@ impl SchemaRegistry {
     /// Update a service registration
     pub fn update_service(&self, manifest: SchemaManifest) -> Result<()> {
         let service_name = manifest.service_name.clone();
-        
+
         // Check rate limit for updates
         self.check_rate_limit(&service_name)?;
-        
+
         if let Some(mut reg) = self.services.get_mut(&service_name) {
             reg.update(manifest);
             info!(service = %service_name, "Service updated");
             Ok(())
         } else {
-            Err(Error::Farp(format!("Service '{}' not registered", service_name)))
+            Err(Error::Farp(format!(
+                "Service '{}' not registered",
+                service_name
+            )))
         }
     }
 
@@ -164,7 +168,10 @@ impl SchemaRegistry {
 
     /// List all registered services
     pub fn list_services(&self) -> Vec<String> {
-        self.services.iter().map(|entry| entry.key().clone()).collect()
+        self.services
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect()
     }
 
     /// Add a schema to a service
@@ -173,7 +180,10 @@ impl SchemaRegistry {
             reg.add_schema(schema);
             Ok(())
         } else {
-            Err(Error::Farp(format!("Service '{}' not registered", service_name)))
+            Err(Error::Farp(format!(
+                "Service '{}' not registered",
+                service_name
+            )))
         }
     }
 
@@ -277,5 +287,3 @@ mod tests {
         assert!(services.contains(&"service-3".to_string()));
     }
 }
-
-

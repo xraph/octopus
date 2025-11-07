@@ -1,7 +1,7 @@
 //! Compression middleware implementation
 
+use crate::compressor::{CompressionAlgorithm, Compressor};
 use crate::config::CompressionConfig;
-use crate::compressor::{Compressor, CompressionAlgorithm};
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::{HeaderValue, Request, Response, StatusCode};
@@ -40,10 +40,7 @@ impl Middleware for CompressionMiddleware {
             .and_then(|v| v.to_str().ok());
 
         // Negotiate compression algorithm
-        let algorithm = Compressor::negotiate_algorithm(
-            accept_encoding,
-            &self.config.algorithms,
-        );
+        let algorithm = Compressor::negotiate_algorithm(accept_encoding, &self.config.algorithms);
 
         // If no algorithm is negotiated, pass through
         let Some(algo) = algorithm else {
@@ -82,7 +79,10 @@ impl Middleware for CompressionMiddleware {
 /// Check if response should be compressed
 fn should_compress_response(response: &Response<Body>, config: &CompressionConfig) -> bool {
     // Don't compress if already encoded
-    if response.headers().contains_key(http::header::CONTENT_ENCODING) {
+    if response
+        .headers()
+        .contains_key(http::header::CONTENT_ENCODING)
+    {
         return false;
     }
 
@@ -112,13 +112,15 @@ async fn compress_response(
     let (mut parts, body) = response.into_parts();
 
     // Collect the body
-    let body_bytes = body.collect().await
+    let body_bytes = body
+        .collect()
+        .await
         .map_err(|e| octopus_core::Error::Internal(format!("Failed to read body: {}", e)))?
         .to_bytes();
 
     // Check if body is large enough to compress
     let original_size = body_bytes.len();
-    
+
     // Compress the body
     let compressed = Compressor::compress(&body_bytes, algorithm, level)
         .map_err(|e| octopus_core::Error::Internal(format!("Compression failed: {}", e)))?;
@@ -140,7 +142,7 @@ async fn compress_response(
             HeaderValue::from_static(encoding),
         );
     }
-    
+
     parts.headers.insert(
         http::header::CONTENT_LENGTH,
         HeaderValue::from_str(&final_body.len().to_string())
@@ -173,15 +175,13 @@ mod tests {
         let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([]);
         let next = Next::with_handler(
             stack,
-            Box::new(|_req| {
-                Box::pin(async {
-                    Ok(Response::new(Body::from("test")))
-                })
-            }),
+            Box::new(|_req| Box::pin(async { Ok(Response::new(Body::from("test"))) })),
         );
 
         let result = middleware.call(req, next).await.unwrap();
-        assert!(!result.headers().contains_key(http::header::CONTENT_ENCODING));
+        assert!(!result
+            .headers()
+            .contains_key(http::header::CONTENT_ENCODING));
     }
 
     #[tokio::test]
@@ -189,22 +189,18 @@ mod tests {
         let config = CompressionConfig::default();
         let middleware = CompressionMiddleware::new(config);
 
-        let req = Request::builder()
-            .body(Body::from(Bytes::new()))
-            .unwrap();
+        let req = Request::builder().body(Body::from(Bytes::new())).unwrap();
 
         let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([]);
         let next = Next::with_handler(
             stack,
-            Box::new(|_req| {
-                Box::pin(async {
-                    Ok(Response::new(Body::from("test")))
-                })
-            }),
+            Box::new(|_req| Box::pin(async { Ok(Response::new(Body::from("test"))) })),
         );
 
         let result = middleware.call(req, next).await.unwrap();
-        assert!(!result.headers().contains_key(http::header::CONTENT_ENCODING));
+        assert!(!result
+            .headers()
+            .contains_key(http::header::CONTENT_ENCODING));
     }
 
     #[tokio::test]
@@ -236,4 +232,3 @@ mod tests {
         assert!(!should_compress_response(&response, &config));
     }
 }
-

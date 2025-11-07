@@ -186,5 +186,3 @@ mod tests {
         assert_eq!(manager.active_count(), 0);
     }
 }
-
-

@@ -4,7 +4,7 @@
 //! common web vulnerabilities (XSS, clickjacking, MIME sniffing, etc.)
 
 use async_trait::async_trait;
-use http::{Request, Response, HeaderName, HeaderValue};
+use http::{HeaderName, HeaderValue, Request, Response};
 use octopus_core::{Body, Middleware, Next, Result};
 use serde::{Deserialize, Serialize};
 
@@ -161,8 +161,9 @@ impl SecurityHeaders {
     ) -> Result<()> {
         if let Some(val) = value {
             let header_name = HeaderName::from_static(name);
-            let header_value = HeaderValue::from_str(val)
-                .map_err(|e| octopus_core::Error::Internal(format!("Invalid {} header: {}", name, e)))?;
+            let header_value = HeaderValue::from_str(val).map_err(|e| {
+                octopus_core::Error::Internal(format!("Invalid {} header: {}", name, e))
+            })?;
             response.headers_mut().insert(header_name, header_value);
         }
         Ok(())
@@ -230,9 +231,9 @@ impl Middleware for SecurityHeaders {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytes::Bytes;
     use http::StatusCode;
     use http_body_util::Full;
-    use bytes::Bytes;
     use std::sync::Arc;
 
     type TestBody = Full<Bytes>;
@@ -255,8 +256,7 @@ mod tests {
     async fn test_default_security_headers() {
         let security = SecurityHeaders::default();
         let handler = TestHandler;
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(security), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(security), Arc::new(handler)]);
 
         let req = Request::builder()
             .uri("/test")
@@ -292,8 +292,7 @@ mod tests {
     async fn test_strict_security_headers() {
         let security = SecurityHeaders::strict();
         let handler = TestHandler;
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(security), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(security), Arc::new(handler)]);
 
         let req = Request::builder()
             .uri("/test")
@@ -330,8 +329,7 @@ mod tests {
     async fn test_permissive_security_headers() {
         let security = SecurityHeaders::permissive();
         let handler = TestHandler;
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(security), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(security), Arc::new(handler)]);
 
         let req = Request::builder()
             .uri("/test")
@@ -369,8 +367,7 @@ mod tests {
 
         let security = SecurityHeaders::with_config(config);
         let handler = TestHandler;
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(security), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(security), Arc::new(handler)]);
 
         let req = Request::builder()
             .uri("/test")
@@ -401,4 +398,3 @@ mod tests {
         assert!(!response.headers().contains_key("x-xss-protection"));
     }
 }
-

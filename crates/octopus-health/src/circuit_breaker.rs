@@ -124,7 +124,7 @@ impl CircuitBreakerInstance {
         // Check if we should open the circuit
         if total >= self.config.min_requests {
             let failure_rate = self.failure_count.load(Ordering::Relaxed) as f64 / total as f64;
-            
+
             if failure_rate >= self.config.failure_threshold {
                 match current_state {
                     CircuitState::Closed => {
@@ -311,9 +311,7 @@ impl CircuitBreaker {
 
     /// Get metrics for an instance
     pub fn get_metrics(&self, instance_id: &str) -> Option<CircuitBreakerMetrics> {
-        self.instances
-            .get(instance_id)
-            .map(|inst| inst.metrics())
+        self.instances.get(instance_id).map(|inst| inst.metrics())
     }
 
     /// Get metrics for all instances

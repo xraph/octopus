@@ -23,7 +23,11 @@ pub struct User {
 
 impl User {
     /// Create a new user
-    pub fn new(id: impl Into<String>, username: impl Into<String>, email: impl Into<String>) -> Self {
+    pub fn new(
+        id: impl Into<String>,
+        username: impl Into<String>,
+        email: impl Into<String>,
+    ) -> Self {
         Self {
             id: id.into(),
             username: username.into(),
@@ -87,7 +91,8 @@ impl UserStore {
 
     /// Add a user to the store
     pub fn add_user(&self, user: User, password_hash: String) {
-        self.credentials.insert(user.username.clone(), password_hash);
+        self.credentials
+            .insert(user.username.clone(), password_hash);
         self.users.insert(user.id.clone(), user);
     }
 
@@ -128,7 +133,9 @@ impl AuthProvider for UserStore {
 
     async fn validate_token(&self, _token: &str) -> Result<User> {
         // Token validation would be done by JWT plugin or similar
-        Err(Error::Authentication("Token validation not implemented".to_string()))
+        Err(Error::Authentication(
+            "Token validation not implemented".to_string(),
+        ))
     }
 }
 
@@ -152,8 +159,7 @@ mod tests {
 
     #[test]
     fn test_user_has_any_role() {
-        let user = User::new("1", "alice", "alice@example.com")
-            .with_role("admin");
+        let user = User::new("1", "alice", "alice@example.com").with_role("admin");
 
         assert!(user.has_any_role(&vec!["admin".to_string(), "user".to_string()]));
         assert!(!user.has_any_role(&vec!["superadmin".to_string(), "moderator".to_string()]));
@@ -162,8 +168,7 @@ mod tests {
     #[tokio::test]
     async fn test_user_store() {
         let store = UserStore::new();
-        let user = User::new("1", "alice", "alice@example.com")
-            .with_role("admin");
+        let user = User::new("1", "alice", "alice@example.com").with_role("admin");
 
         store.add_user(user.clone(), "password123".to_string());
 
@@ -181,5 +186,3 @@ mod tests {
         assert!(wrong_pass.is_err());
     }
 }
-
-

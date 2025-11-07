@@ -76,14 +76,13 @@ pub mod prelude {
     pub use crate::config::{BackendConfig, StateConfig};
     pub use crate::error::{Error, Result};
     pub use crate::inmemory::InMemoryBackend;
-    
+
     #[cfg(feature = "redis-backend")]
     pub use crate::redis_backend::RedisBackend;
-    
+
     #[cfg(feature = "postgres-backend")]
     pub use crate::postgres_backend::PostgresBackend;
-    
+
     #[cfg(feature = "hybrid")]
     pub use crate::hybrid::HybridBackend;
 }
-

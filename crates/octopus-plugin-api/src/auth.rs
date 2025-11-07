@@ -160,7 +160,7 @@ pub enum Credentials {
         /// Username
         username: String,
         /// Password
-        password: String
+        password: String,
     },
 
     /// API key
@@ -250,4 +250,3 @@ mod tests {
         assert!(creds.is_api_key());
     }
 }
-

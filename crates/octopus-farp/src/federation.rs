@@ -20,13 +20,13 @@ pub struct SchemaFederation {
 pub struct FederatedSchema {
     /// Schema format
     pub format: SchemaFormat,
-    
+
     /// Combined schema content
     pub content: String,
-    
+
     /// Source schemas
     pub sources: Vec<String>, // service names
-    
+
     /// Last updated
     pub updated_at: std::time::SystemTime,
 }
@@ -40,10 +40,7 @@ impl SchemaFederation {
     }
 
     /// Federate schemas from multiple services
-    pub fn federate_schemas(
-        &self,
-        schemas: Vec<SchemaDescriptor>,
-    ) -> Result<()> {
+    pub fn federate_schemas(&self, schemas: Vec<SchemaDescriptor>) -> Result<()> {
         // Group by format
         let mut by_format: std::collections::HashMap<SchemaFormat, Vec<SchemaDescriptor>> =
             std::collections::HashMap::new();
@@ -107,10 +104,11 @@ impl SchemaFederation {
 
                 // Merge components/schemas
                 if let Some(components) = spec.get("components") {
-                    if let Some(comp_schemas) = components.get("schemas").and_then(|s| s.as_object()) {
-                        let combined_schemas = combined["components"]["schemas"]
-                            .as_object_mut()
-                            .unwrap();
+                    if let Some(comp_schemas) =
+                        components.get("schemas").and_then(|s| s.as_object())
+                    {
+                        let combined_schemas =
+                            combined["components"]["schemas"].as_object_mut().unwrap();
                         for (name, comp_schema) in comp_schemas {
                             // Prefix schema names to avoid conflicts
                             let prefixed_name = format!("{}_{}", schema.service, name);
@@ -225,7 +223,10 @@ impl SchemaFederation {
 
     /// List all federated formats
     pub fn list_formats(&self) -> Vec<SchemaFormat> {
-        self.federated.iter().map(|entry| entry.key().clone()).collect()
+        self.federated
+            .iter()
+            .map(|entry| entry.key().clone())
+            .collect()
     }
 }
 
@@ -243,16 +244,14 @@ mod tests {
     fn test_federation() {
         let federation = SchemaFederation::new();
 
-        let schemas = vec![
-            SchemaDescriptor {
-                id: "service1-schema".to_string(),
-                service: "service1".to_string(),
-                format: SchemaFormat::OpenApi,
-                version: "1.0.0".to_string(),
-                content: r#"{"openapi":"3.0.0","paths":{"/users":{}}}"#.to_string(),
-                checksum: None,
-            },
-        ];
+        let schemas = vec![SchemaDescriptor {
+            id: "service1-schema".to_string(),
+            service: "service1".to_string(),
+            format: SchemaFormat::OpenApi,
+            version: "1.0.0".to_string(),
+            content: r#"{"openapi":"3.0.0","paths":{"/users":{}}}"#.to_string(),
+            checksum: None,
+        }];
 
         federation.federate_schemas(schemas).unwrap();
 
@@ -260,4 +259,3 @@ mod tests {
         assert!(federated.content.contains("openapi"));
     }
 }
-

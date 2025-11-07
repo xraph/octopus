@@ -121,10 +121,8 @@ impl Middleware for RequestId {
             // Generate new ID
             let new_id = self.generate_id();
             // Add to request headers
-            req.headers_mut().insert(
-                self.header_name.clone(),
-                new_id.parse().unwrap(),
-            );
+            req.headers_mut()
+                .insert(self.header_name.clone(), new_id.parse().unwrap());
             new_id
         };
 
@@ -133,10 +131,9 @@ impl Middleware for RequestId {
 
         // Add request ID to response headers if configured
         if self.config.add_to_response {
-            response.headers_mut().insert(
-                self.header_name.clone(),
-                request_id.parse().unwrap(),
-            );
+            response
+                .headers_mut()
+                .insert(self.header_name.clone(), request_id.parse().unwrap());
         }
 
         Ok(response)
@@ -214,10 +211,7 @@ mod tests {
         let response = next.run(req).await.unwrap();
 
         // Should preserve existing ID
-        assert_eq!(
-            response.headers().get("X-Request-ID").unwrap(),
-            existing_id
-        );
+        assert_eq!(response.headers().get("X-Request-ID").unwrap(), existing_id);
     }
 
     #[tokio::test]
