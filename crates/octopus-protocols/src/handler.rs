@@ -25,11 +25,11 @@ pub enum ProtocolType {
 impl fmt::Display for ProtocolType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ProtocolType::Http => write!(f, "http"),
-            ProtocolType::Grpc => write!(f, "grpc"),
-            ProtocolType::WebSocket => write!(f, "websocket"),
-            ProtocolType::Sse => write!(f, "sse"),
-            ProtocolType::GraphQL => write!(f, "graphql"),
+            Self::Http => write!(f, "http"),
+            Self::Grpc => write!(f, "grpc"),
+            Self::WebSocket => write!(f, "websocket"),
+            Self::Sse => write!(f, "sse"),
+            Self::GraphQL => write!(f, "graphql"),
         }
     }
 }

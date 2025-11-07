@@ -33,7 +33,7 @@ impl Default for WebSocketHandler {
 
 impl WebSocketHandler {
     /// Create a new WebSocket handler
-    pub fn new() -> Self {
+    #[must_use] pub const fn new() -> Self {
         Self {
             max_message_size: 64 * 1024 * 1024, // 64 MB
             max_frame_size: 16 * 1024 * 1024,   // 16 MB
@@ -45,12 +45,12 @@ impl WebSocketHandler {
         req.headers()
             .get(header::UPGRADE)
             .and_then(|v| v.to_str().ok())
-            .map_or(false, |v| v.eq_ignore_ascii_case("websocket"))
+            .is_some_and(|v| v.eq_ignore_ascii_case("websocket"))
             && req
                 .headers()
                 .get(header::CONNECTION)
                 .and_then(|v| v.to_str().ok())
-                .map_or(false, |v| {
+                .is_some_and(|v| {
                     v.split(',')
                         .any(|s| s.trim().eq_ignore_ascii_case("upgrade"))
                 })
@@ -136,7 +136,7 @@ impl WebSocketHandler {
         sha1.update(WS_GUID.as_bytes());
         let hash = sha1.finalize();
 
-        general_purpose::STANDARD.encode(&hash)
+        general_purpose::STANDARD.encode(hash)
     }
 }
 

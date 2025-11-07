@@ -32,7 +32,7 @@ impl Default for GrpcHandler {
 
 impl GrpcHandler {
     /// Create a new gRPC handler
-    pub fn new() -> Self {
+    #[must_use] pub fn new() -> Self {
         Self {
             services: HashMap::new(),
             enable_reflection: true,
@@ -41,7 +41,7 @@ impl GrpcHandler {
     }
 
     /// Create gRPC handler with custom configuration
-    pub fn with_config(
+    #[must_use] pub const fn with_config(
         services: HashMap<String, String>,
         enable_reflection: bool,
         max_message_size: usize,
@@ -58,11 +58,11 @@ impl GrpcHandler {
         req.headers()
             .get(header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
-            .map_or(false, |v| v.starts_with("application/grpc"))
+            .is_some_and(|v| v.starts_with("application/grpc"))
     }
 
     /// Extract gRPC service and method from path
-    pub fn parse_grpc_path(path: &str) -> Option<(String, String)> {
+    #[must_use] pub fn parse_grpc_path(path: &str) -> Option<(String, String)> {
         // gRPC paths are in format: /{service}/{method}
         let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
         if parts.len() == 2 {
@@ -88,7 +88,7 @@ impl GrpcHandler {
             .header("grpc-status", status_code.to_string())
             .header("grpc-message", message)
             .body(Full::new(Bytes::new()))
-            .map_err(|e| Error::Internal(format!("Failed to build gRPC error response: {}", e)))
+            .map_err(|e| Error::Internal(format!("Failed to build gRPC error response: {e}")))
     }
 }
 
@@ -116,12 +116,9 @@ impl ProtocolHandler for GrpcHandler {
         let path = req.uri().path();
 
         // Parse service and method
-        let (service, method) = match Self::parse_grpc_path(path) {
-            Some(parsed) => parsed,
-            None => {
-                warn!(path = %path, "Invalid gRPC path format");
-                return Self::error_response(12, "Invalid gRPC path format");
-            }
+        let (service, method) = if let Some(parsed) = Self::parse_grpc_path(path) { parsed } else {
+            warn!(path = %path, "Invalid gRPC path format");
+            return Self::error_response(12, "Invalid gRPC path format");
         };
 
         debug!(service = %service, method = %method, "Handling gRPC request");
@@ -129,7 +126,7 @@ impl ProtocolHandler for GrpcHandler {
         // Check if service is registered
         if !self.services.is_empty() && !self.services.contains_key(&service) {
             warn!(service = %service, "Service not found");
-            return Self::error_response(5, &format!("Service '{}' not found", service));
+            return Self::error_response(5, &format!("Service '{service}' not found"));
             // NOT_FOUND
         }
 
@@ -146,7 +143,7 @@ impl ProtocolHandler for GrpcHandler {
             .header(header::CONTENT_TYPE, "application/grpc")
             .header("grpc-status", "0") // OK
             .body(Full::new(Bytes::new()))
-            .map_err(|e| Error::Internal(format!("Failed to build gRPC response: {}", e)))
+            .map_err(|e| Error::Internal(format!("Failed to build gRPC response: {e}")))
     }
 }
 
@@ -159,23 +156,23 @@ pub mod status_codes {
     pub const CANCELLED: i32 = 1;
     /// UNKNOWN (2)
     pub const UNKNOWN: i32 = 2;
-    /// INVALID_ARGUMENT (3)
+    /// `INVALID_ARGUMENT` (3)
     pub const INVALID_ARGUMENT: i32 = 3;
-    /// DEADLINE_EXCEEDED (4)
+    /// `DEADLINE_EXCEEDED` (4)
     pub const DEADLINE_EXCEEDED: i32 = 4;
-    /// NOT_FOUND (5)
+    /// `NOT_FOUND` (5)
     pub const NOT_FOUND: i32 = 5;
-    /// ALREADY_EXISTS (6)
+    /// `ALREADY_EXISTS` (6)
     pub const ALREADY_EXISTS: i32 = 6;
-    /// PERMISSION_DENIED (7)
+    /// `PERMISSION_DENIED` (7)
     pub const PERMISSION_DENIED: i32 = 7;
-    /// RESOURCE_EXHAUSTED (8)
+    /// `RESOURCE_EXHAUSTED` (8)
     pub const RESOURCE_EXHAUSTED: i32 = 8;
-    /// FAILED_PRECONDITION (9)
+    /// `FAILED_PRECONDITION` (9)
     pub const FAILED_PRECONDITION: i32 = 9;
     /// ABORTED (10)
     pub const ABORTED: i32 = 10;
-    /// OUT_OF_RANGE (11)
+    /// `OUT_OF_RANGE` (11)
     pub const OUT_OF_RANGE: i32 = 11;
     /// UNIMPLEMENTED (12)
     pub const UNIMPLEMENTED: i32 = 12;
@@ -183,7 +180,7 @@ pub mod status_codes {
     pub const INTERNAL: i32 = 13;
     /// UNAVAILABLE (14)
     pub const UNAVAILABLE: i32 = 14;
-    /// DATA_LOSS (15)
+    /// `DATA_LOSS` (15)
     pub const DATA_LOSS: i32 = 15;
     /// UNAUTHENTICATED (16)
     pub const UNAUTHENTICATED: i32 = 16;

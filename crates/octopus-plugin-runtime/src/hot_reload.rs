@@ -60,11 +60,11 @@ impl HotReloadWatcher {
             },
             Config::default().with_poll_interval(Duration::from_secs(2)),
         )
-        .map_err(|e| PluginRuntimeError::other(format!("Failed to create file watcher: {}", e)))?;
+        .map_err(|e| PluginRuntimeError::other(format!("Failed to create file watcher: {e}")))?;
 
         watcher
             .watch(&self.config_dir, RecursiveMode::Recursive)
-            .map_err(|e| PluginRuntimeError::other(format!("Failed to watch directory: {}", e)))?;
+            .map_err(|e| PluginRuntimeError::other(format!("Failed to watch directory: {e}")))?;
 
         self.watcher = Some(watcher);
 
@@ -206,7 +206,7 @@ impl HotReloadWatcher {
     async fn load_config_static(path: &Path) -> Result<serde_json::Value> {
         let content = tokio::fs::read_to_string(path)
             .await
-            .map_err(|e| PluginRuntimeError::other(format!("Failed to read config: {}", e)))?;
+            .map_err(|e| PluginRuntimeError::other(format!("Failed to read config: {e}")))?;
 
         // Parse based on file extension
         let extension = path.extension().and_then(|s| s.to_str()).unwrap_or("");
@@ -216,19 +216,18 @@ impl HotReloadWatcher {
             "yaml" | "yml" => {
                 // Convert YAML to JSON value
                 let yaml: serde_json::Value = serde_yaml::from_str(&content)
-                    .map_err(|e| PluginRuntimeError::config(format!("YAML parse error: {}", e)))?;
+                    .map_err(|e| PluginRuntimeError::config(format!("YAML parse error: {e}")))?;
                 Ok(yaml)
             }
             "toml" => {
                 // Convert TOML to JSON value
                 let toml: toml::Value = content
                     .parse()
-                    .map_err(|e| PluginRuntimeError::config(format!("TOML parse error: {}", e)))?;
+                    .map_err(|e| PluginRuntimeError::config(format!("TOML parse error: {e}")))?;
                 serde_json::to_value(toml).map_err(Into::into)
             }
             _ => Err(PluginRuntimeError::config(format!(
-                "Unsupported config format: {}",
-                extension
+                "Unsupported config format: {extension}"
             ))),
         }
     }

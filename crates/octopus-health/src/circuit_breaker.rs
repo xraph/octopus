@@ -89,20 +89,17 @@ impl CircuitBreakerInstance {
 
         let current_state = self.state();
 
-        match current_state {
-            CircuitState::HalfOpen => {
-                let success = self.success_count.load(Ordering::Relaxed);
-                let total = self.total_count.load(Ordering::Relaxed);
+        if current_state == CircuitState::HalfOpen {
+            let success = self.success_count.load(Ordering::Relaxed);
+            let total = self.total_count.load(Ordering::Relaxed);
 
-                // If success rate is good in half-open, close the circuit
-                if total >= self.config.half_open_max_requests as u64 {
-                    let success_rate = success as f64 / total as f64;
-                    if success_rate >= (1.0 - self.config.failure_threshold) {
-                        self.transition_to_closed();
-                    }
+            // If success rate is good in half-open, close the circuit
+            if total >= self.config.half_open_max_requests as u64 {
+                let success_rate = success as f64 / total as f64;
+                if success_rate >= (1.0 - self.config.failure_threshold) {
+                    self.transition_to_closed();
                 }
             }
-            _ => {}
         }
 
         debug!(

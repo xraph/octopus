@@ -270,10 +270,10 @@ impl AuditLogger {
                 }
             }
             AuditOutput::Stdout => {
-                print!("{}", line);
+                print!("{line}");
             }
             AuditOutput::Stderr => {
-                eprint!("{}", line);
+                eprint!("{line}");
             }
             AuditOutput::Custom(handler) => {
                 handler.log(event);

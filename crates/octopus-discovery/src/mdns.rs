@@ -213,12 +213,12 @@ impl MdnsDiscovery {
 
         // Create mDNS daemon
         let mdns = ServiceDaemon::new()
-            .map_err(|e| Error::Discovery(format!("Failed to create mDNS daemon: {}", e)))?;
+            .map_err(|e| Error::Discovery(format!("Failed to create mDNS daemon: {e}")))?;
 
         // Browse for services
         let receiver = mdns
             .browse(&full_service_name)
-            .map_err(|e| Error::Discovery(format!("Failed to browse mDNS: {}", e)))?;
+            .map_err(|e| Error::Discovery(format!("Failed to browse mDNS: {e}")))?;
 
         let mut instances = Vec::new();
         let timeout = tokio::time::sleep(self.config.query_timeout);
@@ -243,7 +243,7 @@ impl MdnsDiscovery {
                                 .filter_map(|prop| {
                                     let key = prop.key();
                                     let val = prop.val_str();
-                                    Some(format!("{}={}", key, val))
+                                    Some(format!("{key}={val}"))
                                 })
                                 .collect();
 
@@ -261,7 +261,7 @@ impl MdnsDiscovery {
                                     id: format!("{}:{}:{}", info.get_fullname(), addr, port),
                                     name: info
                                         .get_fullname()
-                                        .strip_suffix(&format!(".{}", full_service_name))
+                                        .strip_suffix(&format!(".{full_service_name}"))
                                         .unwrap_or(info.get_fullname())
                                         .to_string(),
                                     address: addr.to_string(),

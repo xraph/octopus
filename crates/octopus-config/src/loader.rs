@@ -12,7 +12,7 @@ pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Config> {
     let path = path.as_ref();
 
     let content = fs::read_to_string(path)
-        .map_err(|e| Error::Config(format!("Failed to read config file: {}", e)))?;
+        .map_err(|e| Error::Config(format!("Failed to read config file: {e}")))?;
 
     let format = ConfigFormat::from_path(path)?;
 
@@ -24,7 +24,7 @@ pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Config> {
 fn expand_env_vars(content: &str) -> Result<String> {
     // Regex to match ${VAR} or ${VAR:-default}
     let re = Regex::new(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?\}")
-        .map_err(|e| Error::Config(format!("Invalid regex: {}", e)))?;
+        .map_err(|e| Error::Config(format!("Invalid regex: {e}")))?;
 
     let mut result = String::new();
     let mut last_match = 0;
@@ -43,8 +43,7 @@ fn expand_env_vars(content: &str) -> Result<String> {
                     Some(default) => default.to_string(),
                     None => {
                         return Err(Error::Config(format!(
-                            "Environment variable '{}' not set and no default provided",
-                            var_name
+                            "Environment variable '{var_name}' not set and no default provided"
                         )));
                     }
                 }
@@ -72,11 +71,11 @@ pub fn load_from_str(content: &str, format: ConfigFormat) -> Result<Config> {
 
     let config = match format {
         ConfigFormat::Yaml => serde_yaml::from_str(&expanded_content)
-            .map_err(|e| Error::Config(format!("Failed to parse YAML: {}", e)))?,
+            .map_err(|e| Error::Config(format!("Failed to parse YAML: {e}")))?,
         ConfigFormat::Toml => toml::from_str(&expanded_content)
-            .map_err(|e| Error::Config(format!("Failed to parse TOML: {}", e)))?,
+            .map_err(|e| Error::Config(format!("Failed to parse TOML: {e}")))?,
         ConfigFormat::Json => serde_json::from_str(&expanded_content)
-            .map_err(|e| Error::Config(format!("Failed to parse JSON: {}", e)))?,
+            .map_err(|e| Error::Config(format!("Failed to parse JSON: {e}")))?,
     };
 
     Ok(config)

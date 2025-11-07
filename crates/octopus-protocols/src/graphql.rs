@@ -99,7 +99,7 @@ impl Default for GraphQLHandler {
 
 impl GraphQLHandler {
     /// Create a new GraphQL handler
-    pub fn new(endpoint: &str) -> Self {
+    #[must_use] pub fn new(endpoint: &str) -> Self {
         Self {
             endpoint: endpoint.to_string(),
             enable_playground: true,
@@ -110,7 +110,7 @@ impl GraphQLHandler {
     }
 
     /// Create GraphQL handler with custom configuration
-    pub fn with_config(
+    #[must_use] pub const fn with_config(
         endpoint: String,
         enable_playground: bool,
         services: HashMap<String, String>,
@@ -128,7 +128,7 @@ impl GraphQLHandler {
     /// Check if request is a GraphQL request
     pub fn is_graphql_request(req: &Request<Full<Bytes>>, endpoint: &str) -> bool {
         let path = req.uri().path();
-        path == endpoint || path.starts_with(&format!("{}/", endpoint))
+        path == endpoint || path.starts_with(&format!("{endpoint}/"))
     }
 
     /// Check if request is asking for GraphQL Playground
@@ -138,25 +138,25 @@ impl GraphQLHandler {
                 .headers()
                 .get(header::ACCEPT)
                 .and_then(|v| v.to_str().ok())
-                .map_or(false, |v| v.contains("text/html"))
+                .is_some_and(|v| v.contains("text/html"))
     }
 
     /// Parse GraphQL request from HTTP request
     pub async fn parse_request(req: Request<Full<Bytes>>) -> Result<GraphQLRequest> {
-        match req.method() {
-            &Method::POST => {
+        match *req.method() {
+            Method::POST => {
                 let body_bytes = req
                     .into_body()
                     .collect()
                     .await
-                    .map_err(|e| Error::InvalidRequest(format!("Failed to read body: {}", e)))?
+                    .map_err(|e| Error::InvalidRequest(format!("Failed to read body: {e}")))?
                     .to_bytes();
 
                 serde_json::from_slice(&body_bytes).map_err(|e| {
-                    Error::InvalidRequest(format!("Failed to parse GraphQL request: {}", e))
+                    Error::InvalidRequest(format!("Failed to parse GraphQL request: {e}"))
                 })
             }
-            &Method::GET => {
+            Method::GET => {
                 // Parse query from URL parameters
                 let query = req
                     .uri()
@@ -182,7 +182,7 @@ impl GraphQLHandler {
     }
 
     /// Build GraphQL Playground HTML
-    pub fn playground_html() -> String {
+    #[must_use] pub fn playground_html() -> String {
         r#"
 <!DOCTYPE html>
 <html lang="en">
@@ -219,7 +219,7 @@ impl GraphQLHandler {
     }
 
     /// Build error response
-    pub fn error_response(message: &str) -> GraphQLResponse {
+    #[must_use] pub fn error_response(message: &str) -> GraphQLResponse {
         GraphQLResponse {
             data: None,
             errors: Some(vec![GraphQLError {
@@ -252,7 +252,7 @@ impl ProtocolHandler for GraphQLHandler {
                 .header(header::CONTENT_TYPE, "text/html")
                 .body(Full::new(Bytes::from(html)))
                 .map_err(|e| {
-                    Error::Internal(format!("Failed to build playground response: {}", e))
+                    Error::Internal(format!("Failed to build playground response: {e}"))
                 });
         }
 
@@ -266,21 +266,19 @@ impl ProtocolHandler for GraphQLHandler {
         );
 
         // Check for introspection query
-        if gql_req.query.trim().starts_with("query IntrospectionQuery")
-            || gql_req.query.contains("__schema")
-        {
-            if !self.enable_introspection {
+        if (gql_req.query.trim().starts_with("query IntrospectionQuery")
+            || gql_req.query.contains("__schema"))
+            && !self.enable_introspection {
                 let error_response = Self::error_response("Introspection is disabled");
                 let json = serde_json::to_string(&error_response)
-                    .map_err(|e| Error::Internal(format!("Failed to serialize response: {}", e)))?;
+                    .map_err(|e| Error::Internal(format!("Failed to serialize response: {e}")))?;
 
                 return Response::builder()
                     .status(StatusCode::OK)
                     .header(header::CONTENT_TYPE, "application/json")
                     .body(Full::new(Bytes::from(json)))
-                    .map_err(|e| Error::Internal(format!("Failed to build response: {}", e)));
+                    .map_err(|e| Error::Internal(format!("Failed to build response: {e}")));
             }
-        }
 
         // In a real implementation, this would:
         // 1. Parse and validate the GraphQL query
@@ -305,13 +303,13 @@ impl ProtocolHandler for GraphQLHandler {
         };
 
         let json = serde_json::to_string(&response)
-            .map_err(|e| Error::Internal(format!("Failed to serialize response: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to serialize response: {e}")))?;
 
         Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/json")
             .body(Full::new(Bytes::from(json)))
-            .map_err(|e| Error::Internal(format!("Failed to build response: {}", e)))
+            .map_err(|e| Error::Internal(format!("Failed to build response: {e}")))
     }
 }
 

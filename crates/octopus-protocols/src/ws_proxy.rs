@@ -21,7 +21,7 @@ pub struct WebSocketProxy {
 
 impl WebSocketProxy {
     /// Create a new WebSocket proxy
-    pub fn new(max_message_size: usize) -> Self {
+    #[must_use] pub const fn new(max_message_size: usize) -> Self {
         Self { max_message_size }
     }
 
@@ -44,7 +44,7 @@ impl WebSocketProxy {
         // Connect to upstream WebSocket server
         let (upstream_stream, _response) =
             connect_async(upstream_uri.to_string()).await.map_err(|e| {
-                Error::Internal(format!("Failed to connect to upstream WebSocket: {}", e))
+                Error::Internal(format!("Failed to connect to upstream WebSocket: {e}"))
             })?;
 
         debug!("WebSocket connection to upstream established");
@@ -114,10 +114,10 @@ impl WebSocketProxy {
 
         // Run both directions concurrently
         tokio::select! {
-            _ = client_to_upstream => {
+            () = client_to_upstream => {
                 debug!("Client->Upstream stream closed");
             }
-            _ = upstream_to_client => {
+            () = upstream_to_client => {
                 debug!("Upstream->Client stream closed");
             }
         }

@@ -79,8 +79,7 @@ impl ConnectionPool {
             })
             .ok_or_else(|| {
                 octopus_core::Error::UpstreamConnection(format!(
-                    "Upstream not found: {}",
-                    upstream_id
+                    "Upstream not found: {upstream_id}"
                 ))
             })
     }

@@ -63,7 +63,7 @@ impl ConfigFormat {
             "yaml" | "yml" => Ok(ConfigFormat::Yaml),
             "toml" => Ok(ConfigFormat::Toml),
             "json" => Ok(ConfigFormat::Json),
-            _ => Err(Error::Config(format!("Unsupported config format: {}", ext))),
+            _ => Err(Error::Config(format!("Unsupported config format: {ext}"))),
         }
     }
 }

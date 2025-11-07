@@ -89,7 +89,7 @@ impl PluginRegistry {
             let mut plugin = plugin.write().await;
             plugin.init().await.map_err(|e| Error::Plugin {
                 plugin: name.clone(),
-                message: format!("Failed to initialize: {}", e),
+                message: format!("Failed to initialize: {e}"),
             })?;
         }
 
@@ -105,7 +105,7 @@ impl PluginRegistry {
             let mut plugin = plugin.write().await;
             plugin.start().await.map_err(|e| Error::Plugin {
                 plugin: name.clone(),
-                message: format!("Failed to start: {}", e),
+                message: format!("Failed to start: {e}"),
             })?;
         }
 
@@ -121,7 +121,7 @@ impl PluginRegistry {
             let mut plugin = plugin.write().await;
             plugin.stop().await.map_err(|e| Error::Plugin {
                 plugin: name.clone(),
-                message: format!("Failed to stop: {}", e),
+                message: format!("Failed to stop: {e}"),
             })?;
         }
 
@@ -137,7 +137,7 @@ impl PluginRegistry {
             let mut plugin = plugin.write().await;
             plugin.shutdown().await.map_err(|e| Error::Plugin {
                 plugin: name.clone(),
-                message: format!("Failed to shutdown: {}", e),
+                message: format!("Failed to shutdown: {e}"),
             })?;
         }
 

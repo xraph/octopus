@@ -105,12 +105,11 @@ impl PluginRegistry {
     /// Register a plugin
     pub fn register(&mut self, plugin: Box<dyn DashboardPlugin>) -> Result<(), String> {
         let metadata = plugin.metadata();
-        let plugin_id = metadata.id.clone();
+        let plugin_id = metadata.id;
 
         if self.plugins.contains_key(&plugin_id) {
             return Err(format!(
-                "Plugin with id '{}' is already registered",
-                plugin_id
+                "Plugin with id '{plugin_id}' is already registered"
             ));
         }
 

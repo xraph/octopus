@@ -9,7 +9,7 @@ use axum::{
 };
 use std::sync::Arc;
 
-use crate::models::*;
+use crate::models::{PluginStatsCard, RouteInfo, HealthCheckInfo, PluginInfo, DashboardStats, ActivityLogEntry};
 
 /// Shared application state
 #[derive(Clone)]
@@ -21,7 +21,7 @@ pub struct AppState {
 impl AppState {
     /// Create a new application state
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {}
     }
 }
@@ -51,7 +51,7 @@ where
     }
 }
 
-/// Overview page template (Preline UI with ApexCharts)
+/// Overview page template (Preline UI with `ApexCharts`)
 #[derive(Template)]
 #[template(path = "preline_dashboard.html")]
 pub struct OverviewTemplate {

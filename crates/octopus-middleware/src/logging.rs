@@ -116,7 +116,7 @@ impl Middleware for RequestLogger {
                 .map(|(name, value)| {
                     let value_str = value.to_str().unwrap_or("[invalid UTF-8]");
                     let redacted = self.redact_value(name.as_str(), value_str);
-                    format!("{}: {}", name, redacted)
+                    format!("{name}: {redacted}")
                 })
                 .collect();
 

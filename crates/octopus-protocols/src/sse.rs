@@ -22,7 +22,7 @@ impl Default for SseHandler {
 
 impl SseHandler {
     /// Create a new SSE handler
-    pub fn new() -> Self {
+    #[must_use] pub const fn new() -> Self {
         Self {
             heartbeat_interval: 30, // 30 seconds default
         }
@@ -33,17 +33,17 @@ impl SseHandler {
         req.headers()
             .get(header::ACCEPT)
             .and_then(|v| v.to_str().ok())
-            .map_or(false, |v| v.contains("text/event-stream"))
+            .is_some_and(|v| v.contains("text/event-stream"))
     }
 
     /// Format SSE message
-    pub fn format_message(event: &str, data: &str) -> String {
-        format!("event: {}\ndata: {}\n\n", event, data)
+    #[must_use] pub fn format_message(event: &str, data: &str) -> String {
+        format!("event: {event}\ndata: {data}\n\n")
     }
 
     /// Format SSE comment (keepalive)
-    pub fn format_comment(comment: &str) -> String {
-        format!(": {}\n\n", comment)
+    #[must_use] pub fn format_comment(comment: &str) -> String {
+        format!(": {comment}\n\n")
     }
 }
 
@@ -71,7 +71,7 @@ impl ProtocolHandler for SseHandler {
             .header(header::CACHE_CONTROL, "no-cache")
             .header(header::CONNECTION, "keep-alive")
             .body(Full::new(Bytes::from(body)))
-            .map_err(|e| octopus_core::Error::Internal(format!("Failed to build response: {}", e)))
+            .map_err(|e| octopus_core::Error::Internal(format!("Failed to build response: {e}")))
     }
 }
 

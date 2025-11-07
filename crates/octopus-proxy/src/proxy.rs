@@ -95,7 +95,7 @@ impl HttpProxy {
 
         upstream_uri
             .parse()
-            .map_err(|e| Error::UpstreamConnection(format!("Invalid upstream URI: {}", e)))
+            .map_err(|e| Error::UpstreamConnection(format!("Invalid upstream URI: {e}")))
     }
 
     /// Transform request headers
@@ -112,7 +112,7 @@ impl HttpProxy {
             headers.insert(
                 http::header::HOST,
                 host.parse()
-                    .map_err(|e| Error::InvalidRequest(format!("Invalid host: {}", e)))?,
+                    .map_err(|e| Error::InvalidRequest(format!("Invalid host: {e}")))?,
             );
         }
 
@@ -130,9 +130,9 @@ impl HttpProxy {
         for (name, value) in &self.config.upstream_headers {
             headers.insert(
                 http::HeaderName::from_bytes(name.as_bytes())
-                    .map_err(|e| Error::InvalidRequest(format!("Invalid header name: {}", e)))?,
+                    .map_err(|e| Error::InvalidRequest(format!("Invalid header name: {e}")))?,
                 http::HeaderValue::from_str(value)
-                    .map_err(|e| Error::InvalidRequest(format!("Invalid header value: {}", e)))?,
+                    .map_err(|e| Error::InvalidRequest(format!("Invalid header value: {e}")))?,
             );
         }
 

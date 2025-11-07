@@ -99,11 +99,11 @@ impl ConsulDiscovery {
         let mut url = format!("{}{}", self.address, path);
 
         if let Some(dc) = &self.datacenter {
-            url.push_str(&format!("?dc={}", dc));
+            url.push_str(&format!("?dc={dc}"));
         }
 
         url.parse()
-            .map_err(|e| Error::Discovery(format!("Invalid Consul URL: {}", e)))
+            .map_err(|e| Error::Discovery(format!("Invalid Consul URL: {e}")))
     }
 
     /// Make HTTP request to Consul
@@ -112,19 +112,19 @@ impl ConsulDiscovery {
             .method(Method::GET)
             .uri(uri)
             .body(Empty::<Bytes>::new())
-            .map_err(|e| Error::Discovery(format!("Failed to build request: {}", e)))?;
+            .map_err(|e| Error::Discovery(format!("Failed to build request: {e}")))?;
 
         let res = self
             .client
             .request(req)
             .await
-            .map_err(|e| Error::Discovery(format!("Consul request failed: {}", e)))?;
+            .map_err(|e| Error::Discovery(format!("Consul request failed: {e}")))?;
 
         let body = res
             .into_body()
             .collect()
             .await
-            .map_err(|e| Error::Discovery(format!("Failed to read response: {}", e)))?
+            .map_err(|e| Error::Discovery(format!("Failed to read response: {e}")))?
             .to_bytes();
 
         Ok(body.to_vec())
@@ -186,7 +186,7 @@ impl DiscoveryProvider for ConsulDiscovery {
         let body = self.request(uri).await?;
 
         let services: HashMap<String, Vec<String>> = serde_json::from_slice(&body)
-            .map_err(|e| Error::Discovery(format!("Failed to parse services: {}", e)))?;
+            .map_err(|e| Error::Discovery(format!("Failed to parse services: {e}")))?;
 
         let mut instances = Vec::new();
         for service_name in services.keys() {
@@ -204,7 +204,7 @@ impl DiscoveryProvider for ConsulDiscovery {
         debug!(service = %service_name, "Discovering service from Consul");
 
         // Get service health
-        let uri = self.build_url(&format!("/v1/health/service/{}", service_name))?;
+        let uri = self.build_url(&format!("/v1/health/service/{service_name}"))?;
         let body = self.request(uri).await?;
 
         #[derive(Deserialize)]
@@ -215,7 +215,7 @@ impl DiscoveryProvider for ConsulDiscovery {
         }
 
         let entries: Vec<HealthEntry> = serde_json::from_slice(&body)
-            .map_err(|e| Error::Discovery(format!("Failed to parse health entries: {}", e)))?;
+            .map_err(|e| Error::Discovery(format!("Failed to parse health entries: {e}")))?;
 
         let instances: Vec<ServiceInstance> = entries
             .into_iter()
@@ -257,7 +257,7 @@ impl DiscoveryProvider for ConsulDiscovery {
                     for instance in instances {
                         current_services
                             .entry(instance.name.clone())
-                            .or_insert_with(Vec::new)
+                            .or_default()
                             .push(instance);
                     }
 
@@ -312,11 +312,11 @@ impl DiscoveryProvider for ConsulDiscovery {
     async fn health_check(&self, service_id: &str) -> Result<ServiceHealth> {
         debug!(service_id = %service_id, "Checking health via Consul");
 
-        let uri = self.build_url(&format!("/v1/health/checks/{}", service_id))?;
+        let uri = self.build_url(&format!("/v1/health/checks/{service_id}"))?;
         let body = self.request(uri).await?;
 
         let checks: Vec<ConsulHealthCheck> = serde_json::from_slice(&body)
-            .map_err(|e| Error::Discovery(format!("Failed to parse health checks: {}", e)))?;
+            .map_err(|e| Error::Discovery(format!("Failed to parse health checks: {e}")))?;
 
         Ok(self.parse_health(&checks))
     }

@@ -47,7 +47,7 @@ impl ActivityEntry {
         let millis = self.timestamp % 1000;
 
         // Simple formatting (in production, use chrono)
-        format!("{}.{:03}s", secs, millis)
+        format!("{secs}.{millis:03}s")
     }
 
     /// Get status class for UI styling

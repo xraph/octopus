@@ -136,12 +136,12 @@ impl JwtAuth {
             match config.algorithm {
                 Algorithm::RS256 | Algorithm::RS384 | Algorithm::RS512 => {
                     DecodingKey::from_rsa_pem(public_key.as_bytes()).map_err(|e| {
-                        octopus_core::Error::Internal(format!("Invalid RSA public key: {}", e))
+                        octopus_core::Error::Internal(format!("Invalid RSA public key: {e}"))
                     })?
                 }
                 Algorithm::ES256 | Algorithm::ES384 => {
                     DecodingKey::from_ec_pem(public_key.as_bytes()).map_err(|e| {
-                        octopus_core::Error::Internal(format!("Invalid EC public key: {}", e))
+                        octopus_core::Error::Internal(format!("Invalid EC public key: {e}"))
                     })?
                 }
                 _ => {

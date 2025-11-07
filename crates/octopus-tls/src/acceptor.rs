@@ -30,7 +30,7 @@ impl TlsAcceptor {
         let mut server_config = ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(certs, private_key)
-            .map_err(|e| Error::Config(format!("Failed to build TLS config: {}", e)))?;
+            .map_err(|e| Error::Config(format!("Failed to build TLS config: {e}")))?;
 
         // Configure ALPN protocols (HTTP/1.1 and HTTP/2)
         server_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
@@ -75,7 +75,7 @@ impl TlsAcceptor {
         self.inner
             .accept(stream)
             .await
-            .map_err(|e| Error::Internal(format!("TLS handshake failed: {}", e)))
+            .map_err(|e| Error::Internal(format!("TLS handshake failed: {e}")))
     }
 }
 

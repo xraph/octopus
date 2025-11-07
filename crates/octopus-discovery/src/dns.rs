@@ -72,7 +72,7 @@ impl DnsDiscovery {
             .resolver
             .lookup_ip(service_name)
             .await
-            .map_err(|e| Error::Discovery(format!("DNS lookup failed: {}", e)))?;
+            .map_err(|e| Error::Discovery(format!("DNS lookup failed: {e}")))?;
 
         let ips: Vec<IpAddr> = response.iter().collect();
         debug!(service = %service_name, count = ips.len(), "Resolved IPs");
@@ -88,7 +88,7 @@ impl DnsDiscovery {
             .resolver
             .srv_lookup(service_name)
             .await
-            .map_err(|e| Error::Discovery(format!("SRV lookup failed: {}", e)))?;
+            .map_err(|e| Error::Discovery(format!("SRV lookup failed: {e}")))?;
 
         let mut instances = Vec::new();
 
@@ -101,7 +101,7 @@ impl DnsDiscovery {
                 Ok(ips) => {
                     for ip in ips {
                         instances.push(ServiceInstance {
-                            id: format!("{}:{}:{}", service_name, ip, port),
+                            id: format!("{service_name}:{ip}:{port}"),
                             name: service_name.to_string(),
                             address: ip.to_string(),
                             port,

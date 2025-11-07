@@ -186,7 +186,7 @@ impl HealthCheck for HttpHealthCheck {
             Err(e) => {
                 return HealthCheckResult::unhealthy(
                     start.elapsed(),
-                    format!("Invalid URL: {}", e),
+                    format!("Invalid URL: {e}"),
                 );
             }
         };
@@ -203,7 +203,7 @@ impl HealthCheck for HttpHealthCheck {
             Err(e) => {
                 return HealthCheckResult::unhealthy(
                     start.elapsed(),
-                    format!("Failed to build request: {}", e),
+                    format!("Failed to build request: {e}"),
                 );
             }
         };
@@ -221,14 +221,14 @@ impl HealthCheck for HttpHealthCheck {
                     warn!(url = %url, status = %status, "Health check failed: unexpected status");
                     HealthCheckResult::unhealthy(
                         duration,
-                        format!("Unexpected status code: {}", status),
+                        format!("Unexpected status code: {status}"),
                     )
                 }
             }
             Ok(Err(e)) => {
                 let duration = start.elapsed();
                 warn!(url = %url, error = %e, "Health check failed: request error");
-                HealthCheckResult::unhealthy(duration, format!("Request error: {}", e))
+                HealthCheckResult::unhealthy(duration, format!("Request error: {e}"))
             }
             Err(_) => {
                 let duration = start.elapsed();
@@ -256,7 +256,7 @@ impl TcpHealthCheck {
 impl HealthCheck for TcpHealthCheck {
     async fn check(&self, address: &str, port: u16) -> HealthCheckResult {
         let start = Instant::now();
-        let addr = format!("{}:{}", address, port);
+        let addr = format!("{address}:{port}");
 
         debug!(addr = %addr, "Performing TCP health check");
 
@@ -273,11 +273,11 @@ impl HealthCheck for TcpHealthCheck {
             }
             Ok(Ok(Err(e))) => {
                 warn!(addr = %addr, error = %e, "TCP health check failed");
-                HealthCheckResult::unhealthy(start.elapsed(), format!("Connection error: {}", e))
+                HealthCheckResult::unhealthy(start.elapsed(), format!("Connection error: {e}"))
             }
             Ok(Err(e)) => {
                 warn!(addr = %addr, error = %e, "TCP health check failed");
-                HealthCheckResult::unhealthy(start.elapsed(), format!("Task error: {}", e))
+                HealthCheckResult::unhealthy(start.elapsed(), format!("Task error: {e}"))
             }
             Err(_) => {
                 warn!(addr = %addr, "TCP health check failed: timeout");

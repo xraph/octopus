@@ -3,7 +3,6 @@
 use crate::compressor::{CompressionAlgorithm, Compressor};
 use crate::config::CompressionConfig;
 use async_trait::async_trait;
-use bytes::Bytes;
 use http::{HeaderValue, Request, Response, StatusCode};
 use http_body_util::BodyExt;
 use octopus_core::middleware::{Body, Middleware, Next};
@@ -115,7 +114,7 @@ async fn compress_response(
     let body_bytes = body
         .collect()
         .await
-        .map_err(|e| octopus_core::Error::Internal(format!("Failed to read body: {}", e)))?
+        .map_err(|e| octopus_core::Error::Internal(format!("Failed to read body: {e}")))?
         .to_bytes();
 
     // Check if body is large enough to compress
@@ -123,13 +122,13 @@ async fn compress_response(
 
     // Compress the body
     let compressed = Compressor::compress(&body_bytes, algorithm, level)
-        .map_err(|e| octopus_core::Error::Internal(format!("Compression failed: {}", e)))?;
+        .map_err(|e| octopus_core::Error::Internal(format!("Compression failed: {e}")))?;
 
     let compressed_size = compressed.len();
 
     // Only use compressed version if it's actually smaller
     let (final_body, encoding) = if compressed_size < original_size {
-        (Bytes::from(compressed), Some(algorithm.encoding_name()))
+        (compressed, Some(algorithm.encoding_name()))
     } else {
         debug!("Compressed size not smaller, using original");
         (body_bytes, None)
@@ -146,7 +145,7 @@ async fn compress_response(
     parts.headers.insert(
         http::header::CONTENT_LENGTH,
         HeaderValue::from_str(&final_body.len().to_string())
-            .map_err(|e| octopus_core::Error::Internal(format!("Invalid content length: {}", e)))?,
+            .map_err(|e| octopus_core::Error::Internal(format!("Invalid content length: {e}")))?,
     );
 
     // Remove transfer-encoding if present (we're setting content-length)

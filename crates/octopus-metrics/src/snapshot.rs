@@ -107,13 +107,13 @@ impl MetricsSnapshot {
         let secs = seconds % 60;
 
         if days > 0 {
-            format!("{}d {}h {}m", days, hours, minutes)
+            format!("{days}d {hours}h {minutes}m")
         } else if hours > 0 {
-            format!("{}h {}m", hours, minutes)
+            format!("{hours}h {minutes}m")
         } else if minutes > 0 {
-            format!("{}m {}s", minutes, secs)
+            format!("{minutes}m {secs}s")
         } else {
-            format!("{}s", secs)
+            format!("{secs}s")
         }
     }
 

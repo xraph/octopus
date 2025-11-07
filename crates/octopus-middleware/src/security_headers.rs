@@ -162,7 +162,7 @@ impl SecurityHeaders {
         if let Some(val) = value {
             let header_name = HeaderName::from_static(name);
             let header_value = HeaderValue::from_str(val).map_err(|e| {
-                octopus_core::Error::Internal(format!("Invalid {} header: {}", name, e))
+                octopus_core::Error::Internal(format!("Invalid {name} header: {e}"))
             })?;
             response.headers_mut().insert(header_name, header_value);
         }

@@ -116,8 +116,7 @@ impl PrometheusExporter {
             }
             writeln!(
                 output,
-                "octopus_requests_duration_seconds_bucket{{le=\"{}\"}} {}",
-                bucket, cumulative
+                "octopus_requests_duration_seconds_bucket{{le=\"{bucket}\"}} {cumulative}"
             )
             .unwrap();
         }
@@ -141,7 +140,7 @@ impl PrometheusExporter {
         // Since we don't have a way to iterate all routes, we'll skip per-route metrics for now
         // This can be enhanced later by adding an API to list all routes
 
-        writeln!(output, "# Per-route metrics (count: {})", route_count).unwrap();
+        writeln!(output, "# Per-route metrics (count: {route_count})").unwrap();
     }
 
     #[allow(dead_code)]

@@ -47,7 +47,7 @@ impl K8sDiscovery {
     pub async fn new(config: K8sConfig) -> Result<Self> {
         let client = Client::try_default()
             .await
-            .map_err(|e| Error::Discovery(format!("Failed to create K8s client: {}", e)))?;
+            .map_err(|e| Error::Discovery(format!("Failed to create K8s client: {e}")))?;
 
         Ok(Self {
             client,
@@ -115,7 +115,7 @@ impl K8sDiscovery {
                         if let Some(ports) = &subset.ports {
                             for port in ports {
                                 let port_num = port.port as u16;
-                                let id = format!("{}:{}:{}:{}", namespace, svc_name, ip, port_num);
+                                let id = format!("{namespace}:{svc_name}:{ip}:{port_num}");
 
                                 instances.push(ServiceInstance {
                                     id,
@@ -161,12 +161,12 @@ impl DiscoveryProvider for K8sDiscovery {
         let svc_list = services
             .list(&self.list_params())
             .await
-            .map_err(|e| Error::Discovery(format!("Failed to list services: {}", e)))?;
+            .map_err(|e| Error::Discovery(format!("Failed to list services: {e}")))?;
 
         let ep_list = endpoints
             .list(&ListParams::default())
             .await
-            .map_err(|e| Error::Discovery(format!("Failed to list endpoints: {}", e)))?;
+            .map_err(|e| Error::Discovery(format!("Failed to list endpoints: {e}")))?;
 
         // Create endpoint map by service name
         let mut ep_map: HashMap<String, &Endpoints> = HashMap::new();
@@ -207,12 +207,12 @@ impl DiscoveryProvider for K8sDiscovery {
         let svc = services
             .get(service_name)
             .await
-            .map_err(|e| Error::Discovery(format!("Failed to get service: {}", e)))?;
+            .map_err(|e| Error::Discovery(format!("Failed to get service: {e}")))?;
 
         let ep = endpoints
             .get(service_name)
             .await
-            .map_err(|e| Error::Discovery(format!("Failed to get endpoints: {}", e)))?;
+            .map_err(|e| Error::Discovery(format!("Failed to get endpoints: {e}")))?;
 
         let instances = self.parse_service(&svc, &ep).await;
 

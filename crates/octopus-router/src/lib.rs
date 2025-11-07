@@ -67,7 +67,7 @@ impl Router {
         let mut trie = self
             .tries
             .entry(method.clone())
-            .or_insert_with(RouteTrie::new);
+            .or_default();
 
         // Insert route into trie
         trie.insert(route)?;
@@ -92,7 +92,7 @@ impl Router {
         let trie = self
             .tries
             .get(method)
-            .ok_or_else(|| Error::RouteNotFound(format!("No routes for method {}", method)))?;
+            .ok_or_else(|| Error::RouteNotFound(format!("No routes for method {method}")))?;
 
         trie.match_path(path)
             .ok_or_else(|| Error::RouteNotFound(path.to_string()))
@@ -149,15 +149,14 @@ impl Router {
     /// Select an upstream instance from a cluster (with simple round-robin)
     pub fn select_instance(&self, upstream_name: &str) -> Result<UpstreamInstance> {
         let cluster = self.get_upstream(upstream_name).ok_or_else(|| {
-            Error::UpstreamConnection(format!("Upstream '{}' not found", upstream_name))
+            Error::UpstreamConnection(format!("Upstream '{upstream_name}' not found"))
         })?;
 
         let healthy = cluster.healthy_instances();
 
         if healthy.is_empty() {
             return Err(Error::UpstreamConnection(format!(
-                "No healthy instances for upstream '{}'",
-                upstream_name
+                "No healthy instances for upstream '{upstream_name}'"
             )));
         }
 

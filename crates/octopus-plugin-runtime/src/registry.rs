@@ -136,8 +136,7 @@ impl PluginRegistry {
             let state = entry.state.read();
             if *state != PluginState::Registered {
                 return Err(PluginRuntimeError::invalid_state(format!(
-                    "Plugin {} is not in Registered state",
-                    name
+                    "Plugin {name} is not in Registered state"
                 )));
             }
         }
@@ -180,8 +179,7 @@ impl PluginRegistry {
                 let state = entry.state.read();
                 if *state != PluginState::Initialized && *state != PluginState::Stopped {
                     return Err(PluginRuntimeError::invalid_state(format!(
-                        "Plugin {} is not in Initialized or Stopped state",
-                        name
+                        "Plugin {name} is not in Initialized or Stopped state"
                     )));
                 }
             }
@@ -232,8 +230,7 @@ impl PluginRegistry {
             let state = entry.state.read();
             if *state != PluginState::Started {
                 return Err(PluginRuntimeError::invalid_state(format!(
-                    "Plugin {} is not in Started state",
-                    name
+                    "Plugin {name} is not in Started state"
                 )));
             }
         }
@@ -352,8 +349,7 @@ impl PluginRegistry {
         for dep in deps {
             if dep.name == name {
                 return Err(PluginRuntimeError::dependency_cycle(format!(
-                    "Plugin {} depends on itself",
-                    name
+                    "Plugin {name} depends on itself"
                 )));
             }
 
@@ -361,8 +357,7 @@ impl PluginRegistry {
                 stack.push(dep.name.clone());
                 if !self.check_cycle_recursive(&dep.name, dep_deps.value(), &mut visited, &stack)? {
                     return Err(PluginRuntimeError::dependency_cycle(format!(
-                        "Cycle detected involving {}",
-                        name
+                        "Cycle detected involving {name}"
                     )));
                 }
                 stack.pop();

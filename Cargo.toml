@@ -103,7 +103,7 @@ metrics-exporter-prometheus = "0.14"
 libloading = "0.8"
 
 # Scripting
-rhai = { version = "1.17", features = ["sync", "no_std"] }
+rhai = { version = "1.17", features = ["sync", "serde", "no_std"] }
 
 # Authentication
 jsonwebtoken = "9.2"

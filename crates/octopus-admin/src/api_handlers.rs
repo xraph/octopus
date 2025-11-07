@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::handlers::AppState;
-use crate::models::*;
+use crate::models::{DashboardStats, PerformanceMetrics, RouteInfo, RouteConfig, PluginInfo, LogQuery, SystemInfo, AnalyticsMetrics, TimeSeriesPoint, LatencyPercentiles, RouteMetric, ActivityLogEntry, SecurityEvent, ConfigItem};
 
 // ============================================================================
 // Metrics & Analytics Endpoints
@@ -31,7 +31,7 @@ pub async fn api_analytics_handler(
     State(_state): State<Arc<AppState>>,
     Query(params): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
-    let timeframe = params.get("timeframe").map(|s| s.as_str()).unwrap_or("24h");
+    let timeframe = params.get("timeframe").map_or("24h", std::string::String::as_str);
 
     // TODO: Fetch real analytics data
     let analytics = generate_mock_analytics(timeframe);
@@ -68,9 +68,8 @@ pub async fn api_timeseries_handler(
 ) -> impl IntoResponse {
     let metric = params
         .get("metric")
-        .map(|s| s.as_str())
-        .unwrap_or("requests");
-    let period = params.get("period").map(|s| s.as_str()).unwrap_or("1h");
+        .map_or("requests", std::string::String::as_str);
+    let period = params.get("period").map_or("1h", std::string::String::as_str);
 
     // TODO: Fetch real time series data
     let data = generate_mock_timeseries(metric, period);
@@ -117,7 +116,7 @@ pub async fn api_route_get_handler(
 ) -> impl IntoResponse {
     // TODO: Fetch route by ID
     let route = RouteInfo {
-        id: id.clone(),
+        id,
         path: "/api/users".to_string(),
         method: "GET".to_string(),
         upstream: "user-service:8080".to_string(),
@@ -212,7 +211,7 @@ pub async fn api_plugin_get_handler(
 ) -> impl IntoResponse {
     // TODO: Fetch plugin by ID
     let plugin = PluginInfo {
-        id: id.clone(),
+        id,
         name: "JWT Authentication".to_string(),
         version: "0.1.0".to_string(),
         description: "JWT token validation and authentication".to_string(),
@@ -351,7 +350,7 @@ fn generate_mock_analytics(timeframe: &str) -> AnalyticsMetrics {
     let request_volume: Vec<TimeSeriesPoint> = (0..points_count)
         .map(|i| TimeSeriesPoint {
             timestamp: format!("2024-01-{:02} {:02}:00:00", (i / 24) + 1, i % 24),
-            value: (500.0 + (i as f64 * 10.0) + (i as f64).sin() * 100.0),
+            value: f64::from(i).sin().mul_add(100.0, f64::from(i).mul_add(10.0, 500.0)),
         })
         .collect();
 
@@ -435,7 +434,7 @@ fn generate_mock_timeseries(metric: &str, period: &str) -> Vec<TimeSeriesPoint> 
                     .unwrap()
                     .format("%Y-%m-%d %H:%M:%S")
                     .to_string(),
-                value: base_value + (i as f64).sin() * (base_value * 0.2),
+                value: (i as f64).sin().mul_add(base_value * 0.2, base_value),
             }
         })
         .collect()
