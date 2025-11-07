@@ -3,7 +3,7 @@
 use crate::auth::{AuthProvider, AuthResult, Credentials, Principal};
 use crate::context::{RequestContext, ResponseContext};
 use crate::interceptor::{Body, InterceptorAction, RequestInterceptor, ResponseInterceptor};
-use crate::plugin::{HealthStatus, Plugin};
+use crate::plugin::Plugin;
 use crate::PluginError;
 use async_trait::async_trait;
 use http::{Request, Response};

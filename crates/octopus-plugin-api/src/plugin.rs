@@ -257,7 +257,7 @@ impl fmt::Display for PluginState {
             PluginState::Initialized => write!(f, "initialized"),
             PluginState::Started => write!(f, "started"),
             PluginState::Stopped => write!(f, "stopped"),
-            PluginState::Failed(msg) => write!(f, "failed: {}", msg),
+            PluginState::Failed(msg) => write!(f, "failed: {msg}"),
         }
     }
 }

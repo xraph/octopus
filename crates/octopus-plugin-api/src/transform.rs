@@ -34,6 +34,7 @@ pub trait TransformPlugin: Plugin {
 
 /// Transform configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct TransformConfig {
     /// Headers to add
     #[serde(default)]
@@ -64,19 +65,6 @@ pub struct TransformConfig {
     pub remove_query_params: Vec<String>,
 }
 
-impl Default for TransformConfig {
-    fn default() -> Self {
-        Self {
-            add_headers: HashMap::new(),
-            remove_headers: Vec::new(),
-            rename_headers: HashMap::new(),
-            rewrite_path: None,
-            modify_body: None,
-            add_query_params: HashMap::new(),
-            remove_query_params: Vec::new(),
-        }
-    }
-}
 
 impl TransformConfig {
     /// Create a new empty config

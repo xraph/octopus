@@ -2,7 +2,7 @@
 
 use crate::context::{RequestContext, ResponseContext};
 use bytes::Bytes;
-use http::{Method, Request, Response, StatusCode, Uri};
+use http::{Method, Request, Response, StatusCode};
 use http_body_util::Full;
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};

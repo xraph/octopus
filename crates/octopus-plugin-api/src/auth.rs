@@ -31,7 +31,7 @@ pub trait AuthProvider: Plugin {
         if let Some(auth_header) = req.headers().get("authorization") {
             let auth_str = auth_header
                 .to_str()
-                .map_err(|e| PluginError::auth(format!("Invalid authorization header: {}", e)))?;
+                .map_err(|e| PluginError::auth(format!("Invalid authorization header: {e}")))?;
 
             if let Some(token) = auth_str.strip_prefix("Bearer ") {
                 return Ok(Some(Credentials::Bearer(token.to_string())));
