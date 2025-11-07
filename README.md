@@ -1,5 +1,8 @@
 # 🐙 Octopus API Gateway
 
+FARP™ and Octopus Gateway™ are open-source projects maintained by XRAPH™.
+Octopus Gateway™ is an HTTP/API gateway that natively speaks FARP™.
+
 **High-Performance, Extensible API Gateway in Rust**
 
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
@@ -445,51 +448,6 @@ wrk -t12 -c400 -d30s http://localhost:8080/test
 # Using k6
 k6 run --vus 1000 --duration 30s load-test.js
 ```
-
----
-
-## 🗺️ Roadmap
-
-### Phase 1: Foundation (Weeks 1-4) ✅
-- [x] Design documentation
-- [ ] Core crate structure
-- [ ] HTTP proxy with connection pooling
-- [ ] Basic routing (trie-based)
-- [ ] Middleware pipeline
-- [ ] Configuration system
-- [ ] Health checks
-
-### Phase 2: Service Discovery (Weeks 5-6)
-- [ ] FARP client implementation
-- [ ] Kubernetes discovery backend
-- [ ] Consul discovery backend
-- [ ] Dynamic route registration
-- [ ] Schema caching
-
-### Phase 3: Protocols (Weeks 7-9)
-- [ ] gRPC proxying
-- [ ] WebSocket support
-- [ ] SSE support
-- [ ] GraphQL federation
-- [ ] WebTransport (experimental)
-
-### Phase 4: Extensibility (Weeks 10-12)
-- [ ] Plugin system (libloading)
-- [ ] Scripting engine (Rhai)
-- [ ] Auth system (Forge-style)
-- [ ] Sample plugins
-
-### Phase 5: Admin Dashboard (Weeks 13-14)
-- [ ] Admin API
-- [ ] Dashboard UI (Alpine.js + Tailwind)
-- [ ] Metrics visualization
-- [ ] Log viewer
-
-### Phase 6: Production Readiness (Weeks 15-16)
-- [ ] Comprehensive testing
-- [ ] Performance tuning
-- [ ] Security audit
-- [ ] Documentation
 
 ---
 
