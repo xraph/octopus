@@ -379,8 +379,8 @@ spec:
 ### Helm Chart
 
 ```bash
-helm repo add octopus https://octopus.io/charts
-helm install my-gateway octopus/octopus \
+helm repo add octopus https://octopus.xraph.com/charts
+helm install my-gateway xraph/octopus \
   --set discovery.backend=kubernetes \
   --set farp.enabled=true
 ```
@@ -491,16 +491,16 @@ Choose the license that best suits your needs.
 
 ## 🙏 Acknowledgments
 
-Built with ❤️ by the Octopus team.
+Built with ❤️ by the XRaph.
 
 **Powered by:**
 - [Tokio](https://tokio.rs) - Async runtime
 - [Hyper](https://hyper.rs) - HTTP library
 - [Tower](https://docs.rs/tower) - Middleware framework
 - [Tonic](https://docs.rs/tonic) - gRPC implementation
+- [Forge Framework](https://github.com/xraph/forge) - Go web framework
 
 **Inspired by:**
-- [Forge Framework](https://github.com/xraph/forge) - Go web framework
 - Kong, Traefik, Envoy - Production API gateways
 
 ---
@@ -510,19 +510,17 @@ Built with ❤️ by the Octopus team.
 - **📖 Documentation**: [docs/](docs/)
 - **💬 Discussions**: [GitHub Discussions](https://github.com/xraph/octopus/discussions)
 - **🐛 Issues**: [GitHub Issues](https://github.com/xraph/octopus/issues)
-- **📧 Email**: support@octopus.io
+- **📧 Email**: support@octopus.xraph.com
 
 ---
 
 ## 🔗 Links
 
-- **Website**: https://octopus.io
+- **Website**: https://octopus.xraph.com
 - **GitHub**: https://github.com/xraph/octopus
-- **Docs**: https://docs.octopus.io
-- **Blog**: https://blog.octopus.io
+- **Docs**: https://octopus.xraph.com/docs
+- **Blog**: https://octopus.xraph.com/blog
 
 ---
 
 **Ready to build? Let's go! 🐙**
-
-
