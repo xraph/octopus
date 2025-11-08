@@ -27,6 +27,7 @@ pub struct GeneratedRoute {
 
 /// Route metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct RouteMetadata {
     /// Operation ID (if available)
     pub operation_id: Option<String>,
@@ -44,21 +45,10 @@ pub struct RouteMetadata {
     pub rate_limit: Option<u32>,
 }
 
-impl Default for RouteMetadata {
-    fn default() -> Self {
-        Self {
-            operation_id: None,
-            summary: None,
-            tags: Vec::new(),
-            requires_auth: false,
-            rate_limit: None,
-        }
-    }
-}
 
 impl RouteGenerator {
     /// Create a new route generator
-    pub fn new() -> Self {
+    #[must_use] pub const fn new() -> Self {
         Self
     }
 
@@ -75,10 +65,10 @@ impl RouteGenerator {
         }
     }
 
-    /// Generate routes from OpenAPI schema
+    /// Generate routes from `OpenAPI` schema
     fn generate_from_openapi(&self, schema: &SchemaDescriptor) -> Result<Vec<GeneratedRoute>> {
         let spec: Value = serde_json::from_str(&schema.content)
-            .map_err(|e| Error::Farp(format!("Invalid OpenAPI schema: {}", e)))?;
+            .map_err(|e| Error::Farp(format!("Invalid OpenAPI schema: {e}")))?;
 
         let mut routes = Vec::new();
 
@@ -109,7 +99,7 @@ impl RouteGenerator {
         Ok(routes)
     }
 
-    /// Extract metadata from OpenAPI operation
+    /// Extract metadata from `OpenAPI` operation
     fn extract_openapi_metadata(&self, operation: &Value) -> RouteMetadata {
         RouteMetadata {
             operation_id: operation
@@ -132,15 +122,15 @@ impl RouteGenerator {
             requires_auth: operation.get("security").is_some(),
             rate_limit: operation
                 .get("x-rate-limit")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .map(|v| v as u32),
         }
     }
 
-    /// Generate routes from AsyncAPI schema
+    /// Generate routes from `AsyncAPI` schema
     fn generate_from_asyncapi(&self, schema: &SchemaDescriptor) -> Result<Vec<GeneratedRoute>> {
         let spec: Value = serde_json::from_str(&schema.content)
-            .map_err(|e| Error::Farp(format!("Invalid AsyncAPI schema: {}", e)))?;
+            .map_err(|e| Error::Farp(format!("Invalid AsyncAPI schema: {e}")))?;
 
         let mut routes = Vec::new();
 
@@ -157,7 +147,7 @@ impl RouteGenerator {
 
                 routes.push(GeneratedRoute {
                     method: "GET".to_string(), // WebSocket upgrade
-                    path: format!("/ws{}", channel),
+                    path: format!("/ws{channel}"),
                     upstream: schema.service.clone(),
                     metadata,
                 });
@@ -195,7 +185,7 @@ impl RouteGenerator {
     }
 
     /// Apply prefix to all routes
-    pub fn apply_prefix(routes: Vec<GeneratedRoute>, prefix: &str) -> Vec<GeneratedRoute> {
+    #[must_use] pub fn apply_prefix(routes: Vec<GeneratedRoute>, prefix: &str) -> Vec<GeneratedRoute> {
         routes
             .into_iter()
             .map(|mut route| {
@@ -206,7 +196,7 @@ impl RouteGenerator {
     }
 
     /// Filter routes by tags
-    pub fn filter_by_tags(routes: Vec<GeneratedRoute>, tags: &[String]) -> Vec<GeneratedRoute> {
+    #[must_use] pub fn filter_by_tags(routes: Vec<GeneratedRoute>, tags: &[String]) -> Vec<GeneratedRoute> {
         routes
             .into_iter()
             .filter(|route| route.metadata.tags.iter().any(|t| tags.contains(t)))

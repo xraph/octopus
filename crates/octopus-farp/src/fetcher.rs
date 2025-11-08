@@ -42,12 +42,12 @@ pub struct SchemaFetcher {
 
 impl SchemaFetcher {
     /// Create a new schema fetcher with default settings
-    pub fn new() -> Self {
+    #[must_use] pub fn new() -> Self {
         Self::with_timeout(Duration::from_secs(30))
     }
 
     /// Create a new schema fetcher with custom timeout
-    pub fn with_timeout(timeout: Duration) -> Self {
+    #[must_use] pub fn with_timeout(timeout: Duration) -> Self {
         let http_client = reqwest::Client::builder()
             .timeout(timeout)
             .build()
@@ -61,7 +61,7 @@ impl SchemaFetcher {
     }
 
     /// Set the registry backend
-    pub fn with_registry_backend(mut self, backend: RegistryBackend) -> Self {
+    #[must_use] pub fn with_registry_backend(mut self, backend: RegistryBackend) -> Self {
         self.registry_backend = backend;
         self
     }
@@ -160,7 +160,7 @@ impl SchemaFetcher {
         let response = request
             .send()
             .await
-            .map_err(|e| Error::Farp(format!("Failed to fetch schema from {}: {}", url, e)))?;
+            .map_err(|e| Error::Farp(format!("Failed to fetch schema from {url}: {e}")))?;
 
         if !response.status().is_success() {
             return Err(Error::Farp(format!(
@@ -173,10 +173,10 @@ impl SchemaFetcher {
         let body = response
             .text()
             .await
-            .map_err(|e| Error::Farp(format!("Failed to read response body: {}", e)))?;
+            .map_err(|e| Error::Farp(format!("Failed to read response body: {e}")))?;
 
         let schema: Value = serde_json::from_str(&body)
-            .map_err(|e| Error::Farp(format!("Failed to parse schema JSON: {}", e)))?;
+            .map_err(|e| Error::Farp(format!("Failed to parse schema JSON: {e}")))?;
 
         info!(
             url = %url,
@@ -190,7 +190,7 @@ impl SchemaFetcher {
 
     /// Fetch schema from registry
     async fn fetch_registry(&self, descriptor: &SchemaDescriptor) -> Result<Value> {
-        let _registry_path = descriptor.location.registry_path.as_ref().ok_or_else(|| {
+        let registry_path = descriptor.location.registry_path.as_ref().ok_or_else(|| {
             Error::Farp("Registry path is required for registry location".to_string())
         })?;
 
@@ -235,8 +235,7 @@ impl SchemaFetcher {
         // 4. Return schema
 
         Err(Error::Farp(format!(
-            "Consul backend not yet implemented. Schema at path: {}",
-            path
+            "Consul backend not yet implemented. Schema at path: {path}"
         )))
     }
 
@@ -263,8 +262,7 @@ impl SchemaFetcher {
         // 5. Return schema
 
         Err(Error::Farp(format!(
-            "etcd backend not yet implemented. Schema at path: {}",
-            path
+            "etcd backend not yet implemented. Schema at path: {path}"
         )))
     }
 

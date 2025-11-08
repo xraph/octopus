@@ -70,7 +70,7 @@ pub struct ServiceInfo {
 
 impl FarpApiHandler {
     /// Create a new FARP API handler
-    pub fn new(registry: Arc<SchemaRegistry>) -> Self {
+    #[must_use] pub fn new(registry: Arc<SchemaRegistry>) -> Self {
         Self {
             registry,
             route_generator: Arc::new(RouteGenerator::new()),
@@ -79,7 +79,7 @@ impl FarpApiHandler {
     }
 
     /// Create a new FARP API handler with custom federation
-    pub fn with_federation(
+    #[must_use] pub fn with_federation(
         registry: Arc<SchemaRegistry>,
         federation: Arc<SchemaFederation>,
     ) -> Self {
@@ -148,10 +148,10 @@ impl FarpApiHandler {
             .into_body()
             .collect()
             .await
-            .map_err(|e| Error::Farp(format!("Failed to read request body: {}", e)))?
+            .map_err(|e| Error::Farp(format!("Failed to read request body: {e}")))?
             .to_bytes();
         let registration: RegistrationRequest = serde_json::from_slice(&body_bytes)
-            .map_err(|e| Error::Farp(format!("Invalid registration request: {}", e)))?;
+            .map_err(|e| Error::Farp(format!("Invalid registration request: {e}")))?;
 
         let service_name = registration.manifest.service_name.clone();
 
@@ -195,7 +195,7 @@ impl FarpApiHandler {
 
         let response = RegistrationResponse {
             success: true,
-            message: format!("Service '{}' registered successfully", service_name),
+            message: format!("Service '{service_name}' registered successfully"),
             routes: all_routes,
         };
 
@@ -212,10 +212,10 @@ impl FarpApiHandler {
             .into_body()
             .collect()
             .await
-            .map_err(|e| Error::Farp(format!("Failed to read request body: {}", e)))?
+            .map_err(|e| Error::Farp(format!("Failed to read request body: {e}")))?
             .to_bytes();
         let registration: RegistrationRequest = serde_json::from_slice(&body_bytes)
-            .map_err(|e| Error::Farp(format!("Invalid registration request: {}", e)))?;
+            .map_err(|e| Error::Farp(format!("Invalid registration request: {e}")))?;
 
         info!(service = %service_name, "Updating service");
 
@@ -289,67 +289,61 @@ impl FarpApiHandler {
         self.json_response(StatusCode::OK, &response)
     }
 
-    /// Get federated OpenAPI schema
+    /// Get federated `OpenAPI` schema
     async fn get_federated_openapi(&self) -> Result<Response<Full<Bytes>>> {
         info!("Serving federated OpenAPI schema");
 
-        match self.federation.get_federated(&SchemaFormat::OpenApi) {
-            Ok(schema) => Response::builder()
+        if let Ok(schema) = self.federation.get_federated(&SchemaFormat::OpenApi) { Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/json")
+        .body(Full::new(Bytes::from(schema.content)))
+        .map_err(|e| Error::Internal(format!("Failed to build response: {e}"))) } else {
+            // Return empty OpenAPI schema if none available
+            let empty_schema = serde_json::json!({
+                "openapi": "3.0.0",
+                "info": {
+                    "title": "Federated API (No Services)",
+                    "version": "1.0.0",
+                    "description": "No services have been registered yet"
+                },
+                "paths": {}
+            });
+
+            Response::builder()
                 .status(StatusCode::OK)
                 .header("content-type", "application/json")
-                .body(Full::new(Bytes::from(schema.content)))
-                .map_err(|e| Error::Internal(format!("Failed to build response: {}", e))),
-            Err(_) => {
-                // Return empty OpenAPI schema if none available
-                let empty_schema = serde_json::json!({
-                    "openapi": "3.0.0",
-                    "info": {
-                        "title": "Federated API (No Services)",
-                        "version": "1.0.0",
-                        "description": "No services have been registered yet"
-                    },
-                    "paths": {}
-                });
-
-                Response::builder()
-                    .status(StatusCode::OK)
-                    .header("content-type", "application/json")
-                    .body(Full::new(Bytes::from(
-                        serde_json::to_string_pretty(&empty_schema).unwrap(),
-                    )))
-                    .map_err(|e| Error::Internal(format!("Failed to build response: {}", e)))
-            }
+                .body(Full::new(Bytes::from(
+                    serde_json::to_string_pretty(&empty_schema).unwrap(),
+                )))
+                .map_err(|e| Error::Internal(format!("Failed to build response: {e}")))
         }
     }
 
-    /// Get federated AsyncAPI schema
+    /// Get federated `AsyncAPI` schema
     async fn get_federated_asyncapi(&self) -> Result<Response<Full<Bytes>>> {
         info!("Serving federated AsyncAPI schema");
 
-        match self.federation.get_federated(&SchemaFormat::AsyncApi) {
-            Ok(schema) => Response::builder()
+        if let Ok(schema) = self.federation.get_federated(&SchemaFormat::AsyncApi) { Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "application/json")
+        .body(Full::new(Bytes::from(schema.content)))
+        .map_err(|e| Error::Internal(format!("Failed to build response: {e}"))) } else {
+            let empty_schema = serde_json::json!({
+                "asyncapi": "2.6.0",
+                "info": {
+                    "title": "Federated Async API (No Services)",
+                    "version": "1.0.0"
+                },
+                "channels": {}
+            });
+
+            Response::builder()
                 .status(StatusCode::OK)
                 .header("content-type", "application/json")
-                .body(Full::new(Bytes::from(schema.content)))
-                .map_err(|e| Error::Internal(format!("Failed to build response: {}", e))),
-            Err(_) => {
-                let empty_schema = serde_json::json!({
-                    "asyncapi": "2.6.0",
-                    "info": {
-                        "title": "Federated Async API (No Services)",
-                        "version": "1.0.0"
-                    },
-                    "channels": {}
-                });
-
-                Response::builder()
-                    .status(StatusCode::OK)
-                    .header("content-type", "application/json")
-                    .body(Full::new(Bytes::from(
-                        serde_json::to_string_pretty(&empty_schema).unwrap(),
-                    )))
-                    .map_err(|e| Error::Internal(format!("Failed to build response: {}", e)))
-            }
+                .body(Full::new(Bytes::from(
+                    serde_json::to_string_pretty(&empty_schema).unwrap(),
+                )))
+                .map_err(|e| Error::Internal(format!("Failed to build response: {e}")))
         }
     }
 
@@ -357,22 +351,19 @@ impl FarpApiHandler {
     async fn get_federated_graphql(&self) -> Result<Response<Full<Bytes>>> {
         info!("Serving federated GraphQL schema");
 
-        match self.federation.get_federated(&SchemaFormat::GraphQL) {
-            Ok(schema) => Response::builder()
+        if let Ok(schema) = self.federation.get_federated(&SchemaFormat::GraphQL) { Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "text/plain; charset=utf-8")
+        .body(Full::new(Bytes::from(schema.content)))
+        .map_err(|e| Error::Internal(format!("Failed to build response: {e}"))) } else {
+            let empty_schema =
+                "# Federated GraphQL Schema (No Services)\ntype Query { _empty: String }";
+
+            Response::builder()
                 .status(StatusCode::OK)
                 .header("content-type", "text/plain; charset=utf-8")
-                .body(Full::new(Bytes::from(schema.content)))
-                .map_err(|e| Error::Internal(format!("Failed to build response: {}", e))),
-            Err(_) => {
-                let empty_schema =
-                    "# Federated GraphQL Schema (No Services)\ntype Query { _empty: String }";
-
-                Response::builder()
-                    .status(StatusCode::OK)
-                    .header("content-type", "text/plain; charset=utf-8")
-                    .body(Full::new(Bytes::from(empty_schema)))
-                    .map_err(|e| Error::Internal(format!("Failed to build response: {}", e)))
-            }
+                .body(Full::new(Bytes::from(empty_schema)))
+                .map_err(|e| Error::Internal(format!("Failed to build response: {e}")))
         }
     }
 
@@ -380,21 +371,18 @@ impl FarpApiHandler {
     async fn get_federated_grpc(&self) -> Result<Response<Full<Bytes>>> {
         info!("Serving federated gRPC schema");
 
-        match self.federation.get_federated(&SchemaFormat::Grpc) {
-            Ok(schema) => Response::builder()
+        if let Ok(schema) = self.federation.get_federated(&SchemaFormat::Grpc) { Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", "text/plain; charset=utf-8")
+        .body(Full::new(Bytes::from(schema.content)))
+        .map_err(|e| Error::Internal(format!("Failed to build response: {e}"))) } else {
+            let empty_schema = "// Federated gRPC Schema (No Services)\nsyntax = \"proto3\";";
+
+            Response::builder()
                 .status(StatusCode::OK)
                 .header("content-type", "text/plain; charset=utf-8")
-                .body(Full::new(Bytes::from(schema.content)))
-                .map_err(|e| Error::Internal(format!("Failed to build response: {}", e))),
-            Err(_) => {
-                let empty_schema = "// Federated gRPC Schema (No Services)\nsyntax = \"proto3\";";
-
-                Response::builder()
-                    .status(StatusCode::OK)
-                    .header("content-type", "text/plain; charset=utf-8")
-                    .body(Full::new(Bytes::from(empty_schema)))
-                    .map_err(|e| Error::Internal(format!("Failed to build response: {}", e)))
-            }
+                .body(Full::new(Bytes::from(empty_schema)))
+                .map_err(|e| Error::Internal(format!("Failed to build response: {e}")))
         }
     }
 
@@ -454,7 +442,7 @@ impl FarpApiHandler {
                     .status(StatusCode::OK)
                     .header("content-type", content_type)
                     .body(Full::new(Bytes::from(schema.content)))
-                    .map_err(|e| Error::Internal(format!("Failed to build response: {}", e)))
+                    .map_err(|e| Error::Internal(format!("Failed to build response: {e}")))
             }
             Err(e) => self.json_response(
                 StatusCode::NOT_FOUND,
@@ -516,10 +504,10 @@ impl FarpApiHandler {
             .status(StatusCode::OK)
             .header("content-type", "text/html; charset=utf-8")
             .body(Full::new(Bytes::from(html)))
-            .map_err(|e| Error::Internal(format!("Failed to build response: {}", e)))
+            .map_err(|e| Error::Internal(format!("Failed to build response: {e}")))
     }
 
-    /// Serve ReDoc UI
+    /// Serve `ReDoc` UI
     async fn redoc_ui(&self) -> Result<Response<Full<Bytes>>> {
         let html = r#"<!DOCTYPE html>
 <html lang="en">
@@ -542,7 +530,7 @@ impl FarpApiHandler {
             .status(StatusCode::OK)
             .header("content-type", "text/html; charset=utf-8")
             .body(Full::new(Bytes::from(html)))
-            .map_err(|e| Error::Internal(format!("Failed to build response: {}", e)))
+            .map_err(|e| Error::Internal(format!("Failed to build response: {e}")))
     }
 
     /// Trigger federation of all registered service schemas
@@ -581,7 +569,7 @@ impl FarpApiHandler {
                 "success": true,
                 "message": "Schema federation completed",
                 "schemas_processed": all_schemas.len(),
-                "formats_generated": formats.iter().map(|f| f.to_string()).collect::<Vec<_>>(),
+                "formats_generated": formats.iter().map(std::string::ToString::to_string).collect::<Vec<_>>(),
                 "services": service_names
             }),
         )
@@ -604,13 +592,13 @@ impl FarpApiHandler {
         body: &T,
     ) -> Result<Response<Full<Bytes>>> {
         let json = serde_json::to_string(body)
-            .map_err(|e| Error::Internal(format!("Failed to serialize response: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Failed to serialize response: {e}")))?;
 
         Response::builder()
             .status(status)
             .header("content-type", "application/json")
             .body(Full::new(Bytes::from(json)))
-            .map_err(|e| Error::Internal(format!("Failed to build response: {}", e)))
+            .map_err(|e| Error::Internal(format!("Failed to build response: {e}")))
     }
 }
 

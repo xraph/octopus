@@ -184,7 +184,7 @@ impl ScriptMiddleware {
         if let Some(req_ctx) = ctx.as_request() {
             req_ctx
                 .apply_to_request(req)
-                .map_err(|e| ScriptError::runtime(e))?;
+                .map_err(ScriptError::runtime)?;
         }
 
         result
@@ -219,7 +219,7 @@ impl ScriptMiddleware {
         if let Some(res_ctx) = ctx.as_response() {
             res_ctx
                 .apply_to_response(res)
-                .map_err(|e| ScriptError::runtime(e))?;
+                .map_err(ScriptError::runtime)?;
         }
 
         result
@@ -263,7 +263,7 @@ impl Middleware for ScriptMiddleware {
                         "Script execution failed on request"
                     );
                     if !self.config.continue_on_error {
-                        return Err(Error::Internal(format!("Script error: {}", e)));
+                        return Err(Error::Internal(format!("Script error: {e}")));
                     }
                 }
             }
@@ -285,7 +285,7 @@ impl Middleware for ScriptMiddleware {
                         "Script execution failed on response"
                     );
                     if !self.config.continue_on_error {
-                        return Err(Error::Internal(format!("Script error: {}", e)));
+                        return Err(Error::Internal(format!("Script error: {e}")));
                     }
                 }
             }

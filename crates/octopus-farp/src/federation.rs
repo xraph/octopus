@@ -33,7 +33,7 @@ pub struct FederatedSchema {
 
 impl SchemaFederation {
     /// Create a new schema federation engine
-    pub fn new() -> Self {
+    #[must_use] pub fn new() -> Self {
         Self {
             federated: Arc::new(DashMap::new()),
         }
@@ -47,7 +47,7 @@ impl SchemaFederation {
 
         for schema in schemas {
             by_format
-                .entry(schema.format.clone())
+                .entry(schema.format)
                 .or_default()
                 .push(schema);
         }
@@ -74,7 +74,7 @@ impl SchemaFederation {
         Ok(())
     }
 
-    /// Federate OpenAPI schemas
+    /// Federate `OpenAPI` schemas
     fn federate_openapi(&self, schemas: Vec<SchemaDescriptor>) -> Result<()> {
         let mut combined = serde_json::json!({
             "openapi": "3.0.0",
@@ -130,7 +130,7 @@ impl SchemaFederation {
         Ok(())
     }
 
-    /// Federate AsyncAPI schemas
+    /// Federate `AsyncAPI` schemas
     fn federate_asyncapi(&self, schemas: Vec<SchemaDescriptor>) -> Result<()> {
         let mut combined = serde_json::json!({
             "asyncapi": "2.0.0",
@@ -209,7 +209,7 @@ impl SchemaFederation {
             updated_at: std::time::SystemTime::now(),
         };
 
-        self.federated.insert(format.clone(), federated);
+        self.federated.insert(format, federated);
         Ok(())
     }
 
@@ -218,14 +218,14 @@ impl SchemaFederation {
         self.federated
             .get(format)
             .map(|f| f.clone())
-            .ok_or_else(|| Error::Farp(format!("No federated schema for format: {:?}", format)))
+            .ok_or_else(|| Error::Farp(format!("No federated schema for format: {format:?}")))
     }
 
     /// List all federated formats
-    pub fn list_formats(&self) -> Vec<SchemaFormat> {
+    #[must_use] pub fn list_formats(&self) -> Vec<SchemaFormat> {
         self.federated
             .iter()
-            .map(|entry| entry.key().clone())
+            .map(|entry| *entry.key())
             .collect()
     }
 }

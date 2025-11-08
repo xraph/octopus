@@ -2,7 +2,7 @@
 
 use crate::{Error, Result, StateBackend};
 use async_trait::async_trait;
-use redis::{aio::ConnectionManager, AsyncCommands, RedisError};
+use redis::{aio::ConnectionManager, AsyncCommands};
 use std::time::Duration;
 use tracing::{debug, trace};
 
@@ -51,7 +51,7 @@ impl RedisBackend {
     /// Add prefix to key if configured
     fn key(&self, key: &str) -> String {
         match &self.prefix {
-            Some(prefix) => format!("{}:{}", prefix, key),
+            Some(prefix) => format!("{prefix}:{key}"),
             None => key.to_string(),
         }
     }
@@ -60,7 +60,7 @@ impl RedisBackend {
     fn unprefix(&self, key: &str) -> String {
         match &self.prefix {
             Some(prefix) => {
-                let prefix_with_colon = format!("{}:", prefix);
+                let prefix_with_colon = format!("{prefix}:");
                 key.strip_prefix(&prefix_with_colon)
                     .unwrap_or(key)
                     .to_string()
@@ -90,9 +90,9 @@ impl StateBackend for RedisBackend {
         let mut conn = self.client.clone();
 
         if let Some(ttl) = ttl {
-            conn.set_ex(&key, value, ttl.as_secs()).await?;
+            conn.set_ex::<_, _, ()>(&key, value, ttl.as_secs()).await?;
         } else {
-            conn.set(&key, value).await?;
+            conn.set::<_, _, ()>(&key, value).await?;
         }
 
         Ok(())
@@ -108,7 +108,7 @@ impl StateBackend for RedisBackend {
 
         // Set TTL if provided and this is a new key
         if let Some(ttl) = ttl {
-            conn.expire(&key, ttl.as_secs() as i64).await?;
+            conn.expire::<_, ()>(&key, ttl.as_secs() as i64).await?;
         }
 
         Ok(new_value)
@@ -233,7 +233,7 @@ impl StateBackend for RedisBackend {
 
         // Use SCAN and DEL with prefix to avoid flushing the entire DB
         if let Some(ref prefix) = self.prefix {
-            let pattern = format!("{}:*", prefix);
+            let pattern = format!("{prefix}:*");
             let keys: Vec<String> = conn.keys(&pattern).await?;
             if !keys.is_empty() {
                 let _: () = conn.del(&keys).await?;

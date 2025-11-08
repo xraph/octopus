@@ -158,6 +158,7 @@ async fn compress_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytes::Bytes;
     use http::header::{ACCEPT_ENCODING, CONTENT_TYPE};
 
     #[tokio::test]

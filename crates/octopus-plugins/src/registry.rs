@@ -6,10 +6,16 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+/// Type alias for a plugin wrapped in Arc and RwLock
+type PluginHandle = Arc<RwLock<Box<dyn Plugin>>>;
+
+/// Type alias for the plugins map
+type PluginsMap = Arc<RwLock<HashMap<String, PluginHandle>>>;
+
 /// Plugin registry
 #[derive(Clone)]
 pub struct PluginRegistry {
-    plugins: Arc<RwLock<HashMap<String, Arc<RwLock<Box<dyn Plugin>>>>>>,
+    plugins: PluginsMap,
 }
 
 impl std::fmt::Debug for PluginRegistry {
@@ -64,7 +70,7 @@ impl PluginRegistry {
     }
 
     /// Get a plugin by name
-    pub async fn get(&self, name: &str) -> Option<Arc<RwLock<Box<dyn Plugin>>>> {
+    pub async fn get(&self, name: &str) -> Option<PluginHandle> {
         let plugins = self.plugins.read().await;
         plugins.get(name).cloned()
     }

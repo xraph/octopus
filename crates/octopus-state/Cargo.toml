@@ -21,7 +21,7 @@ tracing = "0.1"
 redis = { version = "0.27", features = ["tokio-comp", "connection-manager"], optional = true }
 
 # PostgreSQL backend (optional)
-sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls", "json"], optional = true }
+sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls", "json", "chrono"], optional = true }
 
 # Utilities
 uuid = { version = "1.6", features = ["v4", "serde"] }

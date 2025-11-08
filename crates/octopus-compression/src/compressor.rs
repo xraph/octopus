@@ -22,7 +22,7 @@ impl CompressionAlgorithm {
     }
 
     /// Parse from Accept-Encoding header value
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse_encoding(s: &str) -> Option<Self> {
         match s.trim().to_lowercase().as_str() {
             "gzip" => Some(Self::Gzip),
             "br" => Some(Self::Brotli),
@@ -101,7 +101,7 @@ impl Compressor {
         // Find first preferred algorithm that client accepts
         for pref in preferred {
             if accepted.contains(&pref.as_str()) {
-                if let Some(algo) = CompressionAlgorithm::from_str(pref) {
+                if let Some(algo) = CompressionAlgorithm::parse_encoding(pref) {
                     return Some(algo);
                 }
             }
@@ -125,18 +125,18 @@ mod tests {
     #[test]
     fn test_algorithm_from_str() {
         assert_eq!(
-            CompressionAlgorithm::from_str("gzip"),
+            CompressionAlgorithm::parse_encoding("gzip"),
             Some(CompressionAlgorithm::Gzip)
         );
         assert_eq!(
-            CompressionAlgorithm::from_str("br"),
+            CompressionAlgorithm::parse_encoding("br"),
             Some(CompressionAlgorithm::Brotli)
         );
         assert_eq!(
-            CompressionAlgorithm::from_str("zstd"),
+            CompressionAlgorithm::parse_encoding("zstd"),
             Some(CompressionAlgorithm::Zstd)
         );
-        assert_eq!(CompressionAlgorithm::from_str("unknown"), None);
+        assert_eq!(CompressionAlgorithm::parse_encoding("unknown"), None);
     }
 
     #[test]

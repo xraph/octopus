@@ -240,10 +240,10 @@ impl MdnsDiscovery {
                             let txt_records: Vec<String> = info
                                 .get_properties()
                                 .iter()
-                                .filter_map(|prop| {
+                                .map(|prop| {
                                     let key = prop.key();
                                     let val = prop.val_str();
-                                    Some(format!("{key}={val}"))
+                                    format!("{key}={val}")
                                 })
                                 .collect();
 

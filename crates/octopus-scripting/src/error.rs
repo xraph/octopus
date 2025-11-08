@@ -123,39 +123,39 @@ impl fmt::Display for ScriptError {
                 line,
                 column,
             } => {
-                write!(f, "Script compilation error: {}", message)?;
+                write!(f, "Script compilation error: {message}")?;
                 if let Some(line) = line {
-                    write!(f, " at line {}", line)?;
+                    write!(f, " at line {line}")?;
                     if let Some(col) = column {
-                        write!(f, ", column {}", col)?;
+                        write!(f, ", column {col}")?;
                     }
                 }
                 Ok(())
             }
             Self::RuntimeError { message, line } => {
-                write!(f, "Script runtime error: {}", message)?;
+                write!(f, "Script runtime error: {message}")?;
                 if let Some(line) = line {
-                    write!(f, " at line {}", line)?;
+                    write!(f, " at line {line}")?;
                 }
                 Ok(())
             }
             Self::Timeout { timeout_ms } => {
-                write!(f, "Script timeout after {}ms", timeout_ms)
+                write!(f, "Script timeout after {timeout_ms}ms")
             }
             Self::InvalidSource { message } => {
-                write!(f, "Invalid script source: {}", message)
+                write!(f, "Invalid script source: {message}")
             }
             Self::UnsupportedLanguage { language } => {
-                write!(f, "Unsupported script language: {}", language)
+                write!(f, "Unsupported script language: {language}")
             }
             Self::Panic { message } => {
-                write!(f, "Script panic: {}", message)
+                write!(f, "Script panic: {message}")
             }
             Self::TypeError { message } => {
-                write!(f, "Script type error: {}", message)
+                write!(f, "Script type error: {message}")
             }
             Self::IoError { message } => {
-                write!(f, "Script IO error: {}", message)
+                write!(f, "Script IO error: {message}")
             }
         }
     }

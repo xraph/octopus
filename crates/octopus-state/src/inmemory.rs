@@ -211,7 +211,7 @@ impl StateBackend for InMemoryBackend {
         // Simple glob pattern matching (* and ?)
         let regex_pattern = pattern.replace("*", ".*").replace("?", ".");
 
-        let re = regex::Regex::new(&format!("^{}$", regex_pattern))
+        let re = regex::Regex::new(&format!("^{regex_pattern}$"))
             .map_err(|e| Error::InvalidConfig(e.to_string()))?;
 
         let keys: Vec<String> = self

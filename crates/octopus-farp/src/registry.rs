@@ -27,7 +27,7 @@ pub struct ServiceRegistration {
 
 impl ServiceRegistration {
     /// Create a new service registration
-    pub fn new(manifest: SchemaManifest) -> Self {
+    #[must_use] pub fn new(manifest: SchemaManifest) -> Self {
         let now = SystemTime::now();
         Self {
             service_name: manifest.service_name.clone(),
@@ -75,12 +75,12 @@ impl Default for SchemaRegistry {
 
 impl SchemaRegistry {
     /// Create a new schema registry with default rate limit (60 updates/minute)
-    pub fn new() -> Self {
+    #[must_use] pub fn new() -> Self {
         Self::with_rate_limit(60)
     }
 
     /// Create a new schema registry with custom rate limit
-    pub fn with_rate_limit(max_updates_per_minute: u32) -> Self {
+    #[must_use] pub fn with_rate_limit(max_updates_per_minute: u32) -> Self {
         Self {
             services: Arc::new(DashMap::new()),
             rate_limiters: Arc::new(DashMap::new()),
@@ -101,19 +101,16 @@ impl SchemaRegistry {
             });
 
         // Check if we can proceed
-        match limiter.check() {
-            Ok(_) => Ok(()),
-            Err(_) => {
-                warn!(
-                    service = %service_name,
-                    max_per_minute = self.max_updates_per_minute,
-                    "Rate limit exceeded for service schema updates"
-                );
-                Err(Error::Farp(format!(
-                    "Rate limit exceeded for service '{}': max {} updates per minute",
-                    service_name, self.max_updates_per_minute
-                )))
-            }
+        if let Ok(()) = limiter.check() { Ok(()) } else {
+            warn!(
+                service = %service_name,
+                max_per_minute = self.max_updates_per_minute,
+                "Rate limit exceeded for service schema updates"
+            );
+            Err(Error::Farp(format!(
+                "Rate limit exceeded for service '{}': max {} updates per minute",
+                service_name, self.max_updates_per_minute
+            )))
         }
     }
 
@@ -144,8 +141,7 @@ impl SchemaRegistry {
             Ok(())
         } else {
             Err(Error::Farp(format!(
-                "Service '{}' not registered",
-                service_name
+                "Service '{service_name}' not registered"
             )))
         }
     }
@@ -154,7 +150,7 @@ impl SchemaRegistry {
     pub fn deregister_service(&self, service_name: &str) -> Result<()> {
         self.services
             .remove(service_name)
-            .ok_or_else(|| Error::Farp(format!("Service '{}' not registered", service_name)))?;
+            .ok_or_else(|| Error::Farp(format!("Service '{service_name}' not registered")))?;
         Ok(())
     }
 
@@ -163,11 +159,11 @@ impl SchemaRegistry {
         self.services
             .get(service_name)
             .map(|reg| reg.clone())
-            .ok_or_else(|| Error::Farp(format!("Service '{}' not registered", service_name)))
+            .ok_or_else(|| Error::Farp(format!("Service '{service_name}' not registered")))
     }
 
     /// List all registered services
-    pub fn list_services(&self) -> Vec<String> {
+    #[must_use] pub fn list_services(&self) -> Vec<String> {
         self.services
             .iter()
             .map(|entry| entry.key().clone())
@@ -181,8 +177,7 @@ impl SchemaRegistry {
             Ok(())
         } else {
             Err(Error::Farp(format!(
-                "Service '{}' not registered",
-                service_name
+                "Service '{service_name}' not registered"
             )))
         }
     }
@@ -193,7 +188,7 @@ impl SchemaRegistry {
     }
 
     /// Get total number of registered services
-    pub fn service_count(&self) -> usize {
+    #[must_use] pub fn service_count(&self) -> usize {
         self.services.len()
     }
 }

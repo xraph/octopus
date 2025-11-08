@@ -4,7 +4,6 @@
 
 use crate::manifest::SchemaManifest;
 use octopus_core::{Error, Result};
-use serde_json::json;
 
 #[cfg(feature = "validation")]
 use jsonschema::JSONSchema;
@@ -177,10 +176,10 @@ impl ManifestValidator {
         #[cfg(feature = "validation")]
         {
             let schema_value: serde_json::Value = serde_json::from_str(MANIFEST_JSON_SCHEMA)
-                .map_err(|e| Error::Farp(format!("Failed to parse JSON Schema: {}", e)))?;
+                .map_err(|e| Error::Farp(format!("Failed to parse JSON Schema: {e}")))?;
 
             let schema = JSONSchema::compile(&schema_value)
-                .map_err(|e| Error::Farp(format!("Failed to compile JSON Schema: {}", e)))?;
+                .map_err(|e| Error::Farp(format!("Failed to compile JSON Schema: {e}")))?;
 
             Ok(Self { schema })
         }
@@ -197,11 +196,12 @@ impl ManifestValidator {
         {
             // Convert manifest to JSON value
             let manifest_json = serde_json::to_value(manifest)
-                .map_err(|e| Error::Farp(format!("Failed to serialize manifest: {}", e)))?;
+                .map_err(|e| Error::Farp(format!("Failed to serialize manifest: {e}")))?;
 
-            // Validate against schema
-            match self.schema.validate(&manifest_json) {
-                Ok(_) => Ok(()),
+            // Validate against schema - collect errors first to avoid lifetime issues
+            let validation_result = self.schema.validate(&manifest_json);
+            match validation_result {
+                Ok(()) => Ok(()),
                 Err(errors) => {
                     let error_messages: Vec<String> = errors
                         .map(|e| format!("{}: {}", e.instance_path, e))
@@ -227,10 +227,12 @@ impl ManifestValidator {
         #[cfg(feature = "validation")]
         {
             let manifest_json = serde_json::to_value(manifest)
-                .map_err(|e| Error::Farp(format!("Failed to serialize manifest: {}", e)))?;
+                .map_err(|e| Error::Farp(format!("Failed to serialize manifest: {e}")))?;
 
-            match self.schema.validate(&manifest_json) {
-                Ok(_) => Ok(vec![]),
+            // Collect errors first to avoid lifetime issues
+            let validation_result = self.schema.validate(&manifest_json);
+            match validation_result {
+                Ok(()) => Ok(vec![]),
                 Err(errors) => {
                     let error_messages: Vec<String> = errors
                         .map(|e| format!("{}: {}", e.instance_path, e))

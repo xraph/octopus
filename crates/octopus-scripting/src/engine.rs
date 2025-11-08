@@ -104,7 +104,7 @@ impl ScriptSource {
                 tokio::fs::read_to_string(path)
                     .await
                     .map_err(|e| ScriptError::IoError {
-                        message: format!("Failed to read script file {:?}: {}", path, e),
+                        message: format!("Failed to read script file {path:?}: {e}"),
                     })
             }
         }

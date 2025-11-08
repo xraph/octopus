@@ -125,8 +125,7 @@ pub struct RateLimit {
     /// Global rate limiter
     limiter: Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock>>,
     /// Per-route rate limiters (path -> limiter)
-    route_limiters:
-        Arc<DashMap<String, Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock>>>>,
+    route_limiters: Arc<DashMap<String, Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock>>>>,
 }
 
 impl RateLimit {

@@ -58,10 +58,10 @@ impl RequestContext {
     pub fn apply_to_request<B>(&self, req: &mut http::Request<B>) -> Result<(), String> {
         // Update method
         *req.method_mut() =
-            Method::from_str(&self.method).map_err(|e| format!("Invalid method: {}", e))?;
+            Method::from_str(&self.method).map_err(|e| format!("Invalid method: {e}"))?;
 
         // Update URI
-        *req.uri_mut() = Uri::from_str(&self.uri).map_err(|e| format!("Invalid URI: {}", e))?;
+        *req.uri_mut() = Uri::from_str(&self.uri).map_err(|e| format!("Invalid URI: {e}"))?;
 
         // Update version
         *req.version_mut() = match self.version.as_str() {
@@ -77,9 +77,9 @@ impl RequestContext {
         req.headers_mut().clear();
         for (key, value) in &self.headers {
             let header_name = HeaderName::from_str(key)
-                .map_err(|e| format!("Invalid header name '{}': {}", key, e))?;
+                .map_err(|e| format!("Invalid header name '{key}': {e}"))?;
             let header_value = HeaderValue::from_str(value)
-                .map_err(|e| format!("Invalid header value for '{}': {}", key, e))?;
+                .map_err(|e| format!("Invalid header value for '{key}': {e}"))?;
             req.headers_mut().insert(header_name, header_value);
         }
 
@@ -144,15 +144,15 @@ impl ResponseContext {
     pub fn apply_to_response<B>(&self, res: &mut http::Response<B>) -> Result<(), String> {
         // Update status
         *res.status_mut() =
-            StatusCode::from_u16(self.status).map_err(|e| format!("Invalid status code: {}", e))?;
+            StatusCode::from_u16(self.status).map_err(|e| format!("Invalid status code: {e}"))?;
 
         // Update headers
         res.headers_mut().clear();
         for (key, value) in &self.headers {
             let header_name = HeaderName::from_str(key)
-                .map_err(|e| format!("Invalid header name '{}': {}", key, e))?;
+                .map_err(|e| format!("Invalid header name '{key}': {e}"))?;
             let header_value = HeaderValue::from_str(value)
-                .map_err(|e| format!("Invalid header value for '{}': {}", key, e))?;
+                .map_err(|e| format!("Invalid header value for '{key}': {e}"))?;
             res.headers_mut().insert(header_name, header_value);
         }
 

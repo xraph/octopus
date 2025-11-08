@@ -47,7 +47,7 @@ impl Default for FarpClient {
 
 impl FarpClient {
     /// Create a new FARP client
-    pub fn new(config: FarpClientConfig) -> Self {
+    #[must_use] pub fn new(config: FarpClientConfig) -> Self {
         let client = Client::builder(TokioExecutor::new()).build_http();
         Self { client, config }
     }
@@ -56,7 +56,7 @@ impl FarpClient {
     pub async fn fetch_manifest(&self, url: &str) -> Result<SchemaManifest> {
         let response_body = self.fetch_with_retry(url).await?;
         let manifest: SchemaManifest = serde_json::from_str(&response_body)
-            .map_err(|e| Error::Farp(format!("Failed to parse manifest: {}", e)))?;
+            .map_err(|e| Error::Farp(format!("Failed to parse manifest: {e}")))?;
 
         // Verify checksum if present
         if !manifest.verify_checksum()? {
@@ -96,33 +96,33 @@ impl FarpClient {
 
     /// Fetch once without retry
     async fn fetch_once(&self, url: &str) -> Result<String> {
-        let uri: Uri = url
+        let parsed_uri: Uri = url
             .parse()
-            .map_err(|e| Error::Farp(format!("Invalid URL: {}", e)))?;
+            .map_err(|e| Error::Farp(format!("Invalid URL: {e}")))?;
 
         let req = Request::builder()
-            .uri(uri)
+            .uri(parsed_uri)
             .body(Full::new(Bytes::new()))
-            .map_err(|e| Error::Farp(format!("Failed to build request: {}", e)))?;
+            .map_err(|e| Error::Farp(format!("Failed to build request: {e}")))?;
 
         let response = tokio::time::timeout(self.config.timeout, self.client.request(req))
             .await
             .map_err(|_| Error::UpstreamTimeout)?
-            .map_err(|e| Error::Farp(format!("Request failed: {}", e)))?;
+            .map_err(|e| Error::Farp(format!("Request failed: {e}")))?;
 
         let status = response.status();
         if !status.is_success() {
-            return Err(Error::Farp(format!("HTTP error: {}", status)));
+            return Err(Error::Farp(format!("HTTP error: {status}")));
         }
 
         // Read body
         let body_bytes = http_body_util::BodyExt::collect(response.into_body())
             .await
-            .map_err(|e| Error::Farp(format!("Failed to read body: {}", e)))?
+            .map_err(|e| Error::Farp(format!("Failed to read body: {e}")))?
             .to_bytes();
 
         String::from_utf8(body_bytes.to_vec())
-            .map_err(|e| Error::Farp(format!("Invalid UTF-8: {}", e)))
+            .map_err(|e| Error::Farp(format!("Invalid UTF-8: {e}")))
     }
 }
 

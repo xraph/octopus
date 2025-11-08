@@ -53,13 +53,13 @@ impl PathMatcher {
         // Check for parameters and wildcards
         let segments: Vec<&str> = pattern.split('/').collect();
         for segment in &segments {
-            if segment.starts_with(':') {
+            if let Some(param) = segment.strip_prefix(':') {
                 is_static = false;
-                param_names.push(segment[1..].to_string());
-            } else if segment.starts_with('*') {
+                param_names.push(param.to_string());
+            } else if let Some(param) = segment.strip_prefix('*') {
                 is_static = false;
                 has_wildcard = true;
-                param_names.push(segment[1..].to_string());
+                param_names.push(param.to_string());
             }
         }
 

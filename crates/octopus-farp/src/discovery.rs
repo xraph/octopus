@@ -10,7 +10,7 @@ use crate::schema::{SchemaDescriptor, SchemaFormat};
 use http::Method;
 use octopus_core::{Error, Result, UpstreamCluster, UpstreamInstance};
 use octopus_discovery::{DiscoveryProvider, ServiceInstance};
-use octopus_router::{Route, RouteBuilder, Router};
+use octopus_router::{RouteBuilder, Router};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -57,16 +57,16 @@ impl std::fmt::Debug for DiscoveryWatcher {
 
 impl DiscoveryWatcher {
     /// Create a new discovery watcher with default grace period (3 misses = 15 seconds)
-    pub fn new(registry: Arc<SchemaRegistry>, watch_interval: Duration) -> Self {
+    #[must_use] pub fn new(registry: Arc<SchemaRegistry>, watch_interval: Duration) -> Self {
         Self::with_grace_period(registry, watch_interval, 3)
     }
 
     /// Create a new discovery watcher with custom grace period
     ///
     /// `max_missed_discoveries`: Number of consecutive missed discoveries before deregistering
-    /// For example, with 5s watch_interval and max_missed=3, a service must be missing for
+    /// For example, with 5s `watch_interval` and `max_missed=3`, a service must be missing for
     /// 15 seconds before being deregistered
-    pub fn with_grace_period(
+    #[must_use] pub fn with_grace_period(
         registry: Arc<SchemaRegistry>,
         watch_interval: Duration,
         max_missed_discoveries: u32,
@@ -84,7 +84,7 @@ impl DiscoveryWatcher {
     }
 
     /// Create a new discovery watcher with custom federation
-    pub fn with_federation(
+    #[must_use] pub fn with_federation(
         registry: Arc<SchemaRegistry>,
         watch_interval: Duration,
         max_missed_discoveries: u32,
@@ -103,7 +103,7 @@ impl DiscoveryWatcher {
     }
 
     /// Set the router for dynamic route registration
-    pub fn with_router(mut self, router: Arc<Router>) -> Self {
+    #[must_use] pub fn with_router(mut self, router: Arc<Router>) -> Self {
         self.router = Some(router);
         self
     }
@@ -147,7 +147,7 @@ impl DiscoveryWatcher {
         let instances = provider
             .discover_services()
             .await
-            .map_err(|e| Error::Discovery(format!("Failed to discover services: {}", e)))?;
+            .map_err(|e| Error::Discovery(format!("Failed to discover services: {e}")))?;
 
         debug!(count = instances.len(), "Discovered services");
 
@@ -235,8 +235,7 @@ impl DiscoveryWatcher {
         let farp_enabled = metadata
             .custom
             .get("farp.enabled")
-            .map(|v| v == "true")
-            .unwrap_or(false);
+            .is_some_and(|v| v == "true");
 
         if !farp_enabled {
             debug!(
@@ -312,7 +311,7 @@ impl DiscoveryWatcher {
         }
 
         // Add OpenAPI schema location if available
-        manifest.add_openapi_http(&format!("{}{}", base_url, openapi_path));
+        manifest.add_openapi_http(&format!("{base_url}{openapi_path}"));
 
         // Update checksum
         manifest.update_checksum()?;
@@ -326,7 +325,7 @@ impl DiscoveryWatcher {
         }
 
         // Fetch and store the actual OpenAPI schema content
-        let openapi_url = format!("{}{}", base_url, openapi_path);
+        let openapi_url = format!("{base_url}{openapi_path}");
         match self
             .fetch_and_store_schema(&instance.name, &openapi_url)
             .await
@@ -382,7 +381,7 @@ impl DiscoveryWatcher {
         Ok(())
     }
 
-    /// Fetch OpenAPI schema from URL and store in registry
+    /// Fetch `OpenAPI` schema from URL and store in registry
     async fn fetch_and_store_schema(&self, service_name: &str, url: &str) -> Result<()> {
         debug!(
             service = %service_name,
@@ -395,11 +394,11 @@ impl DiscoveryWatcher {
 
         // Parse to validate it's valid JSON
         let _: serde_json::Value = serde_json::from_str(&content)
-            .map_err(|e| Error::Farp(format!("Invalid OpenAPI JSON: {}", e)))?;
+            .map_err(|e| Error::Farp(format!("Invalid OpenAPI JSON: {e}")))?;
 
         // Create schema descriptor
         let mut schema = SchemaDescriptor::new(
-            format!("{}-openapi", service_name),
+            format!("{service_name}-openapi"),
             service_name,
             SchemaFormat::OpenApi,
             "3.0.0", // Default version, could be extracted from schema
@@ -469,7 +468,7 @@ impl DiscoveryWatcher {
 
         let mut cluster = UpstreamCluster::new(service_name);
         let instance =
-            UpstreamInstance::new(&format!("{}-instance-1", service_name), address, port);
+            UpstreamInstance::new(format!("{service_name}-instance-1"), address, port);
         cluster.add_instance(instance);
 
         router.register_upstream(cluster);
@@ -482,7 +481,7 @@ impl DiscoveryWatcher {
         Ok(())
     }
 
-    /// Register routes from OpenAPI schema
+    /// Register routes from `OpenAPI` schema
     async fn register_routes_from_schema(
         &self,
         router: &Arc<Router>,
@@ -502,14 +501,13 @@ impl DiscoveryWatcher {
             .find(|s| matches!(s.format, SchemaFormat::OpenApi))
             .ok_or_else(|| {
                 Error::Farp(format!(
-                    "No OpenAPI schema found for service {}",
-                    service_name
+                    "No OpenAPI schema found for service {service_name}"
                 ))
             })?;
 
         // Parse the OpenAPI schema
         let schema_json: serde_json::Value = serde_json::from_str(&openapi_schema.content)
-            .map_err(|e| Error::Farp(format!("Failed to parse OpenAPI schema: {}", e)))?;
+            .map_err(|e| Error::Farp(format!("Failed to parse OpenAPI schema: {e}")))?;
 
         // Extract paths from OpenAPI schema
         let paths = schema_json
@@ -523,7 +521,7 @@ impl DiscoveryWatcher {
         for (path, operations) in paths {
             let operations = operations
                 .as_object()
-                .ok_or_else(|| Error::Farp(format!("Invalid operations for path {}", path)))?;
+                .ok_or_else(|| Error::Farp(format!("Invalid operations for path {path}")))?;
 
             // For each HTTP method in the path
             for (method_str, _operation) in operations {
@@ -540,7 +538,7 @@ impl DiscoveryWatcher {
                 };
 
                 // Create route with service prefix
-                let prefixed_path = format!("/{}{}", service_name, path);
+                let prefixed_path = format!("/{service_name}{path}");
 
                 let route = RouteBuilder::new()
                     .path(&prefixed_path)

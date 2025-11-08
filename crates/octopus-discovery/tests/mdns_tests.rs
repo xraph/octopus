@@ -20,7 +20,7 @@ mod mdns_integration_tests {
 
         // IPv6 should be disabled on macOS to avoid VPN errors
         #[cfg(target_os = "macos")]
-        assert_eq!(config.enable_ipv6, false);
+        assert!(!config.enable_ipv6);
 
         #[cfg(not(target_os = "macos"))]
         assert_eq!(config.enable_ipv6, true);
@@ -45,7 +45,7 @@ mod mdns_integration_tests {
         assert_eq!(config.service_type, "_test._tcp");
         assert_eq!(config.domain, "test.local.");
         assert_eq!(config.watch_interval, Duration::from_secs(60));
-        assert_eq!(config.enable_ipv6, false);
+        assert!(!config.enable_ipv6);
     }
 
     #[tokio::test]
@@ -116,7 +116,7 @@ mod mdns_integration_tests {
         );
         assert!(result.unwrap().is_ok(), "Discovery should succeed");
 
-        println!("Discovery completed in {:?}", elapsed);
+        println!("Discovery completed in {elapsed:?}");
 
         // Should complete within query timeout + buffer
         assert!(
@@ -131,8 +131,8 @@ mod mdns_integration_tests {
         #[cfg(target_os = "macos")]
         {
             let config = MdnsConfig::default();
-            assert_eq!(
-                config.enable_ipv6, false,
+            assert!(
+                !config.enable_ipv6,
                 "IPv6 should be disabled on macOS to avoid VPN tunnel errors"
             );
         }

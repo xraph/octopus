@@ -9,9 +9,9 @@ use std::fmt;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SchemaFormat {
-    /// OpenAPI schema
+    /// `OpenAPI` schema
     OpenApi,
-    /// AsyncAPI schema
+    /// `AsyncAPI` schema
     AsyncApi,
     /// gRPC protobuf schema
     Grpc,
@@ -24,11 +24,11 @@ pub enum SchemaFormat {
 impl fmt::Display for SchemaFormat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SchemaFormat::OpenApi => write!(f, "openapi"),
-            SchemaFormat::AsyncApi => write!(f, "asyncapi"),
-            SchemaFormat::Grpc => write!(f, "grpc"),
-            SchemaFormat::GraphQL => write!(f, "graphql"),
-            SchemaFormat::Custom => write!(f, "custom"),
+            Self::OpenApi => write!(f, "openapi"),
+            Self::AsyncApi => write!(f, "asyncapi"),
+            Self::Grpc => write!(f, "grpc"),
+            Self::GraphQL => write!(f, "graphql"),
+            Self::Custom => write!(f, "custom"),
         }
     }
 }
@@ -77,7 +77,7 @@ impl SchemaDescriptor {
         let mut hasher = Sha256::new();
         hasher.update(self.content.as_bytes());
         let result = hasher.finalize();
-        let checksum = format!("{:x}", result);
+        let checksum = format!("{result:x}");
         self.checksum = Some(checksum.clone());
         checksum
     }

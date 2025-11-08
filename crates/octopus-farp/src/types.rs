@@ -11,7 +11,7 @@ pub enum SchemaType {
     #[serde(rename = "openapi")]
     OpenAPI,
 
-    /// AsyncAPI specifications (WebSocket, SSE, message queues)
+    /// `AsyncAPI` specifications (WebSocket, SSE, message queues)
     #[serde(rename = "asyncapi")]
     AsyncAPI,
 
@@ -42,7 +42,7 @@ pub enum SchemaType {
 
 impl SchemaType {
     /// Returns the string representation of the schema type
-    pub fn as_str(&self) -> &'static str {
+    #[must_use] pub const fn as_str(&self) -> &'static str {
         match self {
             Self::OpenAPI => "openapi",
             Self::AsyncAPI => "asyncapi",
@@ -75,7 +75,7 @@ pub enum LocationType {
 
 impl LocationType {
     /// Returns the string representation of the location type
-    pub fn as_str(&self) -> &'static str {
+    #[must_use] pub const fn as_str(&self) -> &'static str {
         match self {
             Self::HTTP => "http",
             Self::Registry => "registry",
@@ -85,14 +85,14 @@ impl LocationType {
 }
 
 /// Schema location describes where and how to fetch a schema
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SchemaLocation {
     /// Location type (http, registry, inline)
     #[serde(rename = "type")]
     pub location_type: LocationType,
 
     /// HTTP URL (if type == HTTP)
-    /// Example: "http://user-service:8080/openapi.json"
+    /// Example: "<http://user-service:8080/openapi.json>"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
 
@@ -139,7 +139,7 @@ impl SchemaLocation {
     }
 
     /// Create an inline location
-    pub fn inline() -> Self {
+    #[must_use] pub const fn inline() -> Self {
         Self {
             location_type: LocationType::Inline,
             url: None,
@@ -174,13 +174,13 @@ impl SchemaLocation {
 }
 
 /// Schema descriptor describes a single API schema/contract
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SchemaDescriptor {
     /// Type of schema (openapi, asyncapi, grpc, graphql, etc.)
     #[serde(rename = "type")]
     pub schema_type: SchemaType,
 
-    /// Specification version (e.g., "3.1.0" for OpenAPI, "3.0.0" for AsyncAPI)
+    /// Specification version (e.g., "3.1.0" for `OpenAPI`, "3.0.0" for `AsyncAPI`)
     pub spec_version: String,
 
     /// How to retrieve the schema
@@ -222,7 +222,7 @@ impl SchemaDescriptor {
     }
 
     /// Set inline schema
-    pub fn with_inline_schema(mut self, schema: serde_json::Value) -> Self {
+    #[must_use] pub fn with_inline_schema(mut self, schema: serde_json::Value) -> Self {
         self.inline_schema = Some(schema);
         self
     }
@@ -240,12 +240,12 @@ pub struct SchemaEndpoints {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metrics: Option<String>,
 
-    /// OpenAPI spec endpoint (optional)
+    /// `OpenAPI` spec endpoint (optional)
     /// Example: "/openapi.json"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub openapi: Option<String>,
 
-    /// AsyncAPI spec endpoint (optional)
+    /// `AsyncAPI` spec endpoint (optional)
     /// Example: "/asyncapi.json"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub asyncapi: Option<String>,
@@ -260,7 +260,7 @@ pub struct SchemaEndpoints {
     pub graphql: Option<String>,
 }
 
-fn is_false(b: &bool) -> bool {
+const fn is_false(b: &bool) -> bool {
     !(*b)
 }
 
@@ -303,7 +303,7 @@ pub enum Capability {
 
 impl Capability {
     /// Returns the string representation of the capability
-    pub fn as_str(&self) -> &'static str {
+    #[must_use] pub const fn as_str(&self) -> &'static str {
         match self {
             Self::REST => "rest",
             Self::GRPC => "grpc",

@@ -73,7 +73,7 @@ impl SchemaManifest {
     }
 
     /// Add a schema descriptor (builder pattern)
-    pub fn with_schema(mut self, schema: SchemaDescriptor) -> Self {
+    #[must_use] pub fn with_schema(mut self, schema: SchemaDescriptor) -> Self {
         self.schemas.push(schema);
         self
     }
@@ -93,12 +93,12 @@ impl SchemaManifest {
     }
 
     /// Set endpoints
-    pub fn with_endpoints(mut self, endpoints: SchemaEndpoints) -> Self {
+    #[must_use] pub fn with_endpoints(mut self, endpoints: SchemaEndpoints) -> Self {
         self.endpoints = endpoints;
         self
     }
 
-    /// Add an OpenAPI schema via HTTP endpoint (convenience method)
+    /// Add an `OpenAPI` schema via HTTP endpoint (convenience method)
     pub fn add_openapi_http(&mut self, url: &str) {
         let schema = SchemaDescriptor::new(
             SchemaType::OpenAPI,
@@ -111,7 +111,7 @@ impl SchemaManifest {
         self.add_schema(schema);
     }
 
-    /// Add an AsyncAPI schema via HTTP endpoint (convenience method)
+    /// Add an `AsyncAPI` schema via HTTP endpoint (convenience method)
     pub fn add_asyncapi_http(&mut self, url: &str) {
         let schema = SchemaDescriptor::new(
             SchemaType::AsyncAPI,
@@ -154,7 +154,7 @@ impl SchemaManifest {
         let mut hasher = Sha256::new();
         hasher.update(combined.as_bytes());
         let result = hasher.finalize();
-        Ok(format!("{:x}", result))
+        Ok(format!("{result:x}"))
     }
 
     /// Validate the manifest for correctness
@@ -181,7 +181,7 @@ impl SchemaManifest {
         // Validate each schema descriptor
         for (i, schema) in self.schemas.iter().enumerate() {
             validate_schema_descriptor(schema)
-                .map_err(|e| Error::Farp(format!("Invalid schema at index {}: {}", i, e)))?;
+                .map_err(|e| Error::Farp(format!("Invalid schema at index {i}: {e}")))?;
         }
 
         // Verify checksum if present
@@ -199,34 +199,34 @@ impl SchemaManifest {
     }
 
     /// Get a schema descriptor by type
-    pub fn get_schema(&self, schema_type: SchemaType) -> Option<&SchemaDescriptor> {
+    #[must_use] pub fn get_schema(&self, schema_type: SchemaType) -> Option<&SchemaDescriptor> {
         self.schemas.iter().find(|s| s.schema_type == schema_type)
     }
 
     /// Check if the manifest has a specific capability
-    pub fn has_capability(&self, capability: &str) -> bool {
+    #[must_use] pub fn has_capability(&self, capability: &str) -> bool {
         self.capabilities.iter().any(|c| c == capability)
     }
 
     /// Clone the manifest
-    pub fn deep_clone(&self) -> Self {
+    #[must_use] pub fn deep_clone(&self) -> Self {
         self.clone()
     }
 
     /// Serialize to JSON
     pub fn to_json(&self) -> Result<String> {
-        serde_json::to_string(self).map_err(|e| Error::Farp(format!("Failed to serialize: {}", e)))
+        serde_json::to_string(self).map_err(|e| Error::Farp(format!("Failed to serialize: {e}")))
     }
 
     /// Serialize to pretty JSON
     pub fn to_pretty_json(&self) -> Result<String> {
         serde_json::to_string_pretty(self)
-            .map_err(|e| Error::Farp(format!("Failed to serialize: {}", e)))
+            .map_err(|e| Error::Farp(format!("Failed to serialize: {e}")))
     }
 
     /// Deserialize from JSON
     pub fn from_json(json: &str) -> Result<Self> {
-        serde_json::from_str(json).map_err(|e| Error::Farp(format!("Failed to deserialize: {}", e)))
+        serde_json::from_str(json).map_err(|e| Error::Farp(format!("Failed to deserialize: {e}")))
     }
 
     /// Verify checksum matches calculated checksum
@@ -294,12 +294,12 @@ fn validate_schema_descriptor(schema: &SchemaDescriptor) -> Result<()> {
 /// Calculate the SHA256 checksum of a schema (any JSON-serializable value)
 pub fn calculate_schema_checksum(schema: &serde_json::Value) -> Result<String> {
     let json = serde_json::to_string(schema)
-        .map_err(|e| Error::Farp(format!("Failed to serialize schema: {}", e)))?;
+        .map_err(|e| Error::Farp(format!("Failed to serialize schema: {e}")))?;
 
     let mut hasher = Sha256::new();
     hasher.update(json.as_bytes());
     let result = hasher.finalize();
-    Ok(format!("{:x}", result))
+    Ok(format!("{result:x}"))
 }
 
 /// Manifest diff represents the difference between two manifests
@@ -334,7 +334,7 @@ pub struct SchemaChangeDiff {
 
 impl ManifestDiff {
     /// Check if there are any changes
-    pub fn has_changes(&self) -> bool {
+    #[must_use] pub fn has_changes(&self) -> bool {
         !self.schemas_added.is_empty()
             || !self.schemas_removed.is_empty()
             || !self.schemas_changed.is_empty()
@@ -345,7 +345,7 @@ impl ManifestDiff {
 }
 
 /// Compare two manifests and return the differences
-pub fn diff_manifests(old: &SchemaManifest, new: &SchemaManifest) -> ManifestDiff {
+#[must_use] pub fn diff_manifests(old: &SchemaManifest, new: &SchemaManifest) -> ManifestDiff {
     let mut diff = ManifestDiff {
         schemas_added: Vec::new(),
         schemas_removed: Vec::new(),
