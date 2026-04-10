@@ -28,6 +28,7 @@ pub fn class_names(classes: &[&str]) -> String {
 
 /// Merge class strings with deduplication
 #[must_use]
+#[allow(dead_code)]
 pub fn merge_classes(base: &str, additional: &str) -> String {
     if additional.is_empty() {
         return base.to_string();

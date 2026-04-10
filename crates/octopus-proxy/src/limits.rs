@@ -147,6 +147,15 @@ pub struct LimitedBody<B> {
     consumed: usize,
 }
 
+impl<B> std::fmt::Debug for LimitedBody<B> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LimitedBody")
+            .field("limit", &self.limit)
+            .field("consumed", &self.consumed)
+            .finish()
+    }
+}
+
 impl<B> LimitedBody<B> {
     /// Create a new limited body
     pub fn new(inner: B, limit: usize) -> Self {

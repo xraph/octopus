@@ -199,6 +199,7 @@ impl std::fmt::Debug for ShutdownHandle {
 }
 
 /// Connection guard that automatically decrements counter on drop
+#[derive(Debug)]
 pub struct ConnectionGuard {
     active_connections: Arc<AtomicUsize>,
     drained: Arc<Notify>,

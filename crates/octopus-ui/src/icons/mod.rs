@@ -7,6 +7,7 @@ use crate::core::{Node, Render};
 /// Icon component
 #[derive(Debug, Clone)]
 pub struct Icon {
+    #[allow(dead_code)]
     name: String,
     size: u32,
     color: Option<String>,

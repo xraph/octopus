@@ -383,8 +383,11 @@ pub struct ManifestDiff {
 /// Schema change diff represents a changed schema
 #[derive(Debug, Clone)]
 pub struct SchemaChangeDiff {
+    /// The type of schema that changed
     pub schema_type: SchemaType,
+    /// Hash of the previous schema version
     pub old_hash: String,
+    /// Hash of the new schema version
     pub new_hash: String,
 }
 

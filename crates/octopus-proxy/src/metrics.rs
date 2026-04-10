@@ -409,6 +409,15 @@ pub struct RequestTracker {
     route: Option<String>,
 }
 
+impl std::fmt::Debug for RequestTracker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RequestTracker")
+            .field("start_time", &self.start_time)
+            .field("route", &self.route)
+            .finish()
+    }
+}
+
 impl RequestTracker {
     /// Create a new request tracker
     pub fn new(metrics: ProxyMetrics) -> Self {

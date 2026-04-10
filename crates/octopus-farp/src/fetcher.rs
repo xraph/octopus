@@ -19,7 +19,7 @@ use consul::Client as ConsulClient;
 use etcd_client::Client as EtcdClient;
 
 /// Registry backend configuration
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum RegistryBackend {
     /// No registry backend configured
     None,
@@ -34,9 +34,9 @@ pub enum RegistryBackend {
 }
 
 /// Schema fetcher handles retrieving schemas from various locations
+#[derive(Debug)]
 pub struct SchemaFetcher {
     http_client: reqwest::Client,
-    timeout: Duration,
     registry_backend: RegistryBackend,
 }
 
@@ -55,7 +55,6 @@ impl SchemaFetcher {
 
         Self {
             http_client,
-            timeout,
             registry_backend: RegistryBackend::None,
         }
     }
@@ -190,7 +189,7 @@ impl SchemaFetcher {
 
     /// Fetch schema from registry
     async fn fetch_registry(&self, descriptor: &SchemaDescriptor) -> Result<Value> {
-        let registry_path = descriptor.location.registry_path.as_ref().ok_or_else(|| {
+        let _registry_path = descriptor.location.registry_path.as_ref().ok_or_else(|| {
             Error::Farp("Registry path is required for registry location".to_string())
         })?;
 
@@ -203,12 +202,12 @@ impl SchemaFetcher {
 
             #[cfg(feature = "consul-backend")]
             RegistryBackend::Consul(client) => {
-                self.fetch_from_consul(client, registry_path, descriptor).await
+                self.fetch_from_consul(client, _registry_path, descriptor).await
             }
 
             #[cfg(feature = "etcd-backend")]
             RegistryBackend::Etcd(client) => {
-                self.fetch_from_etcd(client, registry_path, descriptor).await
+                self.fetch_from_etcd(client, _registry_path, descriptor).await
             }
         }
     }
@@ -317,7 +316,7 @@ mod tests {
     #[test]
     fn test_fetcher_creation() {
         let fetcher = SchemaFetcher::new();
-        assert_eq!(fetcher.timeout, Duration::from_secs(30));
+        assert!(matches!(fetcher.registry_backend, RegistryBackend::None));
     }
 
     #[test]

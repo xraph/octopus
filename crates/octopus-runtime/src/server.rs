@@ -447,7 +447,7 @@ impl ServerBuilder {
 
             Some(Arc::new(FarpApiHandler::with_federation(
                 registry, federation,
-            )))
+            ).with_router(Arc::clone(&router))))
         } else {
             if !config.farp.enabled {
                 tracing::info!("FARP disabled in configuration");

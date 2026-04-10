@@ -30,6 +30,7 @@ pub struct BaseProps {
     pub attrs: HashMap<String, String>,
 }
 
+#[allow(dead_code)]
 impl BaseProps {
     /// Create new base props
     #[must_use]

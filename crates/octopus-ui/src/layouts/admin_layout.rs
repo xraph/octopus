@@ -1,7 +1,6 @@
 //! Admin dashboard layout with sidebar
 
 use crate::core::Node;
-use crate::primitives::VStack;
 
 /// Admin layout with sidebar navigation
 pub struct AdminLayout {

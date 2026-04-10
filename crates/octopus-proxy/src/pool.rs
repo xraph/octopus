@@ -55,6 +55,7 @@ impl Default for PoolConfig {
 }
 
 /// HTTP/1.1 connection wrapper
+#[derive(Debug)]
 pub struct PooledConnection {
     sender: http1::SendRequest<Full<Bytes>>,
     created_at: Instant,
@@ -125,11 +126,14 @@ impl PooledConnection {
 /// Key for identifying unique upstream targets
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct UpstreamKey {
+    /// Upstream host address
     pub host: String,
+    /// Upstream port number
     pub port: u16,
 }
 
 impl UpstreamKey {
+    /// Create an upstream key from a service instance
     pub fn from_instance(instance: &UpstreamInstance) -> Self {
         Self {
             host: instance.address.clone(),
@@ -153,6 +157,7 @@ struct UpstreamPool {
     metrics: PoolMetrics,
     
     /// Pool configuration
+    #[allow(dead_code)]
     config: PoolConfig,
 }
 
@@ -168,6 +173,7 @@ impl UpstreamPool {
     }
 
     /// Get connection count (idle + active)
+    #[allow(dead_code)]
     fn total_connections(&self) -> u32 {
         let idle = self.idle_connections.try_lock()
             .map(|idle| idle.len() as u32)
@@ -177,11 +183,13 @@ impl UpstreamPool {
     }
 
     /// Get idle connection count
+    #[allow(dead_code)]
     async fn idle_count(&self) -> usize {
         self.idle_connections.lock().await.len()
     }
 
     /// Get active connection count
+    #[allow(dead_code)]
     fn active_count(&self) -> u32 {
         self.active_count.load(Ordering::Relaxed)
     }
@@ -226,6 +234,15 @@ pub struct ConnectionPool {
     config: PoolConfig,
     pools: Arc<DashMap<UpstreamKey, Arc<UpstreamPool>>>,
     accepting: Arc<AtomicBool>,
+}
+
+impl std::fmt::Debug for ConnectionPool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConnectionPool")
+            .field("config", &self.config)
+            .field("accepting", &self.accepting)
+            .finish()
+    }
 }
 
 impl ConnectionPool {
@@ -549,11 +566,17 @@ impl Default for ConnectionPool {
 /// Pool statistics
 #[derive(Debug, Clone)]
 pub struct PoolStats {
+    /// Number of idle connections available for reuse
     pub idle_connections: usize,
+    /// Number of active connections currently in use
     pub active_connections: usize,
+    /// Total connections created over the pool lifetime
     pub total_created: u64,
+    /// Total connections reused from the pool
     pub total_reused: u64,
+    /// Total connections retired due to age or errors
     pub total_retired: u64,
+    /// Total connection errors encountered
     pub connection_errors: u64,
 }
 

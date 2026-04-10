@@ -4,8 +4,9 @@ use http::{HeaderMap, HeaderValue, Request, Response};
 use std::fmt;
 use tracing::{debug, warn};
 
-/// W3C Trace Context header names
+/// W3C Trace Context traceparent header name
 pub const TRACEPARENT_HEADER: &str = "traceparent";
+/// W3C Trace Context tracestate header name
 pub const TRACESTATE_HEADER: &str = "tracestate";
 
 /// W3C Trace Context version

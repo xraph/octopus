@@ -6,7 +6,7 @@ use crate::client::FarpClient;
 use crate::federation::SchemaFederation;
 use crate::manifest::SchemaManifest;
 use crate::registry::SchemaRegistry;
-use crate::schema::{SchemaDescriptor, SchemaFormat};
+use crate::schema::SchemaFormat;
 use http::Method;
 use octopus_core::{Error, Result, UpstreamCluster, UpstreamInstance};
 use octopus_discovery::{DiscoveryProvider, ServiceInstance};
@@ -481,7 +481,7 @@ impl DiscoveryWatcher {
                 for gen_route in &routes {
                     let route = RouteBuilder::new()
                         .method(gen_route.method.parse().unwrap_or(Method::GET))
-                        .path(format!("/{service_name}{}", gen_route.path))
+                        .path(format!("/{service_name_lower}{}", gen_route.path, service_name_lower = service_name.to_lowercase()))
                         .upstream_name(service_name)
                         .priority(100)
                         .build();
@@ -522,6 +522,14 @@ impl DiscoveryWatcher {
 
         // Create routes for each path
         for (path, operations) in paths {
+            // Filter out standard introspection endpoints by default.
+            // Set FARP_INCLUDE_INTROSPECTION_ENDPOINTS=1 to include them.
+            if crate::schema_ops::should_exclude_introspection()
+                && crate::schema_ops::is_introspection_path(path.as_str())
+            {
+                continue;
+            }
+
             let operations = operations
                 .as_object()
                 .ok_or_else(|| Error::Farp(format!("Invalid operations for path {path}")))?;
@@ -540,8 +548,8 @@ impl DiscoveryWatcher {
                     _ => continue, // Skip non-standard methods
                 };
 
-                // Create route with service prefix
-                let prefixed_path = format!("/{service_name}{path}");
+                // Create route with lowercase service prefix
+                let prefixed_path = format!("/{service_name_lower}{path}", service_name_lower = service_name.to_lowercase());
 
                 let route = RouteBuilder::new()
                     .path(&prefixed_path)

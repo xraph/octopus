@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::handlers::AppState;
-use crate::models::{PerformanceMetrics, RouteInfo, RouteConfig, PluginInfo, LogQuery, SystemInfo, AnalyticsMetrics, TimeSeriesPoint, LatencyPercentiles, RouteMetric, ActivityLogEntry, SecurityEvent, ConfigItem};
+use crate::models::{PerformanceMetrics, RouteInfo, RouteConfig, LogQuery, SystemInfo, AnalyticsMetrics, TimeSeriesPoint, LatencyPercentiles, RouteMetric, ActivityLogEntry, SecurityEvent, ConfigItem};
 
 // ============================================================================
 // Metrics & Analytics Endpoints
@@ -102,7 +102,7 @@ pub async fn api_timeseries_handler(
     let metric = params
         .get("metric")
         .map_or("requests", std::string::String::as_str);
-    let period = params.get("period").map_or("1h", std::string::String::as_str);
+    let _period = params.get("period").map_or("1h", std::string::String::as_str);
 
     // Current point from real metrics
     if let Some(ref m) = state.metrics {
@@ -199,7 +199,7 @@ pub async fn api_route_create_handler(
 /// Update existing route
 /// PUT /admin/api/routes/:id
 pub async fn api_route_update_handler(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
     Path(id): Path<String>,
     Json(config): Json<RouteConfig>,
 ) -> impl IntoResponse {

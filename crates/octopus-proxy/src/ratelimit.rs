@@ -208,7 +208,7 @@ impl InMemoryRateLimiter {
         // Fast path: read lock first to check if bucket exists
         {
             let buckets = self.buckets.read();
-            if let Some(bucket) = buckets.get(&full_key) {
+            if let Some(_bucket) = buckets.get(&full_key) {
                 // Need to drop read lock before getting write lock
                 drop(buckets);
                 
@@ -321,6 +321,7 @@ impl RateLimiter for InMemoryRateLimiter {
 }
 
 /// Rate limit key builder for common patterns
+#[derive(Debug)]
 pub struct RateLimitKeyBuilder;
 
 impl RateLimitKeyBuilder {

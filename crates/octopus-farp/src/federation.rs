@@ -11,8 +11,8 @@ use std::sync::Arc;
 
 // Import external merger types
 use farp::merger::{
-    Merger, MergerConfig, ServiceSchema, MergeResult, OpenAPISpec,
-    AsyncAPIMerger, AsyncAPIServiceSchema, AsyncAPISpec,
+    Merger, MergerConfig, ServiceSchema,
+    AsyncAPIMerger, AsyncAPIServiceSchema,
 };
 use farp::manifest::new_manifest;
 
@@ -63,6 +63,10 @@ impl SchemaFederation {
         }
 
         // Federate each format
+        for (format, schemas) in &by_format {
+            tracing::info!(format = ?format, count = schemas.len(), "Federating schemas for format");
+        }
+
         for (format, schemas) in by_format {
             match format {
                 SchemaFormat::OpenApi => {
@@ -93,8 +97,56 @@ impl SchemaFederation {
             .into_iter()
             .filter_map(|desc| {
                 // Parse the schema content
-                let schema_value = serde_json::from_str(&desc.content).ok()?;
-                
+                let mut schema_value: serde_json::Value = serde_json::from_str(&desc.content).ok()?;
+
+                // Filter out standard introspection endpoints by default.
+                // Set FARP_INCLUDE_INTROSPECTION_ENDPOINTS=1 to include them.
+                if crate::schema_ops::should_exclude_introspection() {
+                    if let Some(obj) = schema_value.as_object_mut() {
+                        if let Some(paths) = obj.get_mut("paths").and_then(|p| p.as_object_mut()) {
+                            let before_count = paths.len();
+                            let to_remove: Vec<String> = paths.keys()
+                                .filter(|p| crate::schema_ops::is_introspection_path(p.as_str()))
+                                .cloned()
+                                .collect();
+
+                            for p in &to_remove {
+                                paths.remove(p);
+                            }
+
+                            if !to_remove.is_empty() {
+                                tracing::debug!(
+                                    service = %desc.service,
+                                    removed = to_remove.len(),
+                                    remaining = paths.len(),
+                                    total = before_count,
+                                    "Filtered introspection endpoints from schema"
+                                );
+                            }
+
+                            if paths.is_empty() && before_count > 0 {
+                                tracing::warn!(
+                                    service = %desc.service,
+                                    "All paths were introspection endpoints and were filtered out. \
+                                     The service's OpenAPI spec contains no business API operations. \
+                                     Routes from the gateway router will be used as a fallback."
+                                );
+                            }
+                        }
+                    }
+                }
+
+                // Log the paths that will be federated
+                if let Some(paths) = schema_value.get("paths").and_then(|p| p.as_object()) {
+                    let path_names: Vec<&String> = paths.keys().collect();
+                    tracing::debug!(
+                        service = %desc.service,
+                        path_count = paths.len(),
+                        paths = ?path_names,
+                        "Paths to federate for service"
+                    );
+                }
+
                 // Parse into OpenAPISpec (optional - merger can work without it)
                 let parsed = farp::merger::parse_openapi_schema(&schema_value).ok();
                 
@@ -161,8 +213,34 @@ impl SchemaFederation {
         let merge_result = merger.merge(service_schemas)
             .map_err(|e| Error::Farp(format!("Failed to merge OpenAPI schemas: {}", e)))?;
 
-        // Convert MergeResult to our FederatedSchema
-        let content = serde_json::to_string_pretty(&serde_json::to_value(&merge_result.spec).unwrap())
+        // Convert MergeResult to JSON, then post-process to set gateway server
+        let mut spec_value = serde_json::to_value(&merge_result.spec)
+            .map_err(|e| Error::Farp(format!("Failed to serialize merged schema: {}", e)))?;
+        
+        // Set the servers array to point to the gateway root.
+        // Without this, Swagger UI defaults to the fetch URL (/farp/openapi.json)
+        // as the base, causing all "Try it out" requests to fail.
+        if let Some(obj) = spec_value.as_object_mut() {
+            obj.insert("servers".to_string(), serde_json::json!([
+                {
+                    "url": "/",
+                    "description": "Gateway"
+                }
+            ]));
+        }
+        
+        // Log the merged spec path count for debugging
+        let path_count = spec_value.get("paths")
+            .and_then(|p| p.as_object())
+            .map(|p| p.len())
+            .unwrap_or(0);
+        tracing::info!(
+            path_count = path_count,
+            services = ?sources,
+            "Federated OpenAPI spec built"
+        );
+
+        let content = serde_json::to_string_pretty(&spec_value)
             .map_err(|e| Error::Farp(format!("Failed to serialize merged schema: {}", e)))?;
 
         let federated = FederatedSchema {

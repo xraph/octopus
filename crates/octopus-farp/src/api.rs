@@ -11,6 +11,7 @@ use bytes::Bytes;
 use http::{Method, Request, Response, StatusCode};
 use http_body_util::{BodyExt, Full};
 use octopus_core::{Error, Result};
+use octopus_router::Router;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -25,6 +26,8 @@ pub struct FarpApiHandler {
     validator: Arc<ManifestValidator>,
     /// HTTP client for fetching manifests from services (FARP spec 17.4)
     farp_client: Arc<FarpClient>,
+    /// Optional router for supplementing the federated spec with registered routes
+    router: Option<Arc<Router>>,
 }
 
 /// Registration request
@@ -158,6 +161,7 @@ impl FarpApiHandler {
             federation: Arc::new(SchemaFederation::new()),
             validator: Arc::new(ManifestValidator::default()),
             farp_client: Arc::new(FarpClient::default()),
+            router: None,
         }
     }
 
@@ -172,7 +176,14 @@ impl FarpApiHandler {
             federation,
             validator: Arc::new(ManifestValidator::default()),
             farp_client: Arc::new(FarpClient::default()),
+            router: None,
         }
+    }
+
+    /// Set the router for supplementing the federated spec with registered routes
+    #[must_use] pub fn with_router(mut self, router: Arc<Router>) -> Self {
+        self.router = Some(router);
+        self
     }
 
     /// Get a reference to the schema registry
@@ -349,6 +360,76 @@ impl FarpApiHandler {
                 &manifest,
             )
             .await;
+
+            // Register upstream and routes in the gateway router (if available)
+            if let Some(ref router) = self.router {
+                // Register upstream cluster
+                let mut cluster = octopus_core::UpstreamCluster::new(&service_name);
+                let inst_address = if instance.port > 0 && !instance.address.contains(':') {
+                    instance.address.clone()
+                } else {
+                    instance.address.split(':').next().unwrap_or(&instance.address).to_string()
+                };
+                let inst_port = if instance.port > 0 {
+                    instance.port
+                } else {
+                    instance.address.split(':').nth(1).and_then(|p| p.parse().ok()).unwrap_or(80)
+                };
+                let upstream_inst = octopus_core::UpstreamInstance::new(
+                    &instance.id,
+                    &inst_address,
+                    inst_port,
+                );
+                cluster.add_instance(upstream_inst);
+                router.register_upstream(cluster);
+
+                // Register routes from the fetched OpenAPI schema
+                if let Ok(schemas) = self.registry.get_schemas(&service_name) {
+                    for schema in &schemas {
+                        if schema.format == SchemaFormat::OpenApi {
+                            if let Ok(schema_json) = serde_json::from_str::<serde_json::Value>(&schema.content) {
+                                if let Some(paths) = schema_json.get("paths").and_then(|p| p.as_object()) {
+                                    let service_name_lower = service_name.to_lowercase();
+                                    for (path, operations) in paths {
+                                        // Skip introspection endpoints
+                                        if crate::schema_ops::should_exclude_introspection()
+                                            && crate::schema_ops::is_introspection_path(path)
+                                        {
+                                            continue;
+                                        }
+                                        if let Some(ops) = operations.as_object() {
+                                            for method_str in ops.keys() {
+                                                let method = match method_str.to_uppercase().as_str() {
+                                                    "GET" => Method::GET,
+                                                    "POST" => Method::POST,
+                                                    "PUT" => Method::PUT,
+                                                    "DELETE" => Method::DELETE,
+                                                    "PATCH" => Method::PATCH,
+                                                    "HEAD" => Method::HEAD,
+                                                    "OPTIONS" => Method::OPTIONS,
+                                                    _ => continue,
+                                                };
+                                                let prefixed_path = format!("/{service_name_lower}{path}");
+                                                let route = octopus_router::RouteBuilder::new()
+                                                    .path(&prefixed_path)
+                                                    .method(method)
+                                                    .upstream_name(&service_name)
+                                                    .priority(100)
+                                                    .build();
+                                                if let Ok(route) = route {
+                                                    let _ = router.add_route(route);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                info!(service = %service_name, "Upstream and routes registered in gateway router");
+            }
 
             // Trigger federation to merge all registered schemas
             if let Err(e) = crate::schema_ops::trigger_federation(&self.registry, &self.federation)
@@ -664,30 +745,143 @@ impl FarpApiHandler {
     async fn get_federated_openapi(&self) -> Result<Response<Full<Bytes>>> {
         info!("Serving federated OpenAPI schema");
 
-        if let Ok(schema) = self.federation.get_federated(&SchemaFormat::OpenApi) { Response::builder()
-        .status(StatusCode::OK)
-        .header("content-type", "application/json")
-        .body(Full::new(Bytes::from(schema.content)))
-        .map_err(|e| Error::Internal(format!("Failed to build response: {e}"))) } else {
-            // Return empty OpenAPI schema if none available
+        if let Ok(schema) = self.federation.get_federated(&SchemaFormat::OpenApi) {
+            // Supplement the federated spec with routes from the router
+            let content = if let Some(ref router) = self.router {
+                self.supplement_spec_with_routes(&schema.content, router)
+            } else {
+                schema.content
+            };
+
+            Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "application/json")
+                .body(Full::new(Bytes::from(content)))
+                .map_err(|e| Error::Internal(format!("Failed to build response: {e}")))
+        } else {
+            // No federated schema available — build one from router routes as fallback
             let empty_schema = serde_json::json!({
                 "openapi": "3.0.0",
                 "info": {
-                    "title": "Federated API (No Services)",
+                    "title": "Federated API",
                     "version": "1.0.0",
-                    "description": "No services have been registered yet"
+                    "description": "API specification from registered services"
                 },
+                "servers": [{"url": "/", "description": "Gateway"}],
                 "paths": {}
             });
+
+            let content = if let Some(ref router) = self.router {
+                self.supplement_spec_with_routes(
+                    &serde_json::to_string_pretty(&empty_schema).unwrap(),
+                    router,
+                )
+            } else {
+                serde_json::to_string_pretty(&empty_schema).unwrap()
+            };
 
             Response::builder()
                 .status(StatusCode::OK)
                 .header("content-type", "application/json")
                 .body(Full::new(Bytes::from(
-                    serde_json::to_string_pretty(&empty_schema).unwrap(),
+                    content,
                 )))
                 .map_err(|e| Error::Internal(format!("Failed to build response: {e}")))
         }
+    }
+
+    /// Supplement the federated OpenAPI spec with routes from the gateway router.
+    /// Adds any gateway routes that are missing from the federated spec.
+    fn supplement_spec_with_routes(&self, spec_content: &str, router: &Router) -> String {
+        let mut spec: serde_json::Value = match serde_json::from_str(spec_content) {
+            Ok(v) => v,
+            Err(_) => return spec_content.to_string(),
+        };
+
+        let all_routes = router.get_all_routes();
+        let exclude_introspection = crate::schema_ops::should_exclude_introspection();
+
+        // Build a map of new routes to add
+        let mut new_paths: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
+
+        for route in &all_routes {
+            // Skip FARP internal routes
+            if route.path.starts_with("/farp") || route.path.starts_with("/__") || route.path.starts_with("/_farp") {
+                continue;
+            }
+
+            // Skip introspection endpoints if filtering is enabled
+            if exclude_introspection {
+                let segments: Vec<&str> = route.path.trim_start_matches('/').splitn(2, '/').collect();
+                if segments.len() == 2 {
+                    let service_path = format!("/{}", segments[1]);
+                    if crate::schema_ops::is_introspection_path(&service_path) {
+                        continue;
+                    }
+                } else if segments.len() == 1 {
+                    continue;
+                }
+            }
+
+            let method_str = route.method.as_str().to_lowercase();
+
+            // Check if this path+method already exists in the current spec
+            let already_exists = spec
+                .get("paths")
+                .and_then(|p| p.get(&route.path))
+                .and_then(|item| item.get(&method_str))
+                .is_some();
+
+            if already_exists {
+                continue;
+            }
+
+            let operation = serde_json::json!({
+                "tags": [&route.upstream_name],
+                "summary": format!("{} {}", route.method.as_str(), route.path),
+                "responses": {
+                    "200": {
+                        "description": "Successful response"
+                    }
+                }
+            });
+
+            let path_item = new_paths
+                .entry(route.path.clone())
+                .or_insert_with(|| serde_json::json!({}));
+
+            if let Some(obj) = path_item.as_object_mut() {
+                obj.insert(method_str, operation);
+            }
+        }
+
+        // Merge new paths into the spec
+        if !new_paths.is_empty() {
+            if let Some(obj) = spec.as_object_mut() {
+                let paths = obj
+                    .entry("paths")
+                    .or_insert_with(|| serde_json::json!({}));
+
+                if let Some(paths_obj) = paths.as_object_mut() {
+                    for (path, path_item) in new_paths {
+                        if let Some(existing) = paths_obj.get_mut(&path) {
+                            // Merge methods into existing path item
+                            if let (Some(existing_obj), Some(new_obj)) =
+                                (existing.as_object_mut(), path_item.as_object())
+                            {
+                                for (method, op) in new_obj {
+                                    existing_obj.entry(method).or_insert(op.clone());
+                                }
+                            }
+                        } else {
+                            paths_obj.insert(path, path_item);
+                        }
+                    }
+                }
+            }
+        }
+
+        serde_json::to_string_pretty(&spec).unwrap_or_else(|_| spec_content.to_string())
     }
 
     /// Get federated `AsyncAPI` schema

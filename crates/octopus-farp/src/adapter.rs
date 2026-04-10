@@ -8,10 +8,9 @@ use std::sync::Arc;
 // Import external farp types (not re-exported to avoid conflicts)
 use farp::{
     errors::{Error as FarpError, Result as FarpResult},
-    manifest::ManifestDiff,
     types::{
         SchemaDescriptor as ExternalSchemaDescriptor, SchemaEndpoints,
-        SchemaLocation, SchemaManifest as ExternalSchemaManifest,
+        SchemaManifest as ExternalSchemaManifest,
     },
 };
 

@@ -11,8 +11,21 @@ use crate::registry::SchemaRegistry;
 use crate::schema::{SchemaDescriptor, SchemaFormat};
 use crate::types::{LocationType, SchemaType};
 use octopus_core::{Error, Result};
-use std::sync::Arc;
 use tracing::{debug, info, warn};
+
+/// Check if a path is a standard introspection endpoint that should be filtered
+/// from federated specs by default.
+pub fn is_introspection_path(path: &str) -> bool {
+    path == "/" || path == "/_/info" || path == "/health"
+        || path.starts_with("/docs") || path.starts_with("/openapi")
+        || path.starts_with("/asyncapi")
+}
+
+/// Returns true if introspection endpoints should be excluded from federated specs.
+/// By default they are excluded. Set `FARP_INCLUDE_INTROSPECTION_ENDPOINTS=1` to include them.
+pub fn should_exclude_introspection() -> bool {
+    std::env::var("FARP_INCLUDE_INTROSPECTION_ENDPOINTS").is_err()
+}
 
 /// Map a manifest `SchemaType` to a registry `SchemaFormat`.
 fn schema_type_to_format(schema_type: &SchemaType) -> SchemaFormat {

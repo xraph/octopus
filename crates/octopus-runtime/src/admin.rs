@@ -33,10 +33,13 @@ pub struct AdminHandler {
     admin_router: AxumRouter,
     
     // State needed for metrics display
+    #[allow(dead_code)]
     app_state: Arc<AppState>,
+    #[allow(dead_code)]
     health_tracker: Option<Arc<HealthTracker>>,
     #[allow(dead_code)]
     circuit_breaker: Option<Arc<CircuitBreaker>>,
+    #[allow(dead_code)]
     plugin_manager: Option<Arc<PluginManager>>,
     metrics_collector: Option<Arc<MetricsCollector>>,
     #[allow(dead_code)]
@@ -59,7 +62,7 @@ impl AdminHandler {
         activity_log: &Option<Arc<ActivityLog>>,
         health_tracker: &Option<Arc<HealthTracker>>,
         circuit_breaker: &Option<Arc<CircuitBreaker>>,
-        plugin_manager: &Option<Arc<PluginManager>>,
+        _plugin_manager: &Option<Arc<PluginManager>>,
         farp_registry: &Option<Arc<octopus_farp::SchemaRegistry>>,
         farp_federation: &Option<Arc<octopus_farp::SchemaFederation>>,
     ) -> Arc<AppState> {

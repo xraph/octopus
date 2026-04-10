@@ -3,12 +3,13 @@
 //! Provides validation for FARP v1.0.0 schema manifests
 
 use crate::manifest::SchemaManifest;
-use octopus_core::{Error, Result};
+use octopus_core::Result;
 
 #[cfg(feature = "validation")]
 use jsonschema::JSONSchema;
 
 /// FARP v1.0.0 Schema Manifest JSON Schema
+#[allow(dead_code)]
 const MANIFEST_JSON_SCHEMA: &str = r##"{
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "FARP Schema Manifest",
