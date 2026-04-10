@@ -100,14 +100,14 @@ farp:
     backends:
       # mDNS/Bonjour discovery for local development (Mac/Windows/Linux)
       # Automatically discovers services on the local network
-      - type: mdns
-        enabled: true
-        config:
-          service_type: "_octopus._tcp"  # Service type to discover
-          domain: "local."                # mDNS domain
-          watch_interval: 30s             # How often to poll for changes
-          query_timeout: 5s               # Query timeout
-          enable_ipv6: false               # Enable IPv6 discovery
+      # - type: mdns
+      #   enabled: true
+      #   config:
+      #     service_type: "_octopus._tcp"  # Service type to discover
+      #     domain: "local."                # mDNS domain
+      #     watch_interval: 30s             # How often to poll for changes
+      #     query_timeout: 5s               # Query timeout
+      #     enable_ipv6: false               # Enable IPv6 discovery
       
       # Consul service discovery (for production)
       # - type: consul

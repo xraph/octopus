@@ -1,10 +1,20 @@
 //! Schema federation engine for combining multiple service schemas
+//! 
+//! This module wraps the external farp merger functionality to provide
+//! Octopus-specific federation features.
 
 use crate::schema::{SchemaDescriptor, SchemaFormat};
 use dashmap::DashMap;
 use octopus_core::{Error, Result};
-use serde_json::Value;
+use sha2::Digest;
 use std::sync::Arc;
+
+// Import external merger types
+use farp::merger::{
+    Merger, MergerConfig, ServiceSchema, MergeResult, OpenAPISpec,
+    AsyncAPIMerger, AsyncAPIServiceSchema, AsyncAPISpec,
+};
+use farp::manifest::new_manifest;
 
 /// Schema federation engine
 ///
@@ -74,54 +84,90 @@ impl SchemaFederation {
         Ok(())
     }
 
-    /// Federate `OpenAPI` schemas
+    /// Federate `OpenAPI` schemas using external farp merger
     fn federate_openapi(&self, schemas: Vec<SchemaDescriptor>) -> Result<()> {
-        let mut combined = serde_json::json!({
-            "openapi": "3.0.0",
-            "info": {
-                "title": "Federated API",
-                "version": "1.0.0"
-            },
-            "paths": {},
-            "components": {
-                "schemas": {}
-            }
-        });
-
         let sources: Vec<String> = schemas.iter().map(|s| s.service.clone()).collect();
 
-        for schema in schemas {
-            if let Ok(spec) = serde_json::from_str::<Value>(&schema.content) {
-                // Merge paths
-                if let Some(paths) = spec.get("paths").and_then(|p| p.as_object()) {
-                    let combined_paths = combined["paths"].as_object_mut().unwrap();
-                    for (path, methods) in paths {
-                        // Add service prefix to avoid conflicts
-                        let prefixed_path = format!("/{}{}", schema.service, path);
-                        combined_paths.insert(prefixed_path, methods.clone());
-                    }
-                }
+        // Convert SchemaDescriptor to ServiceSchema for farp merger
+        let service_schemas: Vec<ServiceSchema> = schemas
+            .into_iter()
+            .filter_map(|desc| {
+                // Parse the schema content
+                let schema_value = serde_json::from_str(&desc.content).ok()?;
+                
+                // Parse into OpenAPISpec (optional - merger can work without it)
+                let parsed = farp::merger::parse_openapi_schema(&schema_value).ok();
+                
+                // Create a manifest for the merger with OpenAPI schema descriptor
+                // The merger needs manifests with schemas to determine inclusion
+                let mut manifest = new_manifest(
+                    desc.service.clone(),
+                    desc.version.clone(),
+                    desc.id.clone(),
+                );
+                
+                // Add a schema descriptor so the merger includes this service
+                // Use placeholder hash from content
+                let mut hasher = sha2::Sha256::new();
+                hasher.update(desc.content.as_bytes());
+                let hash = format!("{:x}", hasher.finalize());
+                
+                // Use external farp types for the schema descriptor
+                let location = farp::types::SchemaLocation {
+                    location_type: farp::types::LocationType::Inline,
+                    url: None,
+                    registry_path: None,
+                    headers: None,
+                };
+                
+                let schema_desc = farp::types::SchemaDescriptor {
+                    schema_type: farp::types::SchemaType::OpenAPI,
+                    spec_version: desc.version.clone(),
+                    location,
+                    content_type: "application/json".to_string(),
+                    inline_schema: Some(schema_value.clone()),
+                    hash,
+                    size: desc.content.len() as i64,
+                    compatibility: None,
+                    metadata: None,
+                };
+                
+                manifest.schemas.push(schema_desc);
+                
+                Some(ServiceSchema {
+                    manifest,
+                    schema: schema_value,
+                    parsed,
+                })
+            })
+            .collect();
 
-                // Merge components/schemas
-                if let Some(components) = spec.get("components") {
-                    if let Some(comp_schemas) =
-                        components.get("schemas").and_then(|s| s.as_object())
-                    {
-                        let combined_schemas =
-                            combined["components"]["schemas"].as_object_mut().unwrap();
-                        for (name, comp_schema) in comp_schemas {
-                            // Prefix schema names to avoid conflicts
-                            let prefixed_name = format!("{}_{}", schema.service, name);
-                            combined_schemas.insert(prefixed_name, comp_schema.clone());
-                        }
-                    }
-                }
-            }
+        if service_schemas.is_empty() {
+            return Err(Error::Farp("No valid OpenAPI schemas to merge".to_string()));
         }
+
+        // Configure the merger
+        let config = MergerConfig {
+            merged_title: "Federated API".to_string(),
+            merged_description: "Combined API specification from multiple services".to_string(),
+            merged_version: "1.0.0".to_string(),
+            include_service_tags: true,
+            ..Default::default()
+        };
+
+        let merger = Merger::new(config);
+        
+        // Perform the merge
+        let merge_result = merger.merge(service_schemas)
+            .map_err(|e| Error::Farp(format!("Failed to merge OpenAPI schemas: {}", e)))?;
+
+        // Convert MergeResult to our FederatedSchema
+        let content = serde_json::to_string_pretty(&serde_json::to_value(&merge_result.spec).unwrap())
+            .map_err(|e| Error::Farp(format!("Failed to serialize merged schema: {}", e)))?;
 
         let federated = FederatedSchema {
             format: SchemaFormat::OpenApi,
-            content: serde_json::to_string_pretty(&combined).unwrap(),
+            content,
             sources,
             updated_at: std::time::SystemTime::now(),
         };
@@ -130,35 +176,88 @@ impl SchemaFederation {
         Ok(())
     }
 
-    /// Federate `AsyncAPI` schemas
+    /// Federate `AsyncAPI` schemas using external farp merger
     fn federate_asyncapi(&self, schemas: Vec<SchemaDescriptor>) -> Result<()> {
-        let mut combined = serde_json::json!({
-            "asyncapi": "2.0.0",
-            "info": {
-                "title": "Federated Async API",
-                "version": "1.0.0"
-            },
-            "channels": {}
-        });
-
         let sources: Vec<String> = schemas.iter().map(|s| s.service.clone()).collect();
 
-        for schema in schemas {
-            if let Ok(spec) = serde_json::from_str::<Value>(&schema.content) {
-                if let Some(channels) = spec.get("channels").and_then(|c| c.as_object()) {
-                    let combined_channels = combined["channels"].as_object_mut().unwrap();
-                    for (channel, def) in channels {
-                        // Add service prefix
-                        let prefixed_channel = format!("{}.{}", schema.service, channel);
-                        combined_channels.insert(prefixed_channel, def.clone());
-                    }
-                }
-            }
+        // Convert SchemaDescriptor to AsyncAPIServiceSchema for farp merger
+        let service_schemas: Vec<AsyncAPIServiceSchema> = schemas
+            .into_iter()
+            .filter_map(|desc| {
+                // Parse the schema content
+                let schema_value = serde_json::from_str(&desc.content).ok()?;
+                
+                // Parse into AsyncAPISpec
+                let parsed = farp::merger::parse_asyncapi_schema(&schema_value).ok();
+                
+                // Create a manifest for the merger with AsyncAPI schema descriptor
+                let mut manifest = new_manifest(
+                    desc.service.clone(),
+                    desc.version.clone(),
+                    desc.id.clone(),
+                );
+                
+                // Add a schema descriptor so the merger includes this service
+                let mut hasher = sha2::Sha256::new();
+                hasher.update(desc.content.as_bytes());
+                let hash = format!("{:x}", hasher.finalize());
+                
+                // Use external farp types for the schema descriptor
+                let location = farp::types::SchemaLocation {
+                    location_type: farp::types::LocationType::Inline,
+                    url: None,
+                    registry_path: None,
+                    headers: None,
+                };
+                
+                let schema_desc = farp::types::SchemaDescriptor {
+                    schema_type: farp::types::SchemaType::AsyncAPI,
+                    spec_version: desc.version.clone(),
+                    location,
+                    content_type: "application/json".to_string(),
+                    inline_schema: Some(schema_value.clone()),
+                    hash,
+                    size: desc.content.len() as i64,
+                    compatibility: None,
+                    metadata: None,
+                };
+                
+                manifest.schemas.push(schema_desc);
+                
+                Some(AsyncAPIServiceSchema {
+                    manifest,
+                    schema: schema_value,
+                    parsed,
+                })
+            })
+            .collect();
+
+        if service_schemas.is_empty() {
+            return Err(Error::Farp("No valid AsyncAPI schemas to merge".to_string()));
         }
+
+        // Configure the merger
+        let config = MergerConfig {
+            merged_title: "Federated Async API".to_string(),
+            merged_description: "Combined AsyncAPI specification from multiple services".to_string(),
+            merged_version: "1.0.0".to_string(),
+            include_service_tags: true,
+            ..Default::default()
+        };
+
+        let merger = AsyncAPIMerger::new(config);
+        
+        // Perform the merge
+        let merge_result = merger.merge(service_schemas)
+            .map_err(|e| Error::Farp(format!("Failed to merge AsyncAPI schemas: {}", e)))?;
+
+        // Convert AsyncAPIMergeResult to our FederatedSchema
+        let content = serde_json::to_string_pretty(&serde_json::to_value(&merge_result.spec).unwrap())
+            .map_err(|e| Error::Farp(format!("Failed to serialize merged schema: {}", e)))?;
 
         let federated = FederatedSchema {
             format: SchemaFormat::AsyncApi,
-            content: serde_json::to_string_pretty(&combined).unwrap(),
+            content,
             sources,
             updated_at: std::time::SystemTime::now(),
         };
@@ -249,13 +348,14 @@ mod tests {
             service: "service1".to_string(),
             format: SchemaFormat::OpenApi,
             version: "1.0.0".to_string(),
-            content: r#"{"openapi":"3.0.0","paths":{"/users":{}}}"#.to_string(),
-            checksum: None,
+            content: r#"{"openapi":"3.0.0","info":{"title":"Test API","version":"1.0.0"},"paths":{"/users":{}}}"#.to_string(),
+            checksum: Some("test-checksum".to_string()),
         }];
 
         federation.federate_schemas(schemas).unwrap();
 
         let federated = federation.get_federated(&SchemaFormat::OpenApi).unwrap();
         assert!(federated.content.contains("openapi"));
+        assert!(federated.content.contains("Federated API"));
     }
 }

@@ -5,10 +5,24 @@ edition.workspace = true
 publish = false
 
 [[bin]]
+name = "quickstart"
+path = "quickstart.rs"
+
+[[bin]]
 name = "mdns_service"
 path = "mdns_service.rs"
 
 [dependencies]
+# Octopus crates (for quickstart example)
+octopus-admin = { path = "../crates/octopus-admin" }
+octopus-auth = { path = "../crates/octopus-auth" }
+octopus-config = { path = "../crates/octopus-config" }
+octopus-core = { path = "../crates/octopus-core" }
+octopus-health = { path = "../crates/octopus-health" }
+octopus-middleware = { path = "../crates/octopus-middleware" }
+octopus-plugins = { path = "../crates/octopus-plugins" }
+octopus-router = { path = "../crates/octopus-router" }
+
 # Workspace dependencies
 tokio.workspace = true
 axum.workspace = true

@@ -9,6 +9,9 @@ repository.workspace = true
 description = "FARP (Forge API Gateway Registration Protocol) client for Octopus"
 
 [dependencies]
+# External FARP protocol implementation
+farp = { workspace = true }
+
 octopus-core = { path = "../octopus-core" }
 octopus-router = { path = "../octopus-router" }
 octopus-discovery = { path = "../octopus-discovery" }

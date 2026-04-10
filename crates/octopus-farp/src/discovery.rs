@@ -39,6 +39,8 @@ pub struct DiscoveryWatcher {
     federation: Arc<SchemaFederation>,
     /// Router for registering dynamic routes
     router: Option<Arc<Router>>,
+    /// Cached routes checksums for atomic route swap detection (v1.1.0)
+    routes_checksums: Arc<dashmap::DashMap<String, String>>,
 }
 
 impl std::fmt::Debug for DiscoveryWatcher {
@@ -80,6 +82,7 @@ impl DiscoveryWatcher {
             farp_client: FarpClient::default(),
             federation: Arc::new(SchemaFederation::new()),
             router: None,
+            routes_checksums: Arc::new(dashmap::DashMap::new()),
         }
     }
 
@@ -99,6 +102,7 @@ impl DiscoveryWatcher {
             farp_client: FarpClient::default(),
             federation,
             router: None,
+            routes_checksums: Arc::new(dashmap::DashMap::new()),
         }
     }
 
@@ -207,7 +211,7 @@ impl DiscoveryWatcher {
 
         // Remove services that exceeded threshold
         for service_name in to_remove {
-            if let Err(e) = self.registry.deregister_service(&service_name) {
+            if let Err(e) = self.registry.deregister_service(&service_name).await {
                 error!(service = %service_name, error = %e, "Failed to deregister service");
             }
             tracked.remove(&service_name);
@@ -317,7 +321,7 @@ impl DiscoveryWatcher {
         manifest.update_checksum()?;
 
         // Register with FARP
-        self.registry.register_service(manifest)?;
+        self.registry.register_service(manifest).await?;
 
         // Register upstream in router if router is configured
         if let Some(ref router) = self.router {
@@ -383,72 +387,23 @@ impl DiscoveryWatcher {
 
     /// Fetch `OpenAPI` schema from URL and store in registry
     async fn fetch_and_store_schema(&self, service_name: &str, url: &str) -> Result<()> {
-        debug!(
-            service = %service_name,
-            url = %url,
-            "Fetching OpenAPI schema"
-        );
-
-        // Fetch the schema content
-        let content = self.farp_client.fetch_schema(url).await?;
-
-        // Parse to validate it's valid JSON
-        let _: serde_json::Value = serde_json::from_str(&content)
-            .map_err(|e| Error::Farp(format!("Invalid OpenAPI JSON: {e}")))?;
-
-        // Create schema descriptor
-        let mut schema = SchemaDescriptor::new(
-            format!("{service_name}-openapi"),
+        crate::schema_ops::fetch_and_store_schema(
+            &self.farp_client,
+            &self.registry,
             service_name,
+            url,
             SchemaFormat::OpenApi,
-            "3.0.0", // Default version, could be extracted from schema
-            content,
-        );
-
-        // Calculate checksum
-        schema.calculate_checksum();
-
-        // Store in registry
-        self.registry.add_schema(service_name, schema)?;
-
-        info!(
-            service = %service_name,
-            "OpenAPI schema stored in registry"
-        );
+            "3.0.0",
+        )
+        .await?;
 
         // Trigger federation to update the federated schema
-        self.trigger_federation().await?;
-
-        Ok(())
+        self.trigger_federation().await
     }
 
     /// Trigger federation of all registered schemas
     async fn trigger_federation(&self) -> Result<()> {
-        debug!("Triggering schema federation");
-
-        // Collect all schemas from registered services
-        let service_names = self.registry.list_services();
-        let mut all_schemas = Vec::new();
-
-        for service_name in &service_names {
-            if let Ok(registration) = self.registry.get_service(service_name) {
-                all_schemas.extend(registration.schemas.clone());
-            }
-        }
-
-        if all_schemas.is_empty() {
-            debug!("No schemas to federate");
-            return Ok(());
-        }
-
-        let schema_count = all_schemas.len();
-
-        // Perform federation
-        self.federation.federate_schemas(all_schemas)?;
-
-        info!(schema_count = schema_count, "Schema federation completed");
-
-        Ok(())
+        crate::schema_ops::trigger_federation(&self.registry, &self.federation)
     }
 
     /// Register upstream cluster for a discovered service
@@ -481,7 +436,7 @@ impl DiscoveryWatcher {
         Ok(())
     }
 
-    /// Register routes from `OpenAPI` schema
+    /// Register routes from `OpenAPI` schema or pre-computed route table
     async fn register_routes_from_schema(
         &self,
         router: &Arc<Router>,
@@ -489,8 +444,56 @@ impl DiscoveryWatcher {
     ) -> Result<()> {
         debug!(
             service = %service_name,
-            "Generating routes from OpenAPI schema"
+            "Generating routes from schema or route_table"
         );
+
+        // v1.1.0: Check routes checksum for atomic route swap detection
+        if let Ok(registration) = self.registry.get_service(service_name) {
+            if let Some(ref new_checksum) = registration.manifest.routes_checksum {
+                if let Some(old) = self.routes_checksums.get(service_name) {
+                    if old.value() == new_checksum {
+                        debug!(
+                            service = %service_name,
+                            "Routes unchanged (checksum match), skipping"
+                        );
+                        return Ok(());
+                    }
+                }
+                self.routes_checksums
+                    .insert(service_name.to_string(), new_checksum.clone());
+            }
+        }
+
+        // v1.1.0: Prefer route_table over schema parsing if available
+        if let Ok(registration) = self.registry.get_service(service_name) {
+            if registration.manifest.has_route_table() {
+                let route_gen = crate::route_generator::RouteGenerator::new();
+                let routes = route_gen.generate_from_route_table(
+                    &registration.manifest.route_table,
+                    service_name,
+                );
+                info!(
+                    service = %service_name,
+                    route_count = routes.len(),
+                    "Generated routes from route_table (v1.1.0)"
+                );
+                // Register each generated route with the router
+                for gen_route in &routes {
+                    let route = RouteBuilder::new()
+                        .method(gen_route.method.parse().unwrap_or(Method::GET))
+                        .path(format!("/{service_name}{}", gen_route.path))
+                        .upstream_name(service_name)
+                        .priority(100)
+                        .build();
+                    if let Ok(route) = route {
+                        if let Err(e) = router.add_route(route) {
+                            warn!(error = %e, "Failed to register route from route_table");
+                        }
+                    }
+                }
+                return Ok(());
+            }
+        }
 
         // Get the schema from registry
         let schemas = self.registry.get_schemas(service_name)?;
@@ -601,6 +604,7 @@ mod tests {
         custom_metadata.insert("version".to_string(), "1.0.0".to_string());
         custom_metadata.insert("openapi".to_string(), "/api/openapi.json".to_string());
         custom_metadata.insert("health".to_string(), "/health".to_string());
+        custom_metadata.insert("farp.enabled".to_string(), "true".to_string());
 
         let metadata = ServiceMetadata {
             version: Some("1.0.0".to_string()),

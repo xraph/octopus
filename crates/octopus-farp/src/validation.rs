@@ -170,6 +170,12 @@ pub struct ManifestValidator {
     schema: JSONSchema,
 }
 
+impl std::fmt::Debug for ManifestValidator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ManifestValidator").finish()
+    }
+}
+
 impl ManifestValidator {
     /// Create a new validator
     pub fn new() -> Result<Self> {

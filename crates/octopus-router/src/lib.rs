@@ -22,18 +22,19 @@
     unreachable_pub
 )]
 
+pub mod load_balancer;
 pub mod matcher;
 pub mod route;
 pub mod trie;
 
+pub use load_balancer::{new_load_balancer, LoadBalancer};
 pub use matcher::{Match, PathMatcher};
 pub use route::{Route, RouteBuilder};
 pub use trie::RouteTrie;
 
 use dashmap::DashMap;
 use http::Method;
-use octopus_core::{Error, Result, UpstreamCluster, UpstreamInstance};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use octopus_core::{Error, LoadBalanceStrategy, Result, UpstreamCluster, UpstreamInstance};
 use std::sync::Arc;
 
 /// Router for managing and matching routes
@@ -45,8 +46,11 @@ pub struct Router {
     /// Named upstreams
     upstreams: Arc<DashMap<String, UpstreamCluster>>,
 
-    /// Round-robin counter for load balancing
-    rr_counter: Arc<AtomicUsize>,
+    /// Per-upstream load balancers (keyed by upstream name)
+    load_balancers: Arc<DashMap<String, Arc<dyn LoadBalancer>>>,
+
+    /// Default load balancer (round-robin)
+    default_lb: Arc<dyn LoadBalancer>,
 }
 
 impl Router {
@@ -55,7 +59,8 @@ impl Router {
         Self {
             tries: Arc::new(DashMap::new()),
             upstreams: Arc::new(DashMap::new()),
-            rr_counter: Arc::new(AtomicUsize::new(0)),
+            load_balancers: Arc::new(DashMap::new()),
+            default_lb: Arc::from(new_load_balancer(LoadBalanceStrategy::RoundRobin)),
         }
     }
 
@@ -101,8 +106,14 @@ impl Router {
     /// Register an upstream cluster
     pub fn register_upstream(&self, cluster: UpstreamCluster) {
         let name = cluster.name.clone();
+        let strategy = cluster.strategy;
         self.upstreams.insert(name.clone(), cluster);
-        tracing::debug!(upstream = %name, "Upstream registered");
+
+        // Create and cache the load balancer for this upstream's strategy
+        let lb = new_load_balancer(strategy);
+        self.load_balancers.insert(name.clone(), Arc::from(lb));
+
+        tracing::debug!(upstream = %name, strategy = ?strategy, "Upstream registered");
     }
 
     /// Get an upstream cluster
@@ -114,6 +125,7 @@ impl Router {
     pub fn remove_upstream(&self, name: &str) -> bool {
         let removed = self.upstreams.remove(name).is_some();
         if removed {
+            self.load_balancers.remove(name);
             tracing::debug!(upstream = %name, "Upstream removed");
         }
         removed
@@ -146,8 +158,15 @@ impl Router {
         Ok(matched.route)
     }
 
-    /// Select an upstream instance from a cluster (with simple round-robin)
-    pub fn select_instance(&self, upstream_name: &str) -> Result<UpstreamInstance> {
+    /// Select an upstream instance from a cluster using its configured load balancing strategy.
+    ///
+    /// The `key` parameter is used by hash-based strategies (e.g., IP hash) for
+    /// deterministic selection. Pass the client IP or an empty string if not relevant.
+    pub fn select_instance_with_key(
+        &self,
+        upstream_name: &str,
+        key: &str,
+    ) -> Result<UpstreamInstance> {
         let cluster = self.get_upstream(upstream_name).ok_or_else(|| {
             Error::UpstreamConnection(format!("Upstream '{upstream_name}' not found"))
         })?;
@@ -160,9 +179,19 @@ impl Router {
             )));
         }
 
-        // Simple round-robin selection
-        let index = self.rr_counter.fetch_add(1, Ordering::Relaxed) % healthy.len();
+        let lb = self
+            .load_balancers
+            .get(upstream_name)
+            .map(|r| Arc::clone(r.value()))
+            .unwrap_or_else(|| Arc::clone(&self.default_lb));
+
+        let index = lb.select(&healthy, key).unwrap_or(0);
         Ok(healthy[index].clone())
+    }
+
+    /// Select an upstream instance from a cluster (convenience method, uses empty key).
+    pub fn select_instance(&self, upstream_name: &str) -> Result<UpstreamInstance> {
+        self.select_instance_with_key(upstream_name, "")
     }
 
     /// Get all routes across all methods

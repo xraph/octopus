@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-background">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Routes - Octopus Admin</title>
+    <link rel="stylesheet" href="/admin/static/output.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+</head>
+<body class="h-full">
+    <div class="flex h-full">
+        <!-- Sidebar (same as dashboard) -->
+        <aside class="hidden w-64 flex-col border-r bg-muted/40 md:flex">
+            <div class="flex h-16 items-center border-b px-6">
+                <h1 class="text-xl font-bold">Octopus UI</h1>
+            </div>
+            <nav class="flex-1 space-y-1 p-4">
+                <a href="/admin/octopus-ui" class="flex items-center gap-3 rounded-lg px-3 py-2 text-muted-foreground hover:text-primary">
+                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                    </svg>
+                    Dashboard
+                </a>
+                <a href="/admin/octopus-ui/routes" class="flex items-center gap-3 rounded-lg bg-muted px-3 py-2 text-primary">
+                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                    </svg>
+                    Routes
+                </a>
+                <a href="/admin/octopus-ui/health" class="flex items-center gap-3 rounded-lg px-3 py-2 text-muted-foreground hover:text-primary">
+                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    Health
+                </a>
+                <a href="/admin/octopus-ui/plugins" class="flex items-center gap-3 rounded-lg px-3 py-2 text-muted-foreground hover:text-primary">
+                    <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+                    </svg>
+                    Plugins
+                </a>
+            </nav>
+        </aside>
+
+        <!-- Main content -->
+        <main class="flex-1 overflow-y-auto">
+            <div class="border-b">
+                <div class="flex h-16 items-center px-6">
+                    <h2 class="text-2xl font-bold">Routes</h2>
+                    <div class="ml-auto flex items-center gap-4">
+                        <span class="text-sm text-muted-foreground">{{ total_routes }} routes</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="p-6 space-y-6">
+                <!-- Table View -->
+                <div class="space-y-4">
+                    <h3 class="text-lg font-semibold">Table View</h3>
+                    {{ routes_table|safe }}
+                </div>
+
+                <!-- Grid View -->
+                <div class="space-y-4">
+                    <h3 class="text-lg font-semibold">Grid View</h3>
+                    {{ routes_grid|safe }}
+                </div>
+            </div>
+        </main>
+    </div>
+</body>
+</html>

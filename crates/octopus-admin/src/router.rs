@@ -1,14 +1,16 @@
 //! Router configuration for the admin dashboard
 
 use axum::{
+    extract::ws::WebSocketUpgrade,
     routing::{delete, get, post, put},
     Router,
 };
 use std::sync::Arc;
 use tower_http::services::{ServeDir, ServeFile};
 
-use crate::api_handlers::{api_analytics_handler, api_realtime_metrics_handler, api_timeseries_handler, api_performance_metrics_handler, api_routes_list_handler, api_route_create_handler, api_route_get_handler, api_route_update_handler, api_route_delete_handler, api_plugins_list_handler, api_plugin_get_handler, api_plugin_toggle_handler, api_plugin_config_handler, api_logs_handler, api_security_events_handler, api_config_list_handler, api_config_update_handler, api_system_info_handler};
+use crate::api_handlers::{api_analytics_handler, api_realtime_metrics_handler, api_timeseries_handler, api_performance_metrics_handler, api_routes_list_handler, api_route_create_handler, api_route_get_handler, api_route_update_handler, api_route_delete_handler, api_plugins_list_handler, api_plugin_get_handler, api_plugin_toggle_handler, api_plugin_config_handler, api_logs_handler, api_security_events_handler, api_config_list_handler, api_config_update_handler, api_system_info_handler, api_upstreams_list_handler, api_services_list_handler, api_circuits_list_handler, api_health_checks_handler, api_openapi_handler, api_farp_services_handler, api_farp_service_detail_handler, api_farp_federated_openapi_handler};
 use crate::handlers::{AppState, overview_handler, routes_handler, health_handler, plugins_handler, analytics_handler, logs_handler, config_handler, api_stats_handler, api_activity_handler, api_health_handler};
+use crate::octopus_ui_handlers_pure::{octopus_ui_dashboard_handler, octopus_ui_routes_handler, octopus_ui_health_handler, octopus_ui_plugins_handler};
 
 /// Dashboard router builder
 pub struct DashboardRouter;
@@ -29,6 +31,11 @@ impl DashboardRouter {
             .route("/admin/analytics", get(analytics_handler))
             .route("/admin/logs", get(logs_handler))
             .route("/admin/config", get(config_handler))
+            // ===== Octopus-UI powered pages (modern UI with octopus-ui components) =====
+            .route("/admin/octopus-ui", get(octopus_ui_dashboard_handler))
+            .route("/admin/octopus-ui/routes", get(octopus_ui_routes_handler))
+            .route("/admin/octopus-ui/health", get(octopus_ui_health_handler))
+            .route("/admin/octopus-ui/plugins", get(octopus_ui_plugins_handler))
             // ===== Metrics & Analytics API =====
             .route("/admin/api/stats", get(api_stats_handler))
             .route("/admin/api/analytics", get(api_analytics_handler))
@@ -69,8 +76,25 @@ impl DashboardRouter {
             // ===== Configuration Management API =====
             .route("/admin/api/config", get(api_config_list_handler))
             .route("/admin/api/config/:key", put(api_config_update_handler))
+            // ===== Upstreams, Services & Circuits API =====
+            .route("/admin/api/upstreams", get(api_upstreams_list_handler))
+            .route("/admin/api/services", get(api_services_list_handler))
+            .route("/admin/api/circuits", get(api_circuits_list_handler))
+            .route("/admin/api/health/checks", get(api_health_checks_handler))
+            .route("/admin/api/openapi.json", get(api_openapi_handler))
+            // ===== FARP (Federated API Registry Protocol) API =====
+            .route("/admin/api/farp/services", get(api_farp_services_handler))
+            .route("/admin/api/farp/services/:name", get(api_farp_service_detail_handler))
+            .route("/admin/api/farp/schema/openapi", get(api_farp_federated_openapi_handler))
             // ===== System Information API =====
             .route("/admin/api/system/info", get(api_system_info_handler))
+            // ===== WebSocket for real-time dashboard events =====
+            .route("/admin/ws", get({
+                let ws_hub = state.ws_hub.clone();
+                move |ws: WebSocketUpgrade| async move {
+                    crate::websocket::WsHub::handle_upgrade(ws_hub, ws).await
+                }
+            }))
             // ===== Static assets =====
             .nest_service(
                 "/admin/static",

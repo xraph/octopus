@@ -110,6 +110,7 @@ impl Middleware for Timeout {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use octopus_core::Error;
     use std::time::Duration;
 
     #[derive(Debug)]

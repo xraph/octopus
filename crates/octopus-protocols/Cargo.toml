@@ -21,6 +21,7 @@ http.workspace = true
 http-body.workspace = true
 http-body-util.workspace = true
 hyper.workspace = true
+hyper-util.workspace = true
 axum.workspace = true
 
 # WebSocket

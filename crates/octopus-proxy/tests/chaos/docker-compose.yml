@@ -1,0 +1,76 @@
+# Docker Compose for Chaos Testing Infrastructure
+# 
+# This sets up:
+# - Toxiproxy: TCP proxy for network chaos injection
+# - Mock upstream services for testing
+#
+# Usage:
+#   docker-compose -f tests/chaos/docker-compose.yml up -d
+#   docker-compose -f tests/chaos/docker-compose.yml down
+
+version: '3.8'
+
+services:
+  # Toxiproxy - Network chaos injection
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.7.0
+    container_name: octopus-toxiproxy
+    ports:
+      - "8474:8474"  # Toxiproxy API
+      - "20000:20000" # Proxy port 1 (mock upstream 1)
+      - "20001:20001" # Proxy port 2 (mock upstream 2)
+      - "20002:20002" # Proxy port 3 (mock upstream 3)
+    networks:
+      - chaos-net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8474/version"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  # Mock upstream service 1
+  mock-upstream-1:
+    image: nginx:alpine
+    container_name: octopus-mock-1
+    networks:
+      - chaos-net
+    volumes:
+      - ./nginx-config:/etc/nginx/conf.d:ro
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:80/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  # Mock upstream service 2
+  mock-upstream-2:
+    image: nginx:alpine
+    container_name: octopus-mock-2
+    networks:
+      - chaos-net
+    volumes:
+      - ./nginx-config:/etc/nginx/conf.d:ro
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:80/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  # Mock upstream service 3 (flaky service)
+  mock-upstream-3:
+    image: nginx:alpine
+    container_name: octopus-mock-3
+    networks:
+      - chaos-net
+    volumes:
+      - ./nginx-config:/etc/nginx/conf.d:ro
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:80/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+networks:
+  chaos-net:
+    driver: bridge
+    name: octopus-chaos-network

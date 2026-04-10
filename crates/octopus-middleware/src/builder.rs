@@ -135,6 +135,37 @@ impl MiddlewareBuilder {
         self
     }
 
+    /// Add IP Filter middleware with custom configuration
+    #[must_use]
+    pub fn with_ip_filter(mut self, config: crate::IpFilterConfig) -> Self {
+        self.middlewares
+            .push(Arc::new(crate::IpFilter::with_config(config)));
+        self
+    }
+
+    /// Add Forward Auth middleware with custom configuration
+    #[must_use]
+    pub fn with_forward_auth(mut self, config: crate::ForwardAuthConfig) -> Self {
+        self.middlewares
+            .push(Arc::new(crate::ForwardAuth::with_config(config)));
+        self
+    }
+
+    /// Add Response Caching middleware with default configuration
+    #[must_use]
+    pub fn with_caching(mut self) -> Self {
+        self.middlewares.push(Arc::new(crate::Caching::new()));
+        self
+    }
+
+    /// Add Response Caching middleware with custom configuration
+    #[must_use]
+    pub fn with_caching_config(mut self, config: crate::CachingConfig) -> Self {
+        self.middlewares
+            .push(Arc::new(crate::Caching::with_config(config)));
+        self
+    }
+
     /// Add custom middleware
     #[must_use]
     pub fn with_middleware(mut self, middleware: Arc<dyn Middleware>) -> Self {

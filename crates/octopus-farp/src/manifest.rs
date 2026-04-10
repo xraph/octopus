@@ -1,4 +1,4 @@
-//! Schema manifest types for FARP v1.0.0
+//! Schema manifest types for FARP v1.0.0 / v1.1.0
 
 use crate::types::{
     SchemaDescriptor, SchemaEndpoints, SchemaLocation, SchemaType, PROTOCOL_VERSION,
@@ -10,11 +10,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Schema manifest describing all API contracts for a service instance
 ///
-/// This is the core data structure in FARP v1.0.0, representing all schemas
+/// This is the core data structure in FARP, representing all schemas
 /// exposed by a service instance along with metadata for change detection.
+///
+/// v1.1.0 additions: `route_table` for pre-computed routes and `routes_checksum`
+/// for atomic route swaps.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchemaManifest {
-    /// Protocol version (semver, currently "1.0.0")
+    /// Protocol version (semver, "1.0.0" or "1.1.0")
     pub version: String,
 
     /// Service name (logical service identifier)
@@ -40,6 +43,15 @@ pub struct SchemaManifest {
 
     /// SHA256 checksum of all schemas combined (for change detection)
     pub checksum: String,
+
+    /// Pre-computed route table from the service (v1.1.0)
+    /// When populated, the gateway can use these directly instead of parsing schemas
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub route_table: Vec<farp::types::RouteDescriptor>,
+
+    /// SHA256 checksum of the route table for atomic route swaps (v1.1.0)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routes_checksum: Option<String>,
 }
 
 impl SchemaManifest {
@@ -64,6 +76,8 @@ impl SchemaManifest {
             endpoints: SchemaEndpoints::default(),
             updated_at: now,
             checksum: String::new(),
+            route_table: Vec::new(),
+            routes_checksum: None,
         }
     }
 
@@ -98,28 +112,70 @@ impl SchemaManifest {
         self
     }
 
+    /// Set route table (v1.1.0) and compute routes_checksum
+    pub fn set_route_table(&mut self, routes: Vec<farp::types::RouteDescriptor>) {
+        self.route_table = routes;
+        self.update_routes_checksum();
+    }
+
+    /// Update the routes checksum from the current route_table
+    pub fn update_routes_checksum(&mut self) {
+        if self.route_table.is_empty() {
+            self.routes_checksum = None;
+            return;
+        }
+        let mut hasher = Sha256::new();
+        for route in &self.route_table {
+            hasher.update(route.path.as_bytes());
+            for method in &route.methods {
+                hasher.update(method.as_bytes());
+            }
+        }
+        self.routes_checksum = Some(format!("{:x}", hasher.finalize()));
+    }
+
+    /// Check if this manifest has a pre-computed route table (v1.1.0)
+    pub fn has_route_table(&self) -> bool {
+        !self.route_table.is_empty()
+    }
+
     /// Add an `OpenAPI` schema via HTTP endpoint (convenience method)
     pub fn add_openapi_http(&mut self, url: &str) {
+        // Use placeholder hash - will be updated when schema is actually fetched
+        // For validation purposes, we use a valid SHA256 hash of the URL itself
+        let placeholder_hash = {
+            let mut hasher = Sha256::new();
+            hasher.update(url.as_bytes());
+            format!("{:x}", hasher.finalize())
+        };
+        
         let schema = SchemaDescriptor::new(
             SchemaType::OpenAPI,
             "3.1.0",
             SchemaLocation::http(url),
             "application/json",
-            String::new(), // Hash will be calculated when schema is fetched
-            0,             // Size will be set when schema is fetched
+            placeholder_hash, // Placeholder hash based on URL
+            0,                // Size will be set when schema is fetched
         );
         self.add_schema(schema);
     }
 
     /// Add an `AsyncAPI` schema via HTTP endpoint (convenience method)
     pub fn add_asyncapi_http(&mut self, url: &str) {
+        // Use placeholder hash - will be updated when schema is actually fetched
+        let placeholder_hash = {
+            let mut hasher = Sha256::new();
+            hasher.update(url.as_bytes());
+            format!("{:x}", hasher.finalize())
+        };
+        
         let schema = SchemaDescriptor::new(
             SchemaType::AsyncAPI,
             "3.0.0",
             SchemaLocation::http(url),
             "application/json",
-            String::new(), // Hash will be calculated when schema is fetched
-            0,             // Size will be set when schema is fetched
+            placeholder_hash, // Placeholder hash based on URL
+            0,                // Size will be set when schema is fetched
         );
         self.add_schema(schema);
     }

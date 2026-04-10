@@ -18,7 +18,10 @@ futures.workspace = true
 
 # HTTP
 http.workspace = true
+http-body.workspace = true
 http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
 tower.workspace = true
 tower-http.workspace = true
 
@@ -38,6 +41,10 @@ governor.workspace = true
 # JWT Authentication
 jsonwebtoken = "9"
 serde.workspace = true
+
+# Hashing
+sha2 = "0.10"
+hex = "0.4"
 
 # Utilities
 bytes.workspace = true

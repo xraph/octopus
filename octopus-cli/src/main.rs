@@ -62,7 +62,7 @@ async fn main() -> Result<()> {
             );
 
             // Build server
-            let server = ServerBuilder::new().config(config).build()?;
+            let server = ServerBuilder::new().config(config).build().await?;
 
             // Setup signal handler
             let shutdown_signal = server.shutdown_signal();

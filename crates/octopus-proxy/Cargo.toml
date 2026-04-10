@@ -10,6 +10,17 @@ description = "HTTP proxy with connection pooling for Octopus API Gateway"
 
 [dependencies]
 octopus-core = { path = "../octopus-core" }
+octopus-health = { path = "../octopus-health" }
+octopus-metrics = { path = "../octopus-metrics" }
+
+# TLS support
+rustls = { workspace = true }
+rustls-native-certs = { workspace = true }
+tokio-rustls = { workspace = true }
+webpki-roots = { workspace = true }
+
+# Audit logging
+uuid = { workspace = true, features = ["v4", "serde"] }
 
 # Async
 tokio.workspace = true
@@ -36,6 +47,14 @@ tracing.workspace = true
 bytes.workspace = true
 parking_lot.workspace = true
 dashmap.workspace = true
+rand.workspace = true
+httpdate.workspace = true
+hex.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+humantime-serde.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }

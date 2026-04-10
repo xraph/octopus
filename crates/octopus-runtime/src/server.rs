@@ -7,8 +7,8 @@ use octopus_config::Config;
 use octopus_core::{Error, Result};
 use octopus_farp::FarpApiHandler;
 use octopus_plugin_runtime::PluginManager;
-use octopus_protocols::{GraphQLHandler, GrpcHandler, ProtocolHandler, WebSocketHandler};
-use octopus_proxy::{ConnectionPool, HttpClient, HttpProxy, PoolConfig, ProxyConfig};
+use octopus_protocols::{GraphQLHandler, GrpcHandler, ProtocolHandler};
+use octopus_proxy::{HttpClient, HttpProxy, ProxyConfig};
 use octopus_router::Router;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -199,9 +199,11 @@ impl Server {
                                                 let status = e.to_status_code();
                                                 http::Response::builder()
                                                     .status(status)
-                                                    .body(http_body_util::Full::new(bytes::Bytes::from(
-                                                        format!("Error: {}", e)
-                                                    )))
+                                                    .body(http_body_util::Either::Left(
+                                                        http_body_util::Full::new(bytes::Bytes::from(
+                                                            format!("Error: {}", e)
+                                                        ))
+                                                    ))
                                                     .map_err(|e| {
                                                         tracing::error!("Failed to build error response: {}", e);
                                                         e
@@ -218,6 +220,7 @@ impl Server {
                                             let io = hyper_util::rt::TokioIo::new(tls_stream);
                                             if let Err(e) = hyper::server::conn::http1::Builder::new()
                                                 .serve_connection(io, service)
+                                                .with_upgrades()
                                                 .await
                                             {
                                                 tracing::error!("HTTPS connection error: {}", e);
@@ -232,6 +235,7 @@ impl Server {
                                     let io = hyper_util::rt::TokioIo::new(stream);
                                 if let Err(e) = hyper::server::conn::http1::Builder::new()
                                     .serve_connection(io, service)
+                                    .with_upgrades()
                                     .await
                                 {
                                         tracing::error!("HTTP connection error: {}", e);
@@ -370,7 +374,7 @@ impl ServerBuilder {
     }
 
     /// Build the server
-    pub fn build(self) -> Result<Server> {
+    pub async fn build(self) -> Result<Server> {
         let config = self
             .config
             .ok_or_else(|| Error::Config("config is required".to_string()))?;
@@ -415,20 +419,19 @@ impl ServerBuilder {
             }
         }
 
-        // Create connection pool
-        let pool = Arc::new(ConnectionPool::new(PoolConfig::default()));
-
-        // Create HTTP client
+        // Create HTTP client (connection pool is managed internally)
         let client = HttpClient::with_timeout(config.gateway.request_timeout);
 
         // Create proxy
-        let proxy = Arc::new(HttpProxy::new(client, pool, ProxyConfig::default()));
+        let proxy = Arc::new(HttpProxy::new(client, ProxyConfig::default()));
 
         // Initialize FARP (if enabled in config AND builder)
         let farp_enabled = config.farp.enabled && self.enable_farp;
         let farp_handler = if farp_enabled {
             tracing::info!("Initializing FARP handler");
-            let registry = Arc::new(octopus_farp::SchemaRegistry::new());
+            let registry = Arc::new(octopus_farp::SchemaRegistry::with_cache_ttl(
+                config.farp.schema_cache_ttl,
+            ));
             let federation = Arc::new(octopus_farp::SchemaFederation::new());
 
             // Initialize discovery watcher if discovery is configured
@@ -439,7 +442,7 @@ impl ServerBuilder {
                     Arc::clone(&router),
                     discovery_config,
                     config.farp.watch_interval,
-                );
+                ).await;
             }
 
             Some(Arc::new(FarpApiHandler::with_federation(
@@ -464,8 +467,9 @@ impl ServerBuilder {
         // Initialize Protocol Handlers (if enabled)
         let protocol_handlers: Vec<Arc<dyn ProtocolHandler>> = if self.enable_protocols {
             tracing::info!("Initializing protocol handlers");
+            // Note: WebSocket is handled via HTTP upgrade in handler.rs,
+            // not through the ProtocolHandler trait (which requires Full<Bytes>)
             vec![
-                Arc::new(WebSocketHandler::new()),
                 Arc::new(GrpcHandler::new()),
                 Arc::new(GraphQLHandler::new("/graphql")),
             ]
@@ -497,7 +501,7 @@ impl ServerBuilder {
     }
 
     /// Initialize FARP discovery providers
-    fn initialize_farp_discovery(
+    async fn initialize_farp_discovery(
         registry: Arc<octopus_farp::SchemaRegistry>,
         federation: Arc<octopus_farp::SchemaFederation>,
         router: Arc<octopus_router::Router>,
@@ -555,14 +559,95 @@ impl ServerBuilder {
                         );
                     }
                 }
-                DiscoveryBackendConfig::Dns { enabled, .. } if *enabled => {
-                    tracing::warn!("DNS discovery backend is not yet fully implemented for FARP");
+                DiscoveryBackendConfig::Dns { enabled, config } if *enabled => {
+                    #[cfg(feature = "dns")]
+                    {
+                        use octopus_discovery::dns::{DnsConfig, DnsDiscovery};
+
+                        tracing::info!(
+                            domain = %config.domain,
+                            "Enabling DNS discovery backend"
+                        );
+
+                        let dns_config = DnsConfig {
+                            default_port: 80,
+                            watch_interval: config.watch_interval,
+                            resolver_config: None,
+                        };
+
+                        match DnsDiscovery::new(dns_config).await {
+                            Ok(discovery) => {
+                                watcher.add_provider(Arc::new(discovery));
+                                enabled_backends += 1;
+                            }
+                            Err(e) => tracing::error!(error = %e, "Failed to initialize DNS discovery"),
+                        }
+                    }
+
+                    #[cfg(not(feature = "dns"))]
+                    {
+                        let _ = config;
+                        tracing::warn!("DNS discovery configured but 'dns' feature not enabled");
+                    }
                 }
-                DiscoveryBackendConfig::Consul { enabled, .. } if *enabled => {
-                    tracing::warn!("Consul discovery backend is not yet implemented");
+                DiscoveryBackendConfig::Consul { enabled, config } if *enabled => {
+                    #[cfg(feature = "consul")]
+                    {
+                        use octopus_discovery::consul::{ConsulConfig, ConsulDiscovery};
+
+                        tracing::info!(
+                            address = %config.address,
+                            datacenter = %config.datacenter,
+                            "Enabling Consul discovery backend"
+                        );
+
+                        let consul_config = ConsulConfig {
+                            address: config.address.clone(),
+                            datacenter: if config.datacenter.is_empty() { None } else { Some(config.datacenter.clone()) },
+                            token: config.token.clone(),
+                            watch_interval: config.watch_interval,
+                        };
+
+                        let discovery = ConsulDiscovery::new(consul_config);
+                        watcher.add_provider(Arc::new(discovery));
+                        enabled_backends += 1;
+                    }
+
+                    #[cfg(not(feature = "consul"))]
+                    {
+                        let _ = config;
+                        tracing::warn!("Consul discovery configured but 'consul' feature not enabled");
+                    }
                 }
-                DiscoveryBackendConfig::Kubernetes { enabled, .. } if *enabled => {
-                    tracing::warn!("Kubernetes discovery backend is not yet implemented");
+                DiscoveryBackendConfig::Kubernetes { enabled, config } if *enabled => {
+                    #[cfg(feature = "kubernetes")]
+                    {
+                        use octopus_discovery::kubernetes::{K8sConfig, K8sDiscovery};
+
+                        tracing::info!(
+                            namespace = %config.namespace,
+                            "Enabling Kubernetes discovery backend"
+                        );
+
+                        let k8s_config = K8sConfig {
+                            namespace: if config.namespace.is_empty() { None } else { Some(config.namespace.clone()) },
+                            label_selector: config.label_selector.clone(),
+                        };
+
+                        match K8sDiscovery::new(k8s_config).await {
+                            Ok(discovery) => {
+                                watcher.add_provider(Arc::new(discovery));
+                                enabled_backends += 1;
+                            }
+                            Err(e) => tracing::error!(error = %e, "Failed to initialize Kubernetes discovery"),
+                        }
+                    }
+
+                    #[cfg(not(feature = "kubernetes"))]
+                    {
+                        let _ = config;
+                        tracing::warn!("Kubernetes discovery configured but 'kubernetes' feature not enabled");
+                    }
                 }
                 _ => {
                     // Backend is disabled, skip
@@ -619,10 +704,10 @@ mod tests {
             .unwrap()
     }
 
-    #[test]
-    fn test_server_builder() {
+    #[tokio::test]
+    async fn test_server_builder() {
         let config = test_config();
-        let server = ServerBuilder::new().config(config).build().unwrap();
+        let server = ServerBuilder::new().config(config).build().await.unwrap();
 
         assert_eq!(server.listen_addr(), "127.0.0.1:8080".parse().unwrap());
         assert_eq!(server.request_count(), 0);
@@ -631,9 +716,9 @@ mod tests {
     // Note: test_server_state removed due to runtime-in-runtime complications
     // The server state is tested via integration tests
 
-    #[test]
-    fn test_server_builder_no_config() {
-        let result = ServerBuilder::new().build();
+    #[tokio::test]
+    async fn test_server_builder_no_config() {
+        let result = ServerBuilder::new().build().await;
         assert!(result.is_err());
     }
 }

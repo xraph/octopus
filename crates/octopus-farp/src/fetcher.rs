@@ -214,56 +214,72 @@ impl SchemaFetcher {
     }
 
     #[cfg(feature = "consul-backend")]
-    /// Fetch schema from Consul KV store (Placeholder implementation)
+    /// Fetch schema from Consul KV store
     async fn fetch_from_consul(
         &self,
-        _client: &ConsulClient,
+        client: &ConsulClient,
         path: &str,
         descriptor: &SchemaDescriptor,
     ) -> Result<Value> {
-        warn!(
+        info!(
             path = %path,
             schema_type = ?descriptor.schema_type,
-            "Consul backend not fully implemented - returning error"
+            "Fetching schema from Consul KV"
         );
 
-        // TODO: Implement once Consul crate API is stable
-        // Example implementation:
-        // 1. Call client.kv().get(path, None)
-        // 2. Decode base64 value
-        // 3. Parse JSON
-        // 4. Return schema
+        // Use the consul crate's KV read API
+        let (kv_pair, _meta) = client.kv.read(path, None)
+            .await
+            .map_err(|e| Error::Farp(format!("Consul KV read failed for '{path}': {e}")))?;
 
-        Err(Error::Farp(format!(
-            "Consul backend not yet implemented. Schema at path: {path}"
-        )))
+        let kv = kv_pair.ok_or_else(|| {
+            Error::Farp(format!("Schema not found in Consul KV at path: {path}"))
+        })?;
+
+        // Consul KV values are stored as bytes (already decoded by the consul crate)
+        let value_str = String::from_utf8(kv.Value.clone().unwrap_or_default())
+            .map_err(|e| Error::Farp(format!("Invalid UTF-8 in Consul KV value: {e}")))?;
+
+        let schema: Value = serde_json::from_str(&value_str)
+            .map_err(|e| Error::Farp(format!("Invalid JSON in Consul KV at '{path}': {e}")))?;
+
+        info!(path = %path, "Successfully fetched schema from Consul KV");
+        Ok(schema)
     }
 
     #[cfg(feature = "etcd-backend")]
-    /// Fetch schema from etcd (Placeholder implementation)
+    /// Fetch schema from etcd
     async fn fetch_from_etcd(
         &self,
-        _client: &EtcdClient,
+        client: &EtcdClient,
         path: &str,
         descriptor: &SchemaDescriptor,
     ) -> Result<Value> {
-        warn!(
+        info!(
             path = %path,
             schema_type = ?descriptor.schema_type,
-            "etcd backend not fully implemented - returning error"
+            "Fetching schema from etcd"
         );
 
-        // TODO: Implement once etcd-client crate API is stable
-        // Example implementation:
-        // 1. Call client.get(path, None).await
-        // 2. Get first KV pair from response
-        // 3. Decode UTF-8 value
-        // 4. Parse JSON
-        // 5. Return schema
+        // etcd_client::Client::get requires &mut self, so we clone the client
+        // (etcd_client::Client is cheap to clone as it wraps an Arc internally)
+        let mut client = client.clone();
+        let response = client.get(path, None)
+            .await
+            .map_err(|e| Error::Farp(format!("etcd get failed for '{path}': {e}")))?;
 
-        Err(Error::Farp(format!(
-            "etcd backend not yet implemented. Schema at path: {path}"
-        )))
+        let kv = response.kvs().first().ok_or_else(|| {
+            Error::Farp(format!("Schema not found in etcd at key: {path}"))
+        })?;
+
+        let value_str = kv.value_str()
+            .map_err(|e| Error::Farp(format!("Invalid UTF-8 in etcd value: {e}")))?;
+
+        let schema: Value = serde_json::from_str(value_str)
+            .map_err(|e| Error::Farp(format!("Invalid JSON in etcd at '{path}': {e}")))?;
+
+        info!(path = %path, "Successfully fetched schema from etcd");
+        Ok(schema)
     }
 
     /// Get inline schema (already embedded in descriptor)

@@ -1,0 +1,34 @@
+[package]
+name = "octopus-proxy-chaos-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[test]]
+name = "chaos"
+path = "tests/chaos_tests.rs"
+harness = true
+
+[dependencies]
+octopus-proxy = { path = "../../" }
+octopus-core = { path = "../../../octopus-core" }
+
+# Async runtime
+tokio = { workspace = true, features = ["full"] }
+futures = { workspace = true }
+
+# HTTP
+http = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+
+# Serialization
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+reqwest = { version = "0.11", features = ["json"] }
+
+# Testing
+anyhow = { workspace = true }
+
+# Utilities
+bytes = { workspace = true }

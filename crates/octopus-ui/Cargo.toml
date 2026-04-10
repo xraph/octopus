@@ -1,0 +1,21 @@
+[package]
+name = "octopus-ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Type-safe UI component library for Rust web applications (inspired by forgeui)"
+
+[dependencies]
+# Core utilities
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Utilities
+once_cell = { workspace = true }
+
+[dev-dependencies]
+# Testing
+criterion = { workspace = true }

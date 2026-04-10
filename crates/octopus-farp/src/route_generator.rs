@@ -52,6 +52,47 @@ impl RouteGenerator {
         Self
     }
 
+    /// Generate routes from a FARP v1.1.0 route table (preferred over schema parsing)
+    ///
+    /// When a manifest includes a pre-computed `route_table`, this method converts
+    /// the `RouteDescriptor`s directly to `GeneratedRoute`s without schema parsing.
+    /// Generate routes from a FARP v1.1.0 route table (preferred over schema parsing)
+    ///
+    /// When a manifest includes a pre-computed `route_table`, this method converts
+    /// the `RouteDescriptor`s directly to `GeneratedRoute`s without schema parsing.
+    pub fn generate_from_route_table(
+        &self,
+        route_table: &[farp::types::RouteDescriptor],
+        upstream: &str,
+    ) -> Vec<GeneratedRoute> {
+        route_table
+            .iter()
+            .flat_map(|rd| {
+                let methods = if rd.methods.is_empty() {
+                    vec!["GET".to_string()]
+                } else {
+                    rd.methods.clone()
+                };
+                methods.into_iter().map(move |method| {
+                    let metadata = RouteMetadata {
+                        operation_id: rd.operation_id.clone(),
+                        summary: None,
+                        tags: Vec::new(),
+                        requires_auth: !rd.public,
+                        rate_limit: rd.rate_limit.as_ref()
+                            .and_then(|rl| rl.requests_per_second.map(|r| r as u32)),
+                    };
+                    GeneratedRoute {
+                        method: method.to_uppercase(),
+                        path: rd.path.clone(),
+                        upstream: upstream.to_string(),
+                        metadata,
+                    }
+                })
+            })
+            .collect()
+    }
+
     /// Generate routes from a schema
     pub fn generate_routes(&self, schema: &SchemaDescriptor) -> Result<Vec<GeneratedRoute>> {
         match schema.format {
@@ -259,6 +300,68 @@ mod tests {
 
         let prefixed = RouteGenerator::apply_prefix(routes, "/api/v1");
         assert_eq!(prefixed[0].path, "/api/v1/users");
+    }
+
+    /// Helper to create a minimal RouteDescriptor for tests
+    fn test_route_descriptor(
+        path: &str,
+        methods: Vec<&str>,
+        operation_id: Option<&str>,
+        public: bool,
+    ) -> farp::types::RouteDescriptor {
+        farp::types::RouteDescriptor {
+            path: path.to_string(),
+            methods: methods.into_iter().map(String::from).collect(),
+            protocol: "rest".to_string(),
+            operation_id: operation_id.map(String::from),
+            timeout: None,
+            rate_limit: None,
+            cors: None,
+            middleware: Vec::new(),
+            cache: None,
+            metadata: None,
+            public,
+            deprecated: false,
+        }
+    }
+
+    #[test]
+    fn test_generate_from_route_table() {
+        let generator = RouteGenerator::new();
+
+        let route_table = vec![
+            test_route_descriptor("/users", vec!["GET", "POST"], Some("listUsers"), true),
+            test_route_descriptor(
+                "/users/{id}",
+                vec!["GET", "DELETE"],
+                Some("getUser"),
+                false,
+            ),
+        ];
+
+        let routes = generator.generate_from_route_table(&route_table, "user-svc");
+        assert_eq!(routes.len(), 4); // 2 + 2 methods
+        assert_eq!(routes[0].upstream, "user-svc");
+        assert_eq!(routes[0].path, "/users");
+        assert_eq!(routes[0].method, "GET");
+        assert!(!routes[0].metadata.requires_auth); // public = true
+        assert!(routes[2].metadata.requires_auth); // public = false
+    }
+
+    #[test]
+    fn test_generate_from_route_table_default_method() {
+        let generator = RouteGenerator::new();
+
+        let route_table = vec![test_route_descriptor(
+            "/health",
+            vec![], // empty -> defaults to GET
+            None,
+            true,
+        )];
+
+        let routes = generator.generate_from_route_table(&route_table, "svc");
+        assert_eq!(routes.len(), 1);
+        assert_eq!(routes[0].method, "GET");
     }
 
     #[test]

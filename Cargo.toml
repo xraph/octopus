@@ -14,6 +14,7 @@ members = [
     "crates/octopus-scripting",
     "crates/octopus-health",
     "crates/octopus-admin",
+    "crates/octopus-ui",
     "crates/octopus-config",
     "crates/octopus-metrics",
     "crates/octopus-state",
@@ -38,6 +39,9 @@ keywords = ["api-gateway", "proxy", "farp", "kubernetes", "microservices"]
 categories = ["web-programming", "network-programming", "api-bindings"]
 
 [workspace.dependencies]
+# FARP - External protocol implementation
+farp = { path = "../farp/farp-rust", features = ["memory-registry", "gateway", "providers-openapi", "providers-asyncapi", "providers-graphql", "providers-grpc"] }
+
 # Async runtime
 tokio = { version = "1.35", features = ["full"] }
 tokio-util = { version = "0.7", features = ["full"] }
@@ -124,6 +128,8 @@ hmac = "0.12"
 ring = "0.17"
 rustls = "0.22"
 rustls-native-certs = "0.7"
+tokio-rustls = "0.25"
+webpki-roots = "0.26"
 
 # Data structures
 dashmap = "5.5"
@@ -146,6 +152,9 @@ once_cell = "1.19"
 regex = "1.10"
 semver = { version = "1.0", features = ["serde"] }
 num_cpus = "1.16"
+rand = "0.8"
+hex = "0.4"
+httpdate = "1.0"
 
 # Templates
 askama = { version = "0.12", features = ["with-axum", "serde-json"] }

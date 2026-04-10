@@ -198,6 +198,124 @@
             </table>
         </div>
     </div>
+
+    <!-- Upstream Services -->
+    <div class="flex flex-col bg-white border shadow-sm rounded-xl dark:bg-neutral-800 dark:border-neutral-700">
+        <div class="px-6 py-4 flex justify-between items-center border-b border-gray-200 dark:border-neutral-700">
+            <div>
+                <h2 class="text-xl font-semibold text-gray-800 dark:text-neutral-200">Upstream Services</h2>
+                <p class="text-sm text-gray-600 dark:text-neutral-400"><span x-text="services.length"></span> services registered</p>
+            </div>
+            <a href="/admin/health" class="py-2 px-3 inline-flex items-center gap-x-2 text-sm font-medium rounded-lg border border-transparent text-blue-600 hover:bg-blue-100 dark:text-blue-500 dark:hover:bg-blue-900">
+                View health
+                <svg class="flex-shrink-0 size-4" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            </a>
+        </div>
+        <div x-show="services.length > 0" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 p-6">
+            <template x-for="svc in services" :key="svc.name">
+                <div class="flex flex-col bg-gray-50 border rounded-xl p-4 dark:bg-neutral-900 dark:border-neutral-700">
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="flex items-center gap-x-2">
+                            <span class="flex items-center justify-center size-8 bg-blue-100 text-blue-600 rounded-lg dark:bg-blue-900 dark:text-blue-400">
+                                <svg class="shrink-0 size-4" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg>
+                            </span>
+                            <span class="text-sm font-semibold text-gray-800 dark:text-neutral-200" x-text="svc.name"></span>
+                        </div>
+                        <span class="inline-flex items-center gap-x-1.5 py-1 px-2 rounded-full text-xs font-medium"
+                              :class="svc.healthy ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'"
+                              x-text="svc.healthy ? 'Healthy' : 'Unhealthy'"></span>
+                    </div>
+                    <div class="space-y-1 text-xs text-gray-600 dark:text-neutral-400">
+                        <div class="flex justify-between"><span>Address</span><span class="font-mono text-gray-800 dark:text-neutral-200" x-text="svc.address + ':' + svc.port"></span></div>
+                        <div class="flex justify-between"><span>Routes</span><span class="text-gray-800 dark:text-neutral-200" x-text="svc.route_count"></span></div>
+                        <div class="flex justify-between"><span>Version</span><span class="text-gray-800 dark:text-neutral-200" x-text="svc.version || 'unknown'"></span></div>
+                    </div>
+                </div>
+            </template>
+        </div>
+        <div x-show="services.length === 0" class="p-8 text-center text-gray-500 dark:text-neutral-400">
+            <svg class="mx-auto mb-3 size-8" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/></svg>
+            <p>No upstream services registered</p>
+            <p class="text-xs mt-1">Services will appear here when registered via FARP or static config</p>
+        </div>
+    </div>
+
+    <!-- Upstream Targets -->
+    <div class="flex flex-col bg-white border shadow-sm rounded-xl dark:bg-neutral-800 dark:border-neutral-700">
+        <div class="px-6 py-4 flex justify-between items-center border-b border-gray-200 dark:border-neutral-700">
+            <div>
+                <h2 class="text-xl font-semibold text-gray-800 dark:text-neutral-200">Upstream Targets</h2>
+                <p class="text-sm text-gray-600 dark:text-neutral-400">Individual backend instances</p>
+            </div>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200 dark:divide-neutral-700">
+                <thead class="bg-gray-50 dark:bg-neutral-800">
+                    <tr>
+                        <th class="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase dark:text-neutral-400">URL</th>
+                        <th class="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase dark:text-neutral-400">Service</th>
+                        <th class="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase dark:text-neutral-400">Weight</th>
+                        <th class="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase dark:text-neutral-400">Health</th>
+                        <th class="px-6 py-3 text-start text-xs font-medium text-gray-500 uppercase dark:text-neutral-400">Connections</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-200 dark:divide-neutral-700">
+                    <template x-for="target in upstreams" :key="target.url">
+                        <tr>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-800 dark:text-neutral-200" x-text="target.url"></td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-800 dark:text-neutral-200" x-text="target.route_path"></td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-800 dark:text-neutral-200" x-text="target.weight"></td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm">
+                                <span class="inline-flex items-center gap-x-1.5 py-1.5 px-3 rounded-full text-xs font-medium"
+                                      :class="target.healthy ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'"
+                                      x-text="target.healthy ? 'Healthy' : 'Unhealthy'"></span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-800 dark:text-neutral-200" x-text="target.active_connections"></td>
+                        </tr>
+                    </template>
+                    <tr x-show="upstreams.length === 0">
+                        <td colspan="5" class="px-6 py-8 text-center text-sm text-gray-500 dark:text-neutral-400">No upstream targets registered</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Recent Activity -->
+    <div class="flex flex-col bg-white border shadow-sm rounded-xl dark:bg-neutral-800 dark:border-neutral-700">
+        <div class="px-6 py-4 flex justify-between items-center border-b border-gray-200 dark:border-neutral-700">
+            <div>
+                <h2 class="text-xl font-semibold text-gray-800 dark:text-neutral-200">Recent Activity</h2>
+                <p class="text-sm text-gray-600 dark:text-neutral-400">Latest gateway events</p>
+            </div>
+            <a href="/admin/logs" class="py-2 px-3 inline-flex items-center gap-x-2 text-sm font-medium rounded-lg border border-transparent text-blue-600 hover:bg-blue-100 dark:text-blue-500 dark:hover:bg-blue-900">
+                View all logs
+                <svg class="flex-shrink-0 size-4" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+            </a>
+        </div>
+        <div class="overflow-y-auto" style="max-height: 400px;">
+            <div class="divide-y divide-gray-200 dark:divide-neutral-700">
+                <template x-for="(entry, idx) in recentActivity" :key="idx">
+                    <div class="px-6 py-3 flex items-start gap-x-3">
+                        <span class="flex-shrink-0 inline-flex items-center gap-x-1.5 py-1 px-2 rounded-full text-xs font-medium"
+                              :class="{
+                                  'bg-gray-100 text-gray-800 dark:bg-neutral-700 dark:text-neutral-300': entry.level === 'info',
+                                  'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200': entry.level === 'warning',
+                                  'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200': entry.level === 'error'
+                              }"
+                              x-text="entry.level.toUpperCase()"></span>
+                        <div class="flex-grow min-w-0">
+                            <p class="text-sm text-gray-800 dark:text-neutral-200 truncate" x-text="entry.message"></p>
+                            <p class="text-xs text-gray-500 dark:text-neutral-400 mt-0.5" x-text="entry.timestamp"></p>
+                        </div>
+                    </div>
+                </template>
+                <div x-show="recentActivity.length === 0" class="px-6 py-8 text-center text-sm text-gray-500 dark:text-neutral-400">
+                    No recent activity
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -213,13 +331,21 @@ function prelineDashboard() {
             health_status: 'healthy'
         },
         topRoutes: [],
+        services: [],
+        upstreams: [],
+        recentActivity: [],
         timeRange: '24h',
         loading: false,
         charts: {},
 
         async init() {
-            await this.loadStats();
-            await this.loadTopRoutes();
+            await Promise.all([
+                this.loadStats(),
+                this.loadTopRoutes(),
+                this.loadServices(),
+                this.loadUpstreams(),
+                this.loadActivity()
+            ]);
             await this.$nextTick();
             this.initCharts();
             // Auto-refresh every 10 seconds
@@ -247,10 +373,45 @@ function prelineDashboard() {
             }
         },
 
+        async loadServices() {
+            try {
+                const response = await fetch('/admin/api/services');
+                if (!response.ok) throw new Error('Failed to fetch services');
+                this.services = await response.json();
+            } catch (error) {
+                console.error('Error loading services:', error);
+            }
+        },
+
+        async loadUpstreams() {
+            try {
+                const response = await fetch('/admin/api/upstreams');
+                if (!response.ok) throw new Error('Failed to fetch upstreams');
+                this.upstreams = await response.json();
+            } catch (error) {
+                console.error('Error loading upstreams:', error);
+            }
+        },
+
+        async loadActivity() {
+            try {
+                const response = await fetch('/admin/api/activity');
+                if (!response.ok) throw new Error('Failed to fetch activity');
+                this.recentActivity = await response.json();
+            } catch (error) {
+                console.error('Error loading activity:', error);
+            }
+        },
+
         async refresh() {
             this.loading = true;
-            await this.loadStats();
-            await this.loadTopRoutes();
+            await Promise.all([
+                this.loadStats(),
+                this.loadTopRoutes(),
+                this.loadServices(),
+                this.loadUpstreams(),
+                this.loadActivity()
+            ]);
             this.updateCharts();
             this.loading = false;
         },

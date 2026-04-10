@@ -26,6 +26,9 @@ pub struct ConsulDiscovery {
     /// Consul datacenter
     datacenter: Option<String>,
 
+    /// ACL token for authentication
+    token: Option<String>,
+
     /// HTTP client
     client: Arc<Client<hyper_util::client::legacy::connect::HttpConnector, Empty<Bytes>>>,
 
@@ -42,6 +45,9 @@ pub struct ConsulConfig {
     /// Datacenter filter
     pub datacenter: Option<String>,
 
+    /// ACL token for authentication
+    pub token: Option<String>,
+
     /// Watch interval for changes
     pub watch_interval: Duration,
 }
@@ -51,6 +57,7 @@ impl Default for ConsulConfig {
         Self {
             address: "http://127.0.0.1:8500".to_string(),
             datacenter: None,
+            token: None,
             watch_interval: Duration::from_secs(30),
         }
     }
@@ -84,6 +91,7 @@ impl ConsulDiscovery {
         Self {
             address: config.address,
             datacenter: config.datacenter,
+            token: config.token,
             client: Arc::new(client),
             watch_interval: config.watch_interval,
         }
@@ -108,9 +116,16 @@ impl ConsulDiscovery {
 
     /// Make HTTP request to Consul
     async fn request(&self, uri: Uri) -> Result<Vec<u8>> {
-        let req = Request::builder()
+        let mut builder = Request::builder()
             .method(Method::GET)
-            .uri(uri)
+            .uri(uri);
+
+        // Add ACL token header if configured
+        if let Some(ref token) = self.token {
+            builder = builder.header("X-Consul-Token", token.as_str());
+        }
+
+        let req = builder
             .body(Empty::<Bytes>::new())
             .map_err(|e| Error::Discovery(format!("Failed to build request: {e}")))?;
 

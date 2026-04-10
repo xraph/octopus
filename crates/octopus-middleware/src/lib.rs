@@ -18,9 +18,12 @@
 
 pub mod audit_logger;
 pub mod builder;
+pub mod caching;
 pub mod compression;
 pub mod connection_limits;
 pub mod cors;
+pub mod forward_auth;
+pub mod ip_filter;
 pub mod jwt;
 pub mod logging;
 pub mod rate_limit;
@@ -43,6 +46,9 @@ pub use request_id::{IdGenerator, RequestId, RequestIdConfig};
 pub use request_limits::{RequestLimits, RequestLimitsConfig};
 pub use security_headers::{SecurityHeaders, SecurityHeadersConfig};
 pub use timeout::{Timeout, TimeoutConfig};
+pub use caching::{CacheStore, CachedResponse, Caching, CachingConfig, InMemoryCacheStore};
+pub use forward_auth::{ForwardAuth, ForwardAuthConfig};
+pub use ip_filter::{IpFilter, IpFilterConfig, IpPattern};
 
 // Re-export core middleware types from octopus-core
 pub use octopus_core::middleware::{Middleware, Next};

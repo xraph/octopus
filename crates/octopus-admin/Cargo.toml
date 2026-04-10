@@ -16,6 +16,8 @@ octopus-config = { path = "../octopus-config" }
 octopus-health = { path = "../octopus-health" }
 octopus-plugins = { path = "../octopus-plugins" }
 octopus-metrics = { path = "../octopus-metrics" }
+octopus-ui = { path = "../octopus-ui" }
+octopus-farp = { path = "../octopus-farp" }
 
 # Web framework
 axum.workspace = true
@@ -37,6 +39,10 @@ chrono.workspace = true
 
 # Logging
 tracing.workspace = true
+
+# WebSocket
+tokio-tungstenite.workspace = true
+futures.workspace = true
 
 # Utilities
 once_cell.workspace = true

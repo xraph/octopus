@@ -19,7 +19,9 @@
 pub mod acceptor;
 pub mod config;
 pub mod loader;
+pub mod mtls;
 
 pub use acceptor::TlsAcceptor;
 pub use config::TlsConfig;
 pub use loader::{load_certificates, load_private_key, CertificateReloader};
+pub use mtls::{MtlsConfig, TargetTlsConfig};

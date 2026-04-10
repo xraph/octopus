@@ -13,14 +13,19 @@
 pub mod api_handlers;
 pub mod handlers;
 pub mod models;
+pub mod octopus_ui_handlers;
+pub mod octopus_ui_handlers_pure;
 pub mod plugin;
 pub mod router;
+pub mod ui_components;
+pub mod websocket;
 
 pub use api_handlers::*;
 pub use handlers::*;
 pub use models::*;
 pub use plugin::*;
 pub use router::DashboardRouter;
+pub use websocket::{WsHub, WsMessage};
 
 /// Custom Askama filters
 pub mod filters {

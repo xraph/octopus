@@ -395,33 +395,53 @@ helm install my-gateway xraph/octopus \
 # Rust 1.75+
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# Tools
-cargo install cargo-watch cargo-nextest cargo-audit
+# Build automation (choose one)
+make help                    # Make (pre-installed on most systems)
+cargo install just && just   # Just (modern, recommended for Rust)
+
+# Optional development tools
+make install-tools           # Install cargo-watch, nextest, audit, etc.
 ```
 
 ### Build & Test
+
+We provide both **Make** and **Just** for build automation. Choose your preference:
 
 ```bash
 # Clone repository
 git clone https://github.com/xraph/octopus.git
 cd octopus
 
-# Build
+# Using Make (traditional)
+make build          # Build debug version
+make test           # Run tests
+make release        # Build optimized release
+make dev            # Development mode with auto-reload
+
+# Using Just (modern, Rust-friendly)
+just build          # Build debug version
+just test           # Run tests
+just release        # Build optimized release
+just dev            # Development mode with auto-reload
+
+# Or use Cargo directly
 cargo build --all-features
-
-# Run tests
 cargo test --all-features
-
-# Run benchmarks
 cargo bench
-
-# Development mode with hot reload
-cargo watch -x 'run --bin octopus -- --config config.dev.yaml'
 ```
+
+**📖 For complete build documentation, see [BUILD.md](BUILD.md) or [QUICK_REFERENCE.md](QUICK_REFERENCE.md)**
 
 ### Code Quality
 
 ```bash
+# Using Make/Just (recommended)
+make pre-commit     # Run all checks before commit
+make lint           # Format + clippy
+make audit          # Security audit
+make fix            # Auto-fix issues
+
+# Or manually with Cargo
 cargo fmt --all              # Format
 cargo clippy --all-features  # Lint
 cargo audit                  # Security

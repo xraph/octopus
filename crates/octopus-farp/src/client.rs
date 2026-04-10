@@ -129,8 +129,6 @@ impl FarpClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manifest::ServiceInfo;
-    use std::collections::HashMap;
     use wiremock::{
         matchers::{method, path},
         Mock, MockServer, ResponseTemplate,
@@ -140,16 +138,7 @@ mod tests {
     async fn test_fetch_manifest() {
         let mock_server = MockServer::start().await;
 
-        let service_info = ServiceInfo {
-            name: "test-service".to_string(),
-            version: "1.0.0".to_string(),
-            description: "Test".to_string(),
-            base_url: "http://localhost:8080".to_string(),
-            metadata: HashMap::new(),
-        };
-
-        let mut manifest = SchemaManifest::new(service_info);
-        manifest.calculate_checksum().unwrap();
+        let manifest = SchemaManifest::new("test-service", "1.0.0", "test-instance");
         let manifest_json = serde_json::to_string(&manifest).unwrap();
 
         Mock::given(method("GET"))
@@ -162,8 +151,8 @@ mod tests {
         let url = format!("{}/manifest.json", mock_server.uri());
         let fetched = client.fetch_manifest(&url).await.unwrap();
 
-        assert_eq!(fetched.service.name, "test-service");
-        assert_eq!(fetched.service.version, "1.0.0");
+        assert_eq!(fetched.service_name, "test-service");
+        assert_eq!(fetched.service_version, "1.0.0");
     }
 
     #[tokio::test]

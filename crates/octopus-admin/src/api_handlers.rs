@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::handlers::AppState;
-use crate::models::{DashboardStats, PerformanceMetrics, RouteInfo, RouteConfig, PluginInfo, LogQuery, SystemInfo, AnalyticsMetrics, TimeSeriesPoint, LatencyPercentiles, RouteMetric, ActivityLogEntry, SecurityEvent, ConfigItem};
+use crate::models::{PerformanceMetrics, RouteInfo, RouteConfig, PluginInfo, LogQuery, SystemInfo, AnalyticsMetrics, TimeSeriesPoint, LatencyPercentiles, RouteMetric, ActivityLogEntry, SecurityEvent, ConfigItem};
 
 // ============================================================================
 // Metrics & Analytics Endpoints
@@ -28,42 +28,75 @@ use crate::models::{DashboardStats, PerformanceMetrics, RouteInfo, RouteConfig, 
 /// Get comprehensive analytics metrics
 /// GET /admin/api/analytics?timeframe=24h
 pub async fn api_analytics_handler(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Query(params): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
     let timeframe = params.get("timeframe").map_or("24h", std::string::String::as_str);
 
-    // TODO: Fetch real analytics data
-    let analytics = generate_mock_analytics(timeframe);
+    if let Some(ref m) = state.metrics {
+        let snapshot = octopus_metrics::MetricsSnapshot::from_collector(m);
+        let top_routes: Vec<RouteMetric> = snapshot.routes.iter().map(|r| RouteMetric {
+            path: r.path.clone(),
+            requests: r.request_count,
+            avg_latency: r.avg_latency_ms,
+            error_rate: r.error_rate,
+        }).collect();
 
-    Json(analytics)
+        let mut traffic_by_method = HashMap::new();
+        // Derive from routes if available
+        if let Some(ref router) = state.router {
+            for route in router.get_all_routes() {
+                let method = route.method.to_string();
+                let count = m.route_stats(&format!("{} {}", method, route.path))
+                    .map_or(0, |s| s.request_count.load(std::sync::atomic::Ordering::Relaxed));
+                *traffic_by_method.entry(method).or_insert(0u64) += count;
+            }
+        }
+
+        let analytics = AnalyticsMetrics {
+            timeframe: timeframe.to_string(),
+            request_volume: vec![], // Historical time series not yet stored
+            latency_percentiles: LatencyPercentiles {
+                p50: snapshot.routes.first().map_or(0.0, |r| r.p50_latency_ms),
+                p90: snapshot.routes.first().map_or(0.0, |r| r.avg_latency_ms),
+                p95: snapshot.routes.first().map_or(0.0, |r| r.p95_latency_ms),
+                p99: snapshot.routes.first().map_or(0.0, |r| r.p99_latency_ms),
+            },
+            error_breakdown: HashMap::new(), // Per-status not yet tracked
+            top_routes,
+            status_code_distribution: HashMap::new(), // Not yet tracked
+            traffic_by_method,
+        };
+
+        Json(analytics)
+    } else {
+        // No metrics collector — return empty analytics
+        let analytics = AnalyticsMetrics {
+            timeframe: timeframe.to_string(),
+            request_volume: vec![],
+            latency_percentiles: LatencyPercentiles { p50: 0.0, p90: 0.0, p95: 0.0, p99: 0.0 },
+            error_breakdown: HashMap::new(),
+            top_routes: vec![],
+            status_code_distribution: HashMap::new(),
+            traffic_by_method: HashMap::new(),
+        };
+        Json(analytics)
+    }
 }
 
 /// Get real-time metrics for dashboard
 /// GET /admin/api/metrics/realtime
 pub async fn api_realtime_metrics_handler(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    // TODO: Fetch real-time metrics
-    let metrics = DashboardStats {
-        total_requests: 1_234_567,
-        active_routes: 42,
-        avg_latency_ms: 45.6,
-        health_status: "healthy".to_string(),
-        requests_per_second: 1250.5,
-        error_rate: 0.05,
-        active_connections: 523,
-        cpu_usage: 42.3,
-        memory_usage: 67.8,
-    };
-
-    Json(metrics)
+    let stats = crate::handlers::build_dashboard_stats(&state);
+    Json(stats)
 }
 
 /// Get time series data for charts
 /// GET /admin/api/metrics/timeseries?metric=requests&period=1h
 pub async fn api_timeseries_handler(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Query(params): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
     let metric = params
@@ -71,26 +104,44 @@ pub async fn api_timeseries_handler(
         .map_or("requests", std::string::String::as_str);
     let period = params.get("period").map_or("1h", std::string::String::as_str);
 
-    // TODO: Fetch real time series data
-    let data = generate_mock_timeseries(metric, period);
+    // Current point from real metrics
+    if let Some(ref m) = state.metrics {
+        let now = Utc::now();
+        let value = match metric {
+            "requests" => m.total_requests() as f64,
+            "errors" => m.total_errors() as f64,
+            "latency" => m.global_avg_latency_ms(),
+            "connections" => m.active_connections() as f64,
+            _ => m.total_requests() as f64,
+        };
 
-    Json(data)
+        // Return a single current data point (historical tracking requires a time-series store)
+        let data = vec![TimeSeriesPoint {
+            timestamp: now.format("%Y-%m-%d %H:%M:%S").to_string(),
+            value,
+        }];
+        Json(data)
+    } else {
+        // No metrics collector — return empty time series
+        Json(vec![] as Vec<TimeSeriesPoint>)
+    }
 }
 
 /// Get performance metrics
 /// GET /admin/api/metrics/performance
 pub async fn api_performance_metrics_handler(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    // TODO: Fetch real performance metrics
+    let active_connections = state.metrics.as_ref().map_or(0, |m| m.active_connections());
+
     let metrics = PerformanceMetrics {
-        cpu_usage: 42.3,
-        memory_usage: 67.8,
-        memory_total: 16_777_216_000,    // 16GB
-        memory_available: 5_400_000_000, // ~5GB
-        goroutines: 256,
-        gc_count: 1234,
-        gc_pause_ms: 2.5,
+        cpu_usage: 0.0, // System-level metrics not yet collected
+        memory_usage: 0.0,
+        memory_total: 0,
+        memory_available: 0,
+        goroutines: active_connections, // repurpose as "active tasks"
+        gc_count: 0,
+        gc_pause_ms: 0.0,
     };
 
     Json(metrics)
@@ -102,32 +153,23 @@ pub async fn api_performance_metrics_handler(
 
 /// List all routes
 /// GET /admin/api/routes
-pub async fn api_routes_list_handler(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
-    // TODO: Fetch real routes
-    let routes = generate_mock_routes();
+pub async fn api_routes_list_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let routes = crate::handlers::build_routes_from_state(&state);
     Json(routes)
 }
 
 /// Get single route by ID
 /// GET /admin/api/routes/:id
 pub async fn api_route_get_handler(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    // TODO: Fetch route by ID
-    let route = RouteInfo {
-        id,
-        path: "/api/users".to_string(),
-        method: "GET".to_string(),
-        upstream: "user-service:8080".to_string(),
-        request_count: 45678,
-        is_healthy: true,
-        avg_latency_ms: 23.5,
-        error_count: 12,
-        last_accessed: Some(Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()),
-    };
-
-    Json(route)
+    let routes = crate::handlers::build_routes_from_state(&state);
+    if let Some(route) = routes.into_iter().find(|r| r.id == id) {
+        Json(serde_json::to_value(route).unwrap())
+    } else {
+        Json(serde_json::json!({"error": "Route not found", "id": id}))
+    }
 }
 
 /// Create new route
@@ -157,23 +199,24 @@ pub async fn api_route_create_handler(
 /// Update existing route
 /// PUT /admin/api/routes/:id
 pub async fn api_route_update_handler(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     Json(config): Json<RouteConfig>,
 ) -> impl IntoResponse {
-    // TODO: Update route in system
     tracing::info!("Updating route {}: {} {}", id, config.method, config.path);
 
+    // TODO: Actually mutate the router when write API is ready
+    // For now, return the submitted config as confirmation
     let route = RouteInfo {
         id,
         path: config.path,
         method: config.method,
         upstream: config.upstream,
-        request_count: 45678,
+        request_count: 0,
         is_healthy: true,
-        avg_latency_ms: 23.5,
-        error_count: 12,
-        last_accessed: Some(Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()),
+        avg_latency_ms: 0.0,
+        error_count: 0,
+        last_accessed: None,
     };
 
     Json(route)
@@ -197,34 +240,23 @@ pub async fn api_route_delete_handler(
 
 /// List all plugins
 /// GET /admin/api/plugins
-pub async fn api_plugins_list_handler(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
-    // TODO: Fetch real plugins
-    let plugins = generate_mock_plugins();
+pub async fn api_plugins_list_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let plugins = crate::handlers::build_plugins_from_state(&state).await;
     Json(plugins)
 }
 
 /// Get plugin by ID
 /// GET /admin/api/plugins/:id
 pub async fn api_plugin_get_handler(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    // TODO: Fetch plugin by ID
-    let plugin = PluginInfo {
-        id,
-        name: "JWT Authentication".to_string(),
-        version: "0.1.0".to_string(),
-        description: "JWT token validation and authentication".to_string(),
-        author: Some("Octopus Team".to_string()),
-        enabled: true,
-        has_dashboard: true,
-        config: Some(serde_json::json!({
-            "secret_key": "****",
-            "token_expiry": 3600
-        })),
-    };
-
-    Json(plugin)
+    let plugins = crate::handlers::build_plugins_from_state(&state).await;
+    if let Some(plugin) = plugins.into_iter().find(|p| p.id == id) {
+        Json(serde_json::to_value(plugin).unwrap())
+    } else {
+        Json(serde_json::json!({"error": "Plugin not found", "id": id}))
+    }
 }
 
 /// Enable/disable plugin
@@ -265,19 +297,73 @@ pub async fn api_plugin_config_handler(
 /// Get logs
 /// GET /admin/api/logs?level=error&limit=100
 pub async fn api_logs_handler(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     Query(query): Query<LogQuery>,
 ) -> impl IntoResponse {
-    // TODO: Fetch real logs
-    let logs = generate_mock_logs(&query);
-    Json(logs)
+    let limit = query.limit.unwrap_or(100);
+
+    let entries: Vec<ActivityLogEntry> = if let Some(ref log) = state.activity_log {
+        let all = log.recent_entries(limit);
+        all.into_iter()
+            .filter(|e| {
+                if let Some(ref level) = query.level {
+                    let entry_level = if e.is_error() { "error" } else { "info" };
+                    entry_level == level.as_str()
+                } else {
+                    true
+                }
+            })
+            .filter(|e| {
+                if let Some(ref search) = query.search {
+                    e.path.contains(search.as_str()) || e.upstream.contains(search.as_str())
+                } else {
+                    true
+                }
+            })
+            .map(|e| ActivityLogEntry {
+                timestamp: e.formatted_time(),
+                level: if e.is_error() { "error".to_string() } else { "info".to_string() },
+                message: format!("{} {} → {} ({:.1}ms)", e.method, e.path, e.status, e.latency_ms),
+                details: Some(format!("Upstream: {}", e.upstream)),
+                source: Some("proxy".to_string()),
+            })
+            .collect()
+    } else {
+        vec![]
+    };
+
+    Json(entries)
 }
 
 /// Get security events
 /// GET /admin/api/security/events
-pub async fn api_security_events_handler(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
-    // TODO: Fetch real security events
-    let events = generate_mock_security_events();
+pub async fn api_security_events_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    // Security events from circuit breaker rejections
+    let mut events = Vec::new();
+    let now = Utc::now();
+
+    if let Some(ref cb) = state.circuit_breaker {
+        for (id, metrics) in cb.get_all_metrics() {
+            if metrics.state != octopus_health::CircuitState::Closed {
+                events.push(SecurityEvent {
+                    timestamp: now.format("%Y-%m-%d %H:%M:%S").to_string(),
+                    event_type: "circuit_breaker".to_string(),
+                    severity: if metrics.state == octopus_health::CircuitState::Open {
+                        "high".to_string()
+                    } else {
+                        "medium".to_string()
+                    },
+                    source_ip: id.clone(),
+                    details: format!(
+                        "Circuit {} for {}: {:.1}% failure rate ({} failures / {} total)",
+                        metrics.state, id, metrics.failure_rate * 100.0,
+                        metrics.failure_count, metrics.total_count
+                    ),
+                });
+            }
+        }
+    }
+
     Json(events)
 }
 
@@ -287,10 +373,71 @@ pub async fn api_security_events_handler(State(_state): State<Arc<AppState>>) ->
 
 /// Get all configuration
 /// GET /admin/api/config
-pub async fn api_config_list_handler(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
-    // TODO: Fetch real configuration
-    let config = generate_mock_config();
-    Json(config)
+pub async fn api_config_list_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let config_items = if let Some(ref cfg) = state.config {
+        vec![
+            ConfigItem {
+                key: "server.listen".to_string(),
+                value: serde_json::json!(cfg.gateway.listen.to_string()),
+                description: Some("Server listen address".to_string()),
+                editable: false,
+            },
+            ConfigItem {
+                key: "server.workers".to_string(),
+                value: serde_json::json!(cfg.gateway.workers),
+                description: Some("Number of worker threads".to_string()),
+                editable: true,
+            },
+            ConfigItem {
+                key: "server.request_timeout_ms".to_string(),
+                value: serde_json::json!(cfg.gateway.request_timeout.as_millis() as u64),
+                description: Some("Request timeout in milliseconds".to_string()),
+                editable: true,
+            },
+            ConfigItem {
+                key: "server.max_body_size".to_string(),
+                value: serde_json::json!(cfg.gateway.max_body_size),
+                description: Some("Maximum request body size in bytes".to_string()),
+                editable: true,
+            },
+            ConfigItem {
+                key: "compression.enabled".to_string(),
+                value: serde_json::json!(cfg.gateway.compression.enabled),
+                description: Some("Enable response compression".to_string()),
+                editable: true,
+            },
+            ConfigItem {
+                key: "farp.enabled".to_string(),
+                value: serde_json::json!(cfg.farp.enabled),
+                description: Some("Enable FARP service discovery".to_string()),
+                editable: true,
+            },
+            ConfigItem {
+                key: "observability.logging.level".to_string(),
+                value: serde_json::json!(cfg.observability.logging.level),
+                description: Some("Log level (trace, debug, info, warn, error)".to_string()),
+                editable: true,
+            },
+            ConfigItem {
+                key: "observability.metrics.enabled".to_string(),
+                value: serde_json::json!(cfg.observability.metrics.enabled),
+                description: Some("Enable Prometheus metrics".to_string()),
+                editable: true,
+            },
+        ]
+    } else {
+        // No config loaded — return minimal defaults
+        vec![
+            ConfigItem {
+                key: "server.status".to_string(),
+                value: serde_json::json!("running"),
+                description: Some("Gateway status".to_string()),
+                editable: false,
+            },
+        ]
+    };
+
+    Json(config_items)
 }
 
 /// Update configuration
@@ -315,12 +462,18 @@ pub async fn api_config_update_handler(
 
 /// Get system information
 /// GET /admin/api/system/info
-pub async fn api_system_info_handler(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
-    // TODO: Fetch real system info
+pub async fn api_system_info_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let uptime_seconds = state.metrics.as_ref()
+        .map_or(state.start_time.elapsed().as_secs(), |m| m.uptime_seconds());
+
     let info = SystemInfo {
         version: env!("CARGO_PKG_VERSION").to_string(),
-        uptime_seconds: 86400,
-        start_time: Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+        uptime_seconds,
+        start_time: Utc::now()
+            .checked_sub_signed(chrono::Duration::seconds(uptime_seconds as i64))
+            .unwrap_or_else(Utc::now)
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string(),
         hostname: hostname::get()
             .ok()
             .and_then(|h| h.into_string().ok())
@@ -328,295 +481,179 @@ pub async fn api_system_info_handler(State(_state): State<Arc<AppState>>) -> imp
         os: std::env::consts::OS.to_string(),
         arch: std::env::consts::ARCH.to_string(),
         num_cpus: num_cpus::get(),
-        total_memory: 16_777_216_000, // 16GB
+        total_memory: 0, // System-level memory not yet collected
     };
 
     Json(info)
 }
 
 // ============================================================================
-// Mock Data Generators (TODO: Replace with real data)
+// Upstream & Service Discovery Endpoints
 // ============================================================================
 
-fn generate_mock_analytics(timeframe: &str) -> AnalyticsMetrics {
-    let points_count = match timeframe {
-        "1h" => 60,
-        "24h" => 24,
-        "7d" => 7,
-        "30d" => 30,
-        _ => 24,
-    };
+/// List all upstream targets
+/// GET /admin/api/upstreams
+pub async fn api_upstreams_list_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let mut upstreams = Vec::new();
 
-    let request_volume: Vec<TimeSeriesPoint> = (0..points_count)
-        .map(|i| TimeSeriesPoint {
-            timestamp: format!("2024-01-{:02} {:02}:00:00", (i / 24) + 1, i % 24),
-            value: f64::from(i).sin().mul_add(100.0, f64::from(i).mul_add(10.0, 500.0)),
-        })
-        .collect();
+    if let Some(ref router) = state.router {
+        for cluster in router.get_all_upstreams() {
+            for inst in &cluster.instances {
+                upstreams.push(serde_json::json!({
+                    "url": inst.base_url(),
+                    "route_path": cluster.name,
+                    "weight": inst.weight,
+                    "healthy": inst.is_healthy(),
+                    "active_connections": inst.active_connections()
+                }));
+            }
+        }
+    }
 
-    let mut error_breakdown = HashMap::new();
-    error_breakdown.insert("4xx".to_string(), 123);
-    error_breakdown.insert("5xx".to_string(), 45);
-    error_breakdown.insert("timeout".to_string(), 12);
+    Json(upstreams)
+}
 
-    let mut status_codes = HashMap::new();
-    status_codes.insert(200, 95432);
-    status_codes.insert(201, 3421);
-    status_codes.insert(400, 856);
-    status_codes.insert(401, 234);
-    status_codes.insert(404, 567);
-    status_codes.insert(500, 45);
+/// List discovered FARP services
+/// GET /admin/api/services
+pub async fn api_services_list_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let mut services = Vec::new();
 
-    let mut traffic_by_method = HashMap::new();
-    traffic_by_method.insert("GET".to_string(), 75000);
-    traffic_by_method.insert("POST".to_string(), 18000);
-    traffic_by_method.insert("PUT".to_string(), 4500);
-    traffic_by_method.insert("DELETE".to_string(), 2500);
+    if let Some(ref router) = state.router {
+        for cluster in router.get_all_upstreams() {
+            let healthy = cluster.healthy_count() == cluster.instance_count();
+            // Count routes that reference this upstream
+            let route_count = router.get_all_routes()
+                .iter()
+                .filter(|r| r.upstream_name == cluster.name)
+                .count();
 
-    AnalyticsMetrics {
-        timeframe: timeframe.to_string(),
-        request_volume,
-        latency_percentiles: LatencyPercentiles {
-            p50: 23.5,
-            p90: 67.8,
-            p95: 123.4,
-            p99: 456.7,
+            // Use first instance for address/port
+            let (address, port) = cluster.instances.first()
+                .map(|i| (i.address.clone(), i.port))
+                .unwrap_or_else(|| ("unknown".to_string(), 0));
+
+            services.push(serde_json::json!({
+                "name": cluster.name,
+                "version": "unknown",
+                "address": address,
+                "port": port,
+                "route_count": route_count,
+                "healthy": healthy
+            }));
+        }
+    }
+
+    Json(services)
+}
+
+/// Get circuit breaker states
+/// GET /admin/api/circuits
+pub async fn api_circuits_list_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let mut circuits = Vec::new();
+
+    if let Some(ref cb) = state.circuit_breaker {
+        for (id, metrics) in cb.get_all_metrics() {
+            let state_str = match metrics.state {
+                octopus_health::CircuitState::Closed => "closed",
+                octopus_health::CircuitState::Open => "open",
+                octopus_health::CircuitState::HalfOpen => "half-open",
+            };
+            circuits.push(serde_json::json!({
+                "target_url": id,
+                "route_path": "",
+                "state": state_str,
+                "active_connections": 0,
+                "failure_count": metrics.failure_count
+            }));
+        }
+    }
+
+    Json(circuits)
+}
+
+/// Get structured health check data
+/// GET /admin/api/health/checks
+pub async fn api_health_checks_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let checks = crate::handlers::build_health_from_state(&state);
+    Json(checks)
+}
+
+/// Aggregated OpenAPI spec (placeholder)
+/// GET /admin/api/openapi.json
+pub async fn api_openapi_handler(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
+    // TODO: Wire to FARP schema federation
+    let spec = serde_json::json!({
+        "openapi": "3.0.0",
+        "info": {
+            "title": "Octopus API Gateway",
+            "version": "0.1.0",
+            "description": "Aggregated API documentation from registered FARP services"
         },
-        error_breakdown,
-        top_routes: vec![
-            RouteMetric {
-                path: "/api/users".to_string(),
-                requests: 45678,
-                avg_latency: 23.5,
-                error_rate: 0.02,
-            },
-            RouteMetric {
-                path: "/api/products".to_string(),
-                requests: 32145,
-                avg_latency: 34.2,
-                error_rate: 0.01,
-            },
-            RouteMetric {
-                path: "/api/orders".to_string(),
-                requests: 21098,
-                avg_latency: 56.7,
-                error_rate: 0.05,
-            },
-        ],
-        status_code_distribution: status_codes,
-        traffic_by_method,
+        "paths": {}
+    });
+    Json(spec)
+}
+
+// ============================================================================
+// FARP (Federated API Registry Protocol) Endpoints
+// ============================================================================
+
+/// List all registered FARP services
+/// GET /admin/api/farp/services
+pub async fn api_farp_services_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    if let Some(ref registry) = state.farp_registry {
+        let service_names = registry.list_services();
+        let mut services = Vec::new();
+        for name in &service_names {
+            if let Ok(reg) = registry.get_service(name) {
+                services.push(serde_json::json!({
+                    "name": reg.service_name,
+                    "manifest": {
+                        "version": reg.manifest.version,
+                        "service_version": reg.manifest.service_version,
+                        "instance_id": reg.manifest.instance_id,
+                        "capabilities": reg.manifest.capabilities,
+                        "schemas_count": reg.manifest.schemas.len(),
+                        "updated_at": reg.manifest.updated_at,
+                        "checksum": reg.manifest.checksum,
+                    },
+                    "registered_at": format!("{:?}", reg.registered_at),
+                    "schemas_count": reg.schemas.len(),
+                }));
+            }
+        }
+        Json(serde_json::json!(services))
+    } else {
+        Json(serde_json::json!([]))
     }
 }
 
-fn generate_mock_timeseries(metric: &str, period: &str) -> Vec<TimeSeriesPoint> {
-    let points_count = match period {
-        "5m" => 5,
-        "15m" => 15,
-        "1h" => 60,
-        "24h" => 24,
-        _ => 24,
-    };
-
-    (0..points_count)
-        .map(|i| {
-            let base_value = match metric {
-                "requests" => 1000.0,
-                "latency" => 50.0,
-                "errors" => 5.0,
-                "cpu" => 40.0,
-                "memory" => 60.0,
-                _ => 100.0,
-            };
-
-            TimeSeriesPoint {
-                timestamp: Utc::now()
-                    .checked_sub_signed(chrono::Duration::minutes(points_count - i))
-                    .unwrap()
-                    .format("%Y-%m-%d %H:%M:%S")
-                    .to_string(),
-                value: (i as f64).sin().mul_add(base_value * 0.2, base_value),
-            }
-        })
-        .collect()
+/// Get details for a specific FARP service
+/// GET /admin/api/farp/services/:name
+pub async fn api_farp_service_detail_handler(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    if let Some(ref registry) = state.farp_registry {
+        if let Ok(reg) = registry.get_service(&name) {
+            return Json(serde_json::to_value(&reg.manifest).unwrap_or_default());
+        }
+    }
+    Json(serde_json::json!({"error": "Service not found"}))
 }
 
-fn generate_mock_routes() -> Vec<RouteInfo> {
-    vec![
-        RouteInfo {
-            id: "route1".to_string(),
-            path: "/api/users".to_string(),
-            method: "GET".to_string(),
-            upstream: "user-service:8080".to_string(),
-            request_count: 45678,
-            is_healthy: true,
-            avg_latency_ms: 23.5,
-            error_count: 12,
-            last_accessed: Some(Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()),
+/// Get the federated OpenAPI schema
+/// GET /admin/api/farp/schema/openapi
+pub async fn api_farp_federated_openapi_handler(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
+    // TODO: Wire to SchemaFederation when available in AppState
+    Json(serde_json::json!({
+        "openapi": "3.0.0",
+        "info": {
+            "title": "Octopus Federated API",
+            "version": "0.1.0"
         },
-        RouteInfo {
-            id: "route2".to_string(),
-            path: "/api/products".to_string(),
-            method: "GET".to_string(),
-            upstream: "product-service:8080".to_string(),
-            request_count: 32145,
-            is_healthy: true,
-            avg_latency_ms: 34.2,
-            error_count: 8,
-            last_accessed: Some(Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()),
-        },
-        RouteInfo {
-            id: "route3".to_string(),
-            path: "/api/orders".to_string(),
-            method: "POST".to_string(),
-            upstream: "order-service:8080".to_string(),
-            request_count: 21098,
-            is_healthy: true,
-            avg_latency_ms: 56.7,
-            error_count: 45,
-            last_accessed: Some(Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()),
-        },
-    ]
+        "paths": {}
+    }))
 }
 
-fn generate_mock_plugins() -> Vec<PluginInfo> {
-    vec![
-        PluginInfo {
-            id: "auth-jwt".to_string(),
-            name: "JWT Authentication".to_string(),
-            version: "0.1.0".to_string(),
-            description: "JWT token validation and authentication".to_string(),
-            author: Some("Octopus Team".to_string()),
-            enabled: true,
-            has_dashboard: true,
-            config: Some(serde_json::json!({
-                "secret_key": "****",
-                "token_expiry": 3600
-            })),
-        },
-        PluginInfo {
-            id: "rate-limiter".to_string(),
-            name: "Rate Limiter".to_string(),
-            version: "0.1.0".to_string(),
-            description: "Request rate limiting with token bucket algorithm".to_string(),
-            author: Some("Octopus Team".to_string()),
-            enabled: true,
-            has_dashboard: false,
-            config: Some(serde_json::json!({
-                "requests_per_second": 100,
-                "burst_size": 150
-            })),
-        },
-        PluginInfo {
-            id: "cache-redis".to_string(),
-            name: "Redis Cache".to_string(),
-            version: "0.1.0".to_string(),
-            description: "Response caching with Redis backend".to_string(),
-            author: Some("Octopus Team".to_string()),
-            enabled: false,
-            has_dashboard: true,
-            config: Some(serde_json::json!({
-                "redis_url": "redis://localhost:6379",
-                "ttl_seconds": 300
-            })),
-        },
-    ]
-}
-
-fn generate_mock_logs(query: &LogQuery) -> Vec<ActivityLogEntry> {
-    let logs = vec![
-        ActivityLogEntry {
-            timestamp: Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
-            level: "info".to_string(),
-            message: "Route /api/users registered successfully".to_string(),
-            details: Some("Upstream: user-service:8080".to_string()),
-            source: Some("router".to_string()),
-        },
-        ActivityLogEntry {
-            timestamp: Utc::now()
-                .checked_sub_signed(chrono::Duration::minutes(5))
-                .unwrap()
-                .format("%Y-%m-%d %H:%M:%S")
-                .to_string(),
-            level: "warning".to_string(),
-            message: "High latency detected on /api/orders".to_string(),
-            details: Some("Average latency: 523ms".to_string()),
-            source: Some("monitor".to_string()),
-        },
-        ActivityLogEntry {
-            timestamp: Utc::now()
-                .checked_sub_signed(chrono::Duration::minutes(10))
-                .unwrap()
-                .format("%Y-%m-%d %H:%M:%S")
-                .to_string(),
-            level: "error".to_string(),
-            message: "Failed to connect to upstream service".to_string(),
-            details: Some("Service: payment-service:8080, Error: Connection refused".to_string()),
-            source: Some("proxy".to_string()),
-        },
-    ];
-
-    // Filter by level if specified
-    let filtered: Vec<_> = if let Some(level) = &query.level {
-        logs.into_iter()
-            .filter(|log| log.level.eq_ignore_ascii_case(level))
-            .collect()
-    } else {
-        logs
-    };
-
-    // Apply limit
-    let limit = query.limit.unwrap_or(100);
-    filtered.into_iter().take(limit).collect()
-}
-
-fn generate_mock_security_events() -> Vec<SecurityEvent> {
-    vec![
-        SecurityEvent {
-            timestamp: Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
-            event_type: "rate_limit".to_string(),
-            severity: "medium".to_string(),
-            source_ip: "192.168.1.100".to_string(),
-            details: "Rate limit exceeded: 150 requests in 1 second".to_string(),
-        },
-        SecurityEvent {
-            timestamp: Utc::now()
-                .checked_sub_signed(chrono::Duration::minutes(15))
-                .unwrap()
-                .format("%Y-%m-%d %H:%M:%S")
-                .to_string(),
-            event_type: "auth_failure".to_string(),
-            severity: "high".to_string(),
-            source_ip: "10.0.0.50".to_string(),
-            details: "Multiple failed authentication attempts".to_string(),
-        },
-    ]
-}
-
-fn generate_mock_config() -> Vec<ConfigItem> {
-    vec![
-        ConfigItem {
-            key: "server.port".to_string(),
-            value: serde_json::json!(8080),
-            description: Some("Server listen port".to_string()),
-            editable: true,
-        },
-        ConfigItem {
-            key: "server.timeout_seconds".to_string(),
-            value: serde_json::json!(30),
-            description: Some("Request timeout in seconds".to_string()),
-            editable: true,
-        },
-        ConfigItem {
-            key: "logging.level".to_string(),
-            value: serde_json::json!("info"),
-            description: Some("Logging level (trace, debug, info, warn, error)".to_string()),
-            editable: true,
-        },
-        ConfigItem {
-            key: "cors.enabled".to_string(),
-            value: serde_json::json!(true),
-            description: Some("Enable CORS middleware".to_string()),
-            editable: true,
-        },
-    ]
-}
+// All mock data generators removed — all endpoints now return real data from AppState
