@@ -44,14 +44,13 @@ const generator = createGenerator();
 
 export const revalidate = false;
 
-export default async function Page(props: PageProps<'/docs/[...slug]'>) {
+export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
   const params = await props.params;
-  const page = source.getPage(params.slug);
+  const slug = params.slug ?? [];
+  const page = source.getPage(slug);
 
   if (!page)
-    return (
-      <NotFound getSuggestions={() => getSuggestions(params.slug.join(' '))} />
-    );
+    return <NotFound getSuggestions={() => getSuggestions(slug.join(' '))} />;
 
   if (page.data.type === 'openapi') {
     return (
@@ -154,7 +153,7 @@ function DocsCategory({ url }: { url: string }) {
 }
 
 export async function generateMetadata(
-  props: PageProps<'/docs/[...slug]'>,
+  props: PageProps<'/docs/[[...slug]]'>,
 ): Promise<Metadata> {
   const { slug = [] } = await props.params;
   const page = source.getPage(slug);
