@@ -46,6 +46,9 @@ enum Commands {
         config: PathBuf,
     },
 
+    /// Print the Octopus CRD definitions as YAML (pipe to `kubectl apply -f -`)
+    Crd,
+
     /// Show version information
     Version,
 }
@@ -114,6 +117,13 @@ async fn main() -> Result<()> {
 
             tracing::info!("Running code generation");
             gen::run_gen(&config).await?;
+            Ok(())
+        }
+
+        Commands::Crd => {
+            let yaml = octopus_k8s::crd::all_crds_yaml()
+                .map_err(|e| anyhow::anyhow!("failed to generate CRDs: {e}"))?;
+            print!("{yaml}");
             Ok(())
         }
 

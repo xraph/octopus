@@ -21,6 +21,7 @@ octopus-middleware = { path = "../crates/octopus-middleware" }
 octopus-plugins = { path = "../crates/octopus-plugins" }
 octopus-health = { path = "../crates/octopus-health" }
 octopus-farp = { path = "../crates/octopus-farp" }
+octopus-k8s = { path = "../crates/octopus-k8s" }
 
 # Async
 tokio.workspace = true

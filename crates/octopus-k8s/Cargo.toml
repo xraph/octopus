@@ -1,0 +1,40 @@
+[package]
+name = "octopus-k8s"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Kubernetes operator: Gateway API + Octopus CRDs for the Octopus API Gateway"
+
+[dependencies]
+octopus-core = { path = "../octopus-core" }
+octopus-router = { path = "../octopus-router" }
+
+# Kubernetes
+kube = { workspace = true }
+k8s-openapi = { workspace = true }
+schemars = { workspace = true }
+
+# HTTP (route method types)
+http.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+
+# Async
+tokio.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+
+# Error handling
+thiserror.workspace = true
+
+# Logging
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full", "test-util", "macros"] }

@@ -342,3 +342,16 @@ routes:
   #     max_frame_size: "16777216"    # 16 MB
 
 
+
+# ==============================================================================
+# Kubernetes operator (optional)
+# ==============================================================================
+# When enabled, the gateway runs an in-process controller that programs routes
+# from the Kubernetes Gateway API (HTTPRoute/GRPCRoute) and the Octopus CRDs
+# (OctopusGateway/OctopusRoute/OctopusUpstream/OctopusPolicy). Install the CRDs
+# with: `octopus crd | kubectl apply -f -`.
+# kubernetes:
+#   enabled: false
+#   gateway_class: octopus          # GatewayClass this instance reconciles
+#   watch_namespaces: []            # [] = all namespaces (needs cluster-scoped RBAC)
+#   leader_election: true           # single status writer when running >1 replica

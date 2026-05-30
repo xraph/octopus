@@ -159,6 +159,7 @@ mod tests {
             cors: None,
             admin: Default::default(),
             grpc: Default::default(),
+            kubernetes: Default::default(),
         }
     }
 

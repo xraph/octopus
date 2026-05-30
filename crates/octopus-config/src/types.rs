@@ -50,6 +50,43 @@ pub struct Config {
     /// gRPC gateway configuration
     #[serde(default)]
     pub grpc: GrpcConfig,
+
+    /// Kubernetes operator (Gateway API + Octopus CRDs)
+    #[serde(default)]
+    pub kubernetes: KubernetesConfig,
+}
+
+/// Kubernetes operator configuration.
+///
+/// When `enabled`, the gateway runs an in-process controller that programs the
+/// router from the Kubernetes Gateway API and Octopus CRDs.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct KubernetesConfig {
+    /// Run the in-process Kubernetes controller.
+    pub enabled: bool,
+
+    /// GatewayClass name this instance reconciles
+    /// (controllerName `gateway.octopus.io/gateway-controller`).
+    pub gateway_class: String,
+
+    /// Namespaces to watch (empty = all namespaces).
+    pub watch_namespaces: Vec<String>,
+
+    /// Use leader election (a `coordination.k8s.io/v1` Lease) so only one
+    /// replica writes resource status when scaled out.
+    pub leader_election: bool,
+}
+
+impl Default for KubernetesConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            gateway_class: "octopus".to_string(),
+            watch_namespaces: Vec::new(),
+            leader_election: true,
+        }
+    }
 }
 
 /// Gateway configuration
@@ -1121,5 +1158,26 @@ mod tests {
         assert_eq!(config.logging.level, "info");
         assert!(config.metrics.enabled);
         assert!(!config.tracing.enabled);
+    }
+
+    #[test]
+    fn kubernetes_section_defaults_off() {
+        let cfg: Config = serde_yaml::from_str("gateway:\n  listen: \"0.0.0.0:8080\"\n").unwrap();
+        assert!(!cfg.kubernetes.enabled, "operator off by default");
+        assert_eq!(cfg.kubernetes.gateway_class, "octopus");
+        assert!(cfg.kubernetes.leader_election);
+        assert!(cfg.kubernetes.watch_namespaces.is_empty());
+    }
+
+    #[test]
+    fn kubernetes_section_parses_overrides() {
+        let yaml = "gateway:\n  listen: \"0.0.0.0:8080\"\n\
+            kubernetes:\n  enabled: true\n  gateway_class: edge\n  \
+            watch_namespaces: [team-a, team-b]\n  leader_election: false\n";
+        let cfg: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(cfg.kubernetes.enabled);
+        assert_eq!(cfg.kubernetes.gateway_class, "edge");
+        assert_eq!(cfg.kubernetes.watch_namespaces, vec!["team-a", "team-b"]);
+        assert!(!cfg.kubernetes.leader_election);
     }
 }
