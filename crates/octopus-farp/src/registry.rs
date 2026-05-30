@@ -153,7 +153,7 @@ impl SchemaRegistry {
             });
 
         // Check if we can proceed
-        if let Ok(()) = limiter.check() {
+        if limiter.check() == Ok(()) {
             Ok(())
         } else {
             warn!(
@@ -192,8 +192,7 @@ impl SchemaRegistry {
             .await
             .map_err(|e| {
                 Error::Farp(format!(
-                    "Failed to register service in external registry: {}",
-                    e
+                    "Failed to register service in external registry: {e}"
                 ))
             })?;
 
@@ -221,8 +220,7 @@ impl SchemaRegistry {
             .await
             .map_err(|e| {
                 Error::Farp(format!(
-                    "Failed to update service in external registry: {}",
-                    e
+                    "Failed to update service in external registry: {e}"
                 ))
             })?;
 
@@ -379,12 +377,14 @@ impl SchemaRegistry {
         }
     }
 
-    /// Get mutable reference to services map (for storing manifest_url, etc.)
+    /// Get mutable reference to services map (for storing `manifest_url`, etc.)
+    #[must_use]
     pub fn services_mut(&self) -> &DashMap<String, ServiceRegistration> {
         &self.services
     }
 
     /// Get reference to underlying external registry
+    #[must_use]
     pub fn external_registry(&self) -> &Arc<dyn ExternalSchemaRegistry> {
         &self.external_registry
     }
@@ -395,9 +395,9 @@ mod tests {
     use super::*;
 
     fn create_test_manifest(name: &str, version: &str) -> SchemaManifest {
-        let mut manifest = SchemaManifest::new(name, version, &format!("{}-{}", name, version));
+        let mut manifest = SchemaManifest::new(name, version, format!("{name}-{version}"));
         // Add required health endpoint for external registry validation
-        manifest.endpoints.health = format!("http://localhost:8080/health");
+        manifest.endpoints.health = "http://localhost:8080/health".to_string();
         manifest
     }
 
@@ -457,7 +457,7 @@ mod tests {
         let registry = SchemaRegistry::new();
 
         for i in 1..=3 {
-            let manifest = create_test_manifest(&format!("service-{}", i), "1.0.0");
+            let manifest = create_test_manifest(&format!("service-{i}"), "1.0.0");
             registry.register_service(manifest).await.unwrap();
         }
 

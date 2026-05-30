@@ -276,7 +276,7 @@ impl ConnectionPool {
             .clone()
             .acquire_owned()
             .await
-            .map_err(|e| Error::UpstreamConnection(format!("Failed to acquire permit: {}", e)))?;
+            .map_err(|e| Error::UpstreamConnection(format!("Failed to acquire permit: {e}")))?;
 
         // Try to get an idle connection first
         if let Some(mut conn) = self.pop_idle_connection(&pool, &key).await {
@@ -368,7 +368,7 @@ impl ConnectionPool {
             .map_err(|_| Error::UpstreamTimeout)?
             .map_err(|e| {
                 pool.metrics.record_error();
-                Error::UpstreamConnection(format!("Failed to connect: {}", e))
+                Error::UpstreamConnection(format!("Failed to connect: {e}"))
             })?;
 
         // Configure TCP stream
@@ -383,7 +383,7 @@ impl ConnectionPool {
             .await
             .map_err(|e| {
                 pool.metrics.record_error();
-                Error::UpstreamConnection(format!("HTTP handshake failed: {}", e))
+                Error::UpstreamConnection(format!("HTTP handshake failed: {e}"))
             })?;
 
         // Spawn connection task
@@ -641,7 +641,7 @@ impl Http2Pool {
         let stream = timeout(self.config.connect_timeout, TcpStream::connect(&addr))
             .await
             .map_err(|_| Error::UpstreamTimeout)?
-            .map_err(|e| Error::UpstreamConnection(format!("Failed to connect: {}", e)))?;
+            .map_err(|e| Error::UpstreamConnection(format!("Failed to connect: {e}")))?;
 
         if let Err(e) = stream.set_nodelay(true) {
             warn!("Failed to set TCP_NODELAY: {}", e);
@@ -652,9 +652,7 @@ impl Http2Pool {
             hyper::client::conn::http2::Builder::new(hyper_util::rt::TokioExecutor::new())
                 .handshake(io)
                 .await
-                .map_err(|e| {
-                    Error::UpstreamConnection(format!("HTTP/2 handshake failed: {}", e))
-                })?;
+                .map_err(|e| Error::UpstreamConnection(format!("HTTP/2 handshake failed: {e}")))?;
 
         // Spawn connection driver task
         tokio::spawn(async move {

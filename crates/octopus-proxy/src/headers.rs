@@ -224,17 +224,17 @@ impl HeaderProcessor {
 
         // Add "for" parameter (client IP)
         if let Some(ip) = client_ip {
-            parts.push(format!("for={}", ip));
+            parts.push(format!("for={ip}"));
         }
 
         // Add "host" parameter (original host)
         if let Some(host) = uri.host() {
-            parts.push(format!("host={}", host));
+            parts.push(format!("host={host}"));
         }
 
         // Add "proto" parameter (original protocol)
         let proto = uri.scheme_str().unwrap_or("http");
-        parts.push(format!("proto={}", proto));
+        parts.push(format!("proto={proto}"));
 
         if !parts.is_empty() {
             let forwarded_value = parts.join(";");
@@ -246,7 +246,7 @@ impl HeaderProcessor {
                 .map(|s| s.to_string());
 
             let final_value = if let Some(existing_str) = existing {
-                format!("{}, {}", existing_str, forwarded_value)
+                format!("{existing_str}, {forwarded_value}")
             } else {
                 forwarded_value
             };
@@ -276,7 +276,7 @@ impl HeaderProcessor {
             let has_real_ip = headers.contains_key(header_names::X_REAL_IP);
 
             let final_value = if let Some(existing_str) = existing {
-                format!("{}, {}", existing_str, ip_str)
+                format!("{existing_str}, {ip_str}")
             } else {
                 ip_str.clone()
             };
@@ -336,7 +336,7 @@ impl HeaderProcessor {
         if let Ok(value) = HeaderValue::from_str(&via_value) {
             if let Some(existing) = headers.get(header_names::VIA) {
                 if let Ok(existing_str) = existing.to_str() {
-                    let combined = format!("{}, {}", existing_str, via_value);
+                    let combined = format!("{existing_str}, {via_value}");
                     if let Ok(combined_value) = HeaderValue::from_str(&combined) {
                         headers.insert(HeaderName::from_static(header_names::VIA), combined_value);
                     }
@@ -354,7 +354,7 @@ impl HeaderProcessor {
         if let Ok(value) = HeaderValue::from_str(&via_value) {
             if let Some(existing) = headers.get(header_names::VIA) {
                 if let Ok(existing_str) = existing.to_str() {
-                    let combined = format!("{}, {}", existing_str, via_value);
+                    let combined = format!("{existing_str}, {via_value}");
                     if let Ok(combined_value) = HeaderValue::from_str(&combined) {
                         headers.insert(HeaderName::from_static(header_names::VIA), combined_value);
                     }
@@ -378,7 +378,7 @@ impl HeaderProcessor {
     fn update_host_header(&self, headers: &mut HeaderMap, uri: &Uri) {
         if let Some(host) = uri.host() {
             let host_value = if let Some(port) = uri.port_u16() {
-                format!("{}:{}", host, port)
+                format!("{host}:{port}")
             } else {
                 host.to_string()
             };

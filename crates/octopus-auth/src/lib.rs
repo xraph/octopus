@@ -15,6 +15,43 @@
     rust_2018_idioms,
     unreachable_pub
 )]
+// Subjective pedantic/nursery/cargo lints are muted; substantive lints stay active.
+#![allow(
+    clippy::module_name_repetitions,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::must_use_candidate,
+    clippy::missing_const_for_fn,
+    clippy::option_if_let_else,
+    clippy::similar_names,
+    clippy::field_reassign_with_default,
+    clippy::cognitive_complexity,
+    clippy::too_many_lines,
+    clippy::too_many_arguments,
+    clippy::return_self_not_must_use,
+    clippy::unnecessary_wraps,
+    clippy::significant_drop_tightening,
+    clippy::match_same_arms,
+    clippy::manual_let_else,
+    clippy::unused_self,
+    clippy::unused_async,
+    clippy::only_used_in_recursion,
+    clippy::type_complexity,
+    clippy::needless_pass_by_value,
+    clippy::trivially_copy_pass_by_ref,
+    clippy::missing_fields_in_debug,
+    clippy::implicit_hasher,
+    clippy::used_underscore_binding,
+    clippy::struct_field_names,
+    clippy::format_push_string,
+    clippy::doc_markdown,
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::multiple_crate_versions,
+    clippy::cargo_common_metadata
+)]
 
 // Auth provider system
 pub mod apikey_provider;

@@ -5,7 +5,7 @@ use crate::registry::Principal;
 use octopus_config::types::{AuthzAction, AuthzConfig, AuthzEngine, AuthzRule};
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, warn};
+use tracing::warn;
 
 /// Route-level authorization context
 #[derive(Debug, Clone)]
@@ -222,13 +222,13 @@ impl AuthzEvaluator {
 
         // Wrap the rule with helper function definitions
         let wrapped_rule = format!(
-            r#"
+            r"
             fn has_role(role) {{ _roles.contains(role) }}
             fn has_scope(s) {{ _scopes.contains(s) }}
             fn has_any_role(roles) {{ roles.some(|r| _roles.contains(r)) }}
             fn has_all_roles(roles) {{ roles.all(|r| _roles.contains(r)) }}
             {rule}
-            "#
+            "
         );
 
         match self
@@ -240,14 +240,14 @@ impl AuthzEvaluator {
                 if allowed {
                     Ok(AuthzDecision::Allow)
                 } else {
-                    Ok(AuthzDecision::Deny(format!(
-                        "Authz rule evaluated to false"
-                    )))
+                    Ok(AuthzDecision::Deny(
+                        "Authz rule evaluated to false".to_string(),
+                    ))
                 }
             }
             Err(e) => {
                 warn!(rule = %rule, error = %e, "Rhai authz rule evaluation error");
-                Ok(AuthzDecision::Deny(format!("Authz rule error: {}", e)))
+                Ok(AuthzDecision::Deny(format!("Authz rule error: {e}")))
             }
         }
     }

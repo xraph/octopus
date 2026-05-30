@@ -108,7 +108,7 @@ pub fn build_schema(gen_config: &GenConfig, outputs: &[GenOutput]) -> Result<Oct
                 let transformed = transform_type_name(base_type, type_transforms);
                 if is_array {
                     OctopusTypeRef {
-                        ref_path: Some(format!("#/types/{}[]", transformed)),
+                        ref_path: Some(format!("#/types/{transformed}[]")),
                         inline_type: None,
                     }
                 } else {
@@ -434,8 +434,7 @@ fn build_channel_union_name(
 ) -> String {
     let clean = channel_name
         .trim_start_matches('/')
-        .replace('/', "_")
-        .replace('-', "_");
+        .replace(['/', '-'], "_");
     let pascal = clean
         .split('_')
         .filter(|s| !s.is_empty())

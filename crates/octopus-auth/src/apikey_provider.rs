@@ -23,6 +23,7 @@ struct KeyInfo {
 
 impl ApiKeyProvider {
     /// Create from config
+    #[must_use]
     pub fn from_config(name: &str, config: &ApiKeyProviderConfig) -> Self {
         let mut keys = HashMap::new();
         for entry in &config.keys {
@@ -98,7 +99,7 @@ impl AuthProviderInstance for ApiKeyProvider {
         &self.name
     }
 
-    fn provider_type(&self) -> &str {
+    fn provider_type(&self) -> &'static str {
         "api_key"
     }
 }

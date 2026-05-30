@@ -159,9 +159,11 @@ pub struct WebSocketClientOptions {
     pub enabled: bool,
     /// Enable automatic reconnection in generated client
     #[serde(default = "default_true")]
+    #[allow(dead_code)]
     pub reconnect: bool,
     /// Default ping interval in seconds
     #[serde(default = "default_ping_interval")]
+    #[allow(dead_code)]
     pub ping_interval: u32,
 }
 
@@ -177,6 +179,7 @@ pub struct SseClientOptions {
     pub enabled: bool,
     /// Support POST SSE (fetch-based, not native EventSource)
     #[serde(default = "default_true")]
+    #[allow(dead_code)]
     pub post_support: bool,
 }
 
@@ -206,6 +209,7 @@ fn default_query_version() -> u32 {
 pub struct ClientAuthOptions {
     /// Default auth strategy: "bearer", "api_key", "custom"
     #[serde(default = "default_bearer")]
+    #[allow(dead_code)]
     pub default_strategy: String,
     /// Auth header name
     #[serde(default = "default_auth_header")]
@@ -331,10 +335,14 @@ pub struct GenOutput {
 pub struct GenRoute {
     pub method: String,
     pub path: String,
+    #[allow(dead_code)]
     pub operation_id: Option<String>,
+    #[allow(dead_code)]
     pub summary: Option<String>,
+    #[allow(dead_code)]
     pub tags: Vec<String>,
     pub requires_auth: bool,
+    #[allow(dead_code)]
     pub skip_auth: bool,
 }
 

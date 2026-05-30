@@ -137,6 +137,7 @@ impl RequestHandler {
     }
 
     /// Create a new request handler with all features including plugin manager
+    #[allow(clippy::too_many_arguments)]
     pub fn with_all_features(
         router: Arc<Router>,
         proxy: Arc<HttpProxy>,
@@ -345,7 +346,7 @@ impl RequestHandler {
         let body_bytes = body
             .collect()
             .await
-            .map_err(|e| Error::InvalidRequest(format!("Failed to read request body: {}", e)))?
+            .map_err(|e| Error::InvalidRequest(format!("Failed to read request body: {e}")))?
             .to_bytes();
         let mut req = Request::from_parts(parts, Full::new(body_bytes));
 
@@ -364,9 +365,10 @@ impl RequestHandler {
                     builder = builder.header(key, value);
                 }
 
-                let internal_req = builder.uri(internal_path).body(body).map_err(|e| {
-                    Error::InvalidRequest(format!("Failed to build request: {}", e))
-                })?;
+                let internal_req = builder
+                    .uri(internal_path)
+                    .body(body)
+                    .map_err(|e| Error::InvalidRequest(format!("Failed to build request: {e}")))?;
 
                 return farp_handler
                     .handle(internal_req)
@@ -396,9 +398,10 @@ impl RequestHandler {
                     builder = builder.header(key, value);
                 }
 
-                let internal_req = builder.uri(internal_path).body(body).map_err(|e| {
-                    Error::InvalidRequest(format!("Failed to build request: {}", e))
-                })?;
+                let internal_req = builder
+                    .uri(internal_path)
+                    .body(body)
+                    .map_err(|e| Error::InvalidRequest(format!("Failed to build request: {e}")))?;
 
                 return farp_handler
                     .handle(internal_req)
@@ -433,9 +436,10 @@ impl RequestHandler {
                     builder = builder.header(key, value);
                 }
 
-                let internal_req = builder.uri(internal_path).body(body).map_err(|e| {
-                    Error::InvalidRequest(format!("Failed to build request: {}", e))
-                })?;
+                let internal_req = builder
+                    .uri(internal_path)
+                    .body(body)
+                    .map_err(|e| Error::InvalidRequest(format!("Failed to build request: {e}")))?;
 
                 return farp_handler
                     .handle(internal_req)
@@ -579,8 +583,8 @@ impl RequestHandler {
         })?;
 
         // 4. Upstream connected — now build 101 response (validates handshake)
-        let response = octopus_protocols::build_upgrade_response(&req)
-            .map_err(|e| Error::InvalidRequest(e))?;
+        let response =
+            octopus_protocols::build_upgrade_response(&req).map_err(Error::InvalidRequest)?;
 
         // Extract the upgrade future BEFORE returning the response
         let on_upgrade = hyper::upgrade::on(&mut req);
@@ -1183,7 +1187,7 @@ impl RequestHandler {
             .status(status)
             .header("content-type", "text/plain")
             .body(Full::new(Bytes::from(message.to_string())))
-            .map_err(|e| Error::Internal(format!("Failed to build error response: {}", e)))
+            .map_err(|e| Error::Internal(format!("Failed to build error response: {e}")))
     }
 
     /// Create a streaming-typed error response (for use in contexts returning `Body`)
@@ -1193,28 +1197,27 @@ impl RequestHandler {
             .status(status)
             .header("content-type", "text/plain")
             .body(buffered(message.to_string()))
-            .map_err(|e| Error::Internal(format!("Failed to build error response: {}", e)))
+            .map_err(|e| Error::Internal(format!("Failed to build error response: {e}")))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use octopus_proxy::{ConnectionPool, HttpClient, PoolConfig, ProxyConfig};
+    use octopus_proxy::{HttpClient, ProxyConfig};
     use std::time::Duration;
 
     fn create_test_handler() -> RequestHandler {
         let router = Arc::new(Router::new());
-        let pool = Arc::new(ConnectionPool::new(PoolConfig::default()));
         let client = HttpClient::with_timeout(Duration::from_secs(30));
-        let proxy = Arc::new(HttpProxy::new(client, pool, ProxyConfig::default()));
+        let proxy = Arc::new(HttpProxy::new(client, ProxyConfig::default()));
         let request_count = Arc::new(AtomicUsize::new(0));
 
         RequestHandler::new(router, proxy, request_count)
     }
 
-    #[test]
-    fn test_handler_creation() {
+    #[tokio::test]
+    async fn test_handler_creation() {
         let handler = create_test_handler();
         assert_eq!(handler.request_count.load(Ordering::Relaxed), 0);
     }

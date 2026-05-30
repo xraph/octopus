@@ -9,7 +9,7 @@ use std::time::Instant;
 use tracing::{debug, error, warn};
 
 /// OPA authorization decision
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthzDecision {
     /// Request is allowed
     Allow,
@@ -146,7 +146,7 @@ impl OpaClient {
                         warn!(status = %status, "OPA returned error, fail_open=true, allowing");
                         AuthzDecision::Allow
                     } else {
-                        AuthzDecision::Deny(format!("OPA error: {} {}", status, body))
+                        AuthzDecision::Deny(format!("OPA error: {status} {body}"))
                     }
                 }
             }
@@ -156,7 +156,7 @@ impl OpaClient {
                     warn!("OPA unreachable, fail_open=true, allowing");
                     AuthzDecision::Allow
                 } else {
-                    AuthzDecision::Deny(format!("OPA unreachable: {}", e))
+                    AuthzDecision::Deny(format!("OPA unreachable: {e}"))
                 }
             }
         };

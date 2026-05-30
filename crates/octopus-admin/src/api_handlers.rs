@@ -41,7 +41,7 @@ fn get_system_metrics() -> (f64, f64, u64, u64) {
         0.0
     };
     // CPU usage requires two samples; return global average
-    let cpu_usage = sys.global_cpu_usage() as f64;
+    let cpu_usage = f64::from(sys.global_cpu_usage());
 
     (cpu_usage, memory_usage_pct, total_memory, memory_available)
 }
@@ -724,11 +724,10 @@ pub async fn api_services_list_handler(State(state): State<Arc<AppState>>) -> im
                 .filter(|r| r.upstream_name == cluster.name)
                 .count();
 
-            let (address, port) = cluster
-                .instances
-                .first()
-                .map(|i| (i.address.clone(), i.port))
-                .unwrap_or_else(|| ("unknown".to_string(), 0));
+            let (address, port) = cluster.instances.first().map_or_else(
+                || ("unknown".to_string(), 0),
+                |i| (i.address.clone(), i.port),
+            );
 
             services.push(serde_json::json!({
                 "name": cluster.name,
@@ -806,7 +805,7 @@ pub async fn api_health_checks_handler(State(state): State<Arc<AppState>>) -> im
     Json(checks)
 }
 
-/// Aggregated OpenAPI spec from FARP federation
+/// Aggregated `OpenAPI` spec from FARP federation
 /// GET /admin/api/openapi.json
 pub async fn api_openapi_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     if let Some(ref fed) = state.farp_federation {
@@ -871,7 +870,7 @@ pub async fn api_farp_service_detail_handler(
     Json(serde_json::json!({"error": "Service not found"}))
 }
 
-/// Get the federated OpenAPI schema
+/// Get the federated `OpenAPI` schema
 /// GET /admin/api/farp/schema/openapi
 pub async fn api_farp_federated_openapi_handler(
     State(state): State<Arc<AppState>>,

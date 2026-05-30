@@ -13,12 +13,12 @@ fn main() {
     // 1. Simple Badge
     println!("1. Status Badge:");
     let badge = ui_components::status_badge("Active", Variant::Default);
-    println!("{}\n", badge);
+    println!("{badge}\n");
 
     // 2. Method Badge
     println!("2. HTTP Method Badge:");
     let method_badge = ui_components::method_badge("POST");
-    println!("{}\n", method_badge);
+    println!("{method_badge}\n");
 
     // 3. Stats Card
     println!("3. Stats Card:");
@@ -30,7 +30,7 @@ fn main() {
             r#"<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>"#,
         ),
     );
-    println!("{}\n", stats_card);
+    println!("{stats_card}\n");
 
     // 4. Route Card
     println!("4. Route Card:");
@@ -46,7 +46,7 @@ fn main() {
         last_accessed: Some("2024-01-15 10:30:00".to_string()),
     };
     let route_card = ui_components::route_card(&route);
-    println!("{}\n", route_card);
+    println!("{route_card}\n");
 
     // 5. Health Check Card
     println!("5. Health Check Card:");
@@ -60,7 +60,7 @@ fn main() {
         consecutive_failures: 0,
     };
     let health_card = ui_components::health_check_card(&health_check);
-    println!("{}\n", health_card);
+    println!("{health_card}\n");
 
     // 6. Plugin Card
     println!("6. Plugin Card:");
@@ -75,7 +75,7 @@ fn main() {
         config: None,
     };
     let plugin_card = ui_components::plugin_card(&plugin);
-    println!("{}\n", plugin_card);
+    println!("{plugin_card}\n");
 
     // 7. Navigation Item
     println!("7. Navigation Item:");
@@ -87,7 +87,7 @@ fn main() {
             r#"<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>"#,
         ),
     );
-    println!("{}\n", nav);
+    println!("{nav}\n");
 
     // 8. Alert Box
     println!("8. Alert Box:");
@@ -96,7 +96,7 @@ fn main() {
         "Your changes have been saved successfully.",
         Variant::Default,
     );
-    println!("{}\n", alert);
+    println!("{alert}\n");
 
     // 9. HTMX Button
     println!("9. HTMX Button:");
@@ -106,7 +106,7 @@ fn main() {
         "/admin/api/stats",
         "#stats-container",
     );
-    println!("{}\n", htmx_btn);
+    println!("{htmx_btn}\n");
 
     // 10. Custom Component using octopus-ui primitives
     println!("10. Custom Dashboard Layout:");
@@ -192,7 +192,7 @@ fn main() {
         )
         .render_to_string();
 
-    println!("{}\n", dashboard);
+    println!("{dashboard}\n");
 
     // 11. Routes Table
     println!("11. Routes Table:");
@@ -221,7 +221,7 @@ fn main() {
         },
     ];
     let table = ui_components::routes_table(&routes);
-    println!("{}\n", table);
+    println!("{table}\n");
 
     println!("=== Demo Complete ===");
 }

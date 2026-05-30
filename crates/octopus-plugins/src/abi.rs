@@ -73,10 +73,4 @@ mod tests {
     fn test_abi_version_constant() {
         assert_eq!(PLUGIN_ABI_VERSION, 1);
     }
-
-    #[test]
-    fn test_abi_version_is_nonzero() {
-        // ABI version should always be a positive integer
-        assert!(PLUGIN_ABI_VERSION > 0);
-    }
 }

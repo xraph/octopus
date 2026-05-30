@@ -57,7 +57,7 @@ impl fmt::Debug for HeaderTransformConfig {
 /// Header transformation middleware
 ///
 /// Applies add/set/remove/rename rules to request and response headers.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct HeaderTransform {
     config: HeaderTransformConfig,
 }
@@ -114,14 +114,6 @@ impl fmt::Debug for HeaderTransform {
         f.debug_struct("HeaderTransform")
             .field("config", &self.config)
             .finish()
-    }
-}
-
-impl Default for HeaderTransform {
-    fn default() -> Self {
-        Self {
-            config: HeaderTransformConfig::default(),
-        }
     }
 }
 

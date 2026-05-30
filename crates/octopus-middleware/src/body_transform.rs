@@ -16,21 +16,12 @@ use std::fmt;
 pub type Body = Full<Bytes>;
 
 /// JSON body transformation configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BodyTransformConfig {
     /// Rules applied to the request body before forwarding
     pub request_rules: Vec<BodyRule>,
     /// Rules applied to the response body before returning to the client
     pub response_rules: Vec<BodyRule>,
-}
-
-impl Default for BodyTransformConfig {
-    fn default() -> Self {
-        Self {
-            request_rules: Vec::new(),
-            response_rules: Vec::new(),
-        }
-    }
 }
 
 /// A single body transformation rule

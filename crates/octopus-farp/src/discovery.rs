@@ -281,7 +281,6 @@ impl DiscoveryWatcher {
         let mut manifest = SchemaManifest::new(instance.name.clone(), version, instance.id.clone());
 
         // Set up endpoints using FARP v1.0.0 standard metadata keys
-        use crate::types::SchemaEndpoints;
         let health_endpoint = metadata
             .custom
             .get("farp.health.path")
@@ -297,7 +296,7 @@ impl DiscoveryWatcher {
             .cloned()
             .unwrap_or_else(|| "/openapi.json".to_string());
 
-        manifest.endpoints = SchemaEndpoints {
+        manifest.endpoints = crate::types::SchemaEndpoints {
             health: health_endpoint,
             metrics: metadata
                 .custom
@@ -431,7 +430,7 @@ impl DiscoveryWatcher {
             .registry
             .get_service(&instance.name)
             .ok()
-            .and_then(|reg| reg.manifest.endpoints.openapi.clone())
+            .and_then(|reg| reg.manifest.endpoints.openapi)
             .unwrap_or_else(|| "/openapi.json".to_string());
 
         let openapi_url = format!("{base_url}{openapi_path}");
@@ -578,7 +577,7 @@ impl DiscoveryWatcher {
             .registry
             .get_service(service_name)
             .ok()
-            .and_then(|r| r.manifest.auth_config.clone());
+            .and_then(|r| r.manifest.auth_config);
 
         // Get the schema from registry
         let schemas = self.registry.get_schemas(service_name)?;

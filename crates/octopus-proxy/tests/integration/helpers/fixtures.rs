@@ -1,7 +1,7 @@
 //! Test fixtures and builders
 
 use bytes::Bytes;
-use http::{Method, Request, Uri};
+use http::{Method, Request};
 use http_body_util::Full;
 use octopus_core::upstream::UpstreamInstance;
 use std::collections::HashMap;
@@ -79,7 +79,7 @@ impl RequestBuilder {
             req = req.header(k, v);
         }
 
-        let body = self.body.unwrap_or_else(|| Bytes::new());
+        let body = self.body.unwrap_or_default();
         req.body(Full::new(body)).unwrap()
     }
 }

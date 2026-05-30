@@ -4,18 +4,22 @@
 //! that can be embedded in Askama templates.
 
 use crate::models::{HealthCheckInfo, PluginInfo, RouteInfo};
-use octopus_ui::components::card::*;
+use octopus_ui::components::card::{
+    Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle,
+};
 use octopus_ui::components::{Badge, Button, ButtonGroup};
 use octopus_ui::core::{if_node, map, Classes, Node, Render, Size, Variant};
 use octopus_ui::helpers::htmx::Htmx;
 use octopus_ui::primitives::{Grid, HStack, VStack};
 
 /// Generate a status badge HTML
+#[must_use]
 pub fn status_badge(status: &str, variant: Variant) -> String {
     Badge::new(status).variant(variant).render_to_string()
 }
 
 /// Generate a health status badge
+#[must_use]
 pub fn health_status_badge(status: &str) -> String {
     let variant = match status {
         "passing" | "healthy" => Variant::Default,
@@ -27,6 +31,7 @@ pub fn health_status_badge(status: &str) -> String {
 }
 
 /// Generate a method badge for HTTP methods
+#[must_use]
 pub fn method_badge(method: &str) -> String {
     let variant = match method {
         "GET" => Variant::Default,
@@ -42,6 +47,7 @@ pub fn method_badge(method: &str) -> String {
 }
 
 /// Generate a button HTML
+#[must_use]
 pub fn action_button(text: &str, variant: Variant, size: Size) -> String {
     Button::with_text(text)
         .variant(variant)
@@ -50,6 +56,7 @@ pub fn action_button(text: &str, variant: Variant, size: Size) -> String {
 }
 
 /// Generate a button with HTMX attributes
+#[must_use]
 pub fn htmx_button(text: &str, method: &str, url: &str, target: &str) -> String {
     let (method_attr_key, method_attr_val) = match method {
         "POST" => Htmx::hx_post(url),
@@ -71,6 +78,7 @@ pub fn htmx_button(text: &str, method: &str, url: &str, target: &str) -> String 
 }
 
 /// Generate a stats card
+#[must_use]
 pub fn stats_card(title: &str, value: &str, description: &str, icon: Option<&str>) -> String {
     Card::new()
         .child(
@@ -108,6 +116,7 @@ pub fn stats_card(title: &str, value: &str, description: &str, icon: Option<&str
 }
 
 /// Generate a route info card
+#[must_use]
 pub fn route_card(route: &RouteInfo) -> String {
     Card::new()
         .child(
@@ -116,13 +125,13 @@ pub fn route_card(route: &RouteInfo) -> String {
                     HStack::new()
                         .gap("2")
                         .class("items-center")
-                        .child(Node::raw(&method_badge(&route.method)))
+                        .child(Node::raw(method_badge(&route.method)))
                         .child(
                             CardTitle::new(&route.path)
                                 .class("text-base font-mono")
                                 .render(),
                         )
-                        .child(Node::raw(&health_status_badge(if route.is_healthy {
+                        .child(Node::raw(health_status_badge(if route.is_healthy {
                             "passing"
                         } else {
                             "failing"
@@ -150,7 +159,7 @@ pub fn route_card(route: &RouteInfo) -> String {
                                 .child(
                                     Node::element("div")
                                         .attr("class", "font-medium")
-                                        .child(Node::text(&route.request_count.to_string())),
+                                        .child(Node::text(route.request_count.to_string())),
                                 )
                                 .render(),
                         )
@@ -164,7 +173,7 @@ pub fn route_card(route: &RouteInfo) -> String {
                                 )
                                 .child(
                                     Node::element("div").attr("class", "font-medium").child(
-                                        Node::text(&format!("{:.1}ms", route.avg_latency_ms)),
+                                        Node::text(format!("{:.1}ms", route.avg_latency_ms)),
                                     ),
                                 )
                                 .render(),
@@ -180,7 +189,7 @@ pub fn route_card(route: &RouteInfo) -> String {
                                 .child(
                                     Node::element("div")
                                         .attr("class", "font-medium")
-                                        .child(Node::text(&route.error_count.to_string())),
+                                        .child(Node::text(route.error_count.to_string())),
                                 )
                                 .render(),
                         )
@@ -208,6 +217,7 @@ pub fn route_card(route: &RouteInfo) -> String {
 }
 
 /// Generate health check card
+#[must_use]
 pub fn health_check_card(check: &HealthCheckInfo) -> String {
     Card::new()
         .child(
@@ -217,12 +227,10 @@ pub fn health_check_card(check: &HealthCheckInfo) -> String {
                         .gap("2")
                         .class("items-center justify-between")
                         .child(CardTitle::new(&check.name).render())
-                        .child(Node::raw(&health_status_badge(&check.status)))
+                        .child(Node::raw(health_status_badge(&check.status)))
                         .render(),
                 )
-                .child(
-                    CardDescription::new(&format!("Last checked: {}", check.last_check)).render(),
-                )
+                .child(CardDescription::new(format!("Last checked: {}", check.last_check)).render())
                 .render(),
         )
         .child(
@@ -250,7 +258,7 @@ pub fn health_check_card(check: &HealthCheckInfo) -> String {
                                         .child(
                                             Node::element("span")
                                                 .attr("class", "font-medium")
-                                                .child(Node::text(&format!(
+                                                .child(Node::text(format!(
                                                     "{}ms",
                                                     check.response_time_ms
                                                 ))),
@@ -261,7 +269,7 @@ pub fn health_check_card(check: &HealthCheckInfo) -> String {
                                     Node::element("div").child(
                                         Node::element("span")
                                             .attr("class", "text-destructive")
-                                            .child(Node::text(&format!(
+                                            .child(Node::text(format!(
                                                 "{} consecutive failures",
                                                 check.consecutive_failures
                                             ))),
@@ -283,6 +291,7 @@ pub fn health_check_card(check: &HealthCheckInfo) -> String {
 }
 
 /// Generate plugin card
+#[must_use]
 pub fn plugin_card(plugin: &PluginInfo) -> String {
     Card::new()
         .child(
@@ -298,7 +307,7 @@ pub fn plugin_card(plugin: &PluginInfo) -> String {
                                 .child(CardDescription::new(&plugin.version).render())
                                 .render(),
                         )
-                        .child(Node::raw(&status_badge(
+                        .child(Node::raw(status_badge(
                             if plugin.enabled {
                                 "Enabled"
                             } else {
@@ -328,7 +337,7 @@ pub fn plugin_card(plugin: &PluginInfo) -> String {
                             plugin.author.is_some(),
                             Node::element("p")
                                 .attr("class", "text-xs text-muted-foreground")
-                                .child(Node::text(&format!(
+                                .child(Node::text(format!(
                                     "By {}",
                                     plugin.author.as_deref().unwrap_or("Unknown")
                                 ))),
@@ -374,6 +383,7 @@ pub fn plugin_card(plugin: &PluginInfo) -> String {
 }
 
 /// Generate a navigation item
+#[must_use]
 pub fn nav_item(name: &str, path: &str, active: bool, icon: Option<&str>) -> String {
     let classes = Classes::new()
         .add("nav-link", true)
@@ -394,6 +404,7 @@ pub fn nav_item(name: &str, path: &str, active: bool, icon: Option<&str>) -> Str
 }
 
 /// Generate an alert box
+#[must_use]
 pub fn alert_box(title: &str, message: &str, variant: Variant) -> String {
     let alert_classes = match variant {
         Variant::Destructive => {
@@ -421,13 +432,14 @@ pub fn alert_box(title: &str, message: &str, variant: Variant) -> String {
 }
 
 /// Generate a data table row for routes
+#[must_use]
 pub fn route_table_row(route: &RouteInfo, index: usize) -> String {
     Node::element("tr")
         .attr("class", if index % 2 == 0 { "bg-muted/50" } else { "" })
         .child(
             Node::element("td")
                 .attr("class", "px-4 py-3")
-                .child(Node::raw(&method_badge(&route.method))),
+                .child(Node::raw(method_badge(&route.method))),
         )
         .child(
             Node::element("td")
@@ -442,17 +454,17 @@ pub fn route_table_row(route: &RouteInfo, index: usize) -> String {
         .child(
             Node::element("td")
                 .attr("class", "px-4 py-3 text-sm text-right")
-                .child(Node::text(&route.request_count.to_string())),
+                .child(Node::text(route.request_count.to_string())),
         )
         .child(
             Node::element("td")
                 .attr("class", "px-4 py-3 text-sm text-right")
-                .child(Node::text(&format!("{:.1}ms", route.avg_latency_ms))),
+                .child(Node::text(format!("{:.1}ms", route.avg_latency_ms))),
         )
         .child(
             Node::element("td")
                 .attr("class", "px-4 py-3")
-                .child(Node::raw(&health_status_badge(if route.is_healthy {
+                .child(Node::raw(health_status_badge(if route.is_healthy {
                     "passing"
                 } else {
                     "failing"
@@ -481,6 +493,7 @@ pub fn route_table_row(route: &RouteInfo, index: usize) -> String {
 }
 
 /// Generate complete routes list with table
+#[must_use]
 pub fn routes_table(routes: &[RouteInfo]) -> String {
     Node::element("div")
         .attr("class", "rounded-md border")
@@ -530,7 +543,7 @@ pub fn routes_table(routes: &[RouteInfo]) -> String {
                 )
                 .child(
                     Node::element("tbody")
-                        .child(map(routes, |route| Node::raw(&route_table_row(route, 0)))),
+                        .child(map(routes, |route| Node::raw(route_table_row(route, 0)))),
                 ),
         )
         .render_to_string()

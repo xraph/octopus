@@ -175,7 +175,7 @@ where
 
             // Keepalive ping
             _ = ping_interval.tick() => {
-                if client_sink.send(Message::Ping(vec![].into())).await.is_err() {
+                if client_sink.send(Message::Ping(vec![])).await.is_err() {
                     debug!("Keepalive ping failed");
                     break;
                 }

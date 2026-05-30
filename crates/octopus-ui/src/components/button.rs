@@ -41,14 +41,14 @@ impl Button {
 
     /// Set the variant
     #[must_use]
-    pub fn variant(mut self, variant: Variant) -> Self {
+    pub const fn variant(mut self, variant: Variant) -> Self {
         self.variant = variant;
         self
     }
 
     /// Set the size
     #[must_use]
-    pub fn size(mut self, size: Size) -> Self {
+    pub const fn size(mut self, size: Size) -> Self {
         self.size = size;
         self
     }
@@ -62,14 +62,14 @@ impl Button {
 
     /// Set disabled state
     #[must_use]
-    pub fn disabled(mut self, disabled: bool) -> Self {
+    pub const fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
 
     /// Set loading state
     #[must_use]
-    pub fn loading(mut self, loading: bool) -> Self {
+    pub const fn loading(mut self, loading: bool) -> Self {
         self.loading = loading;
         self
     }

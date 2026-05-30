@@ -141,20 +141,14 @@ impl RouteTrie {
         let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 
         let mut matches = Vec::new();
-        self.match_recursive(&self.root, &segments, 0, &mut matches);
+        Self::match_recursive(&self.root, &segments, 0, &mut matches);
 
         // Return highest priority match
         matches.sort_by(|a, b| b.route.priority.cmp(&a.route.priority));
         matches.into_iter().next()
     }
 
-    fn match_recursive(
-        &self,
-        node: &TrieNode,
-        segments: &[&str],
-        index: usize,
-        matches: &mut Vec<Match>,
-    ) {
+    fn match_recursive(node: &TrieNode, segments: &[&str], index: usize, matches: &mut Vec<Match>) {
         if index == segments.len() {
             // Reached end of path, check if there's a route here
             if let Some(route) = &node.route {
@@ -176,12 +170,12 @@ impl RouteTrie {
 
         // Try static match first (highest priority)
         if let Some(child) = node.children.get(segment) {
-            self.match_recursive(child, segments, index + 1, matches);
+            Self::match_recursive(child, segments, index + 1, matches);
         }
 
         // Try parameter match
         if let Some(ref child) = node.param_child {
-            self.match_recursive(child, segments, index + 1, matches);
+            Self::match_recursive(child, segments, index + 1, matches);
         }
 
         // Try wildcard match (lowest priority)
@@ -214,25 +208,25 @@ impl RouteTrie {
     /// Get all routes from the trie
     pub fn get_all_routes(&self) -> Vec<Route> {
         let mut routes = Vec::new();
-        self.collect_routes(&self.root, &mut routes);
+        Self::collect_routes(&self.root, &mut routes);
         routes
     }
 
-    fn collect_routes(&self, node: &TrieNode, routes: &mut Vec<Route>) {
+    fn collect_routes(node: &TrieNode, routes: &mut Vec<Route>) {
         if let Some(ref route) = node.route {
             routes.push(route.clone());
         }
 
         for child in node.children.values() {
-            self.collect_routes(child, routes);
+            Self::collect_routes(child, routes);
         }
 
         if let Some(ref child) = node.param_child {
-            self.collect_routes(child, routes);
+            Self::collect_routes(child, routes);
         }
 
         if let Some(ref child) = node.wildcard_child {
-            self.collect_routes(child, routes);
+            Self::collect_routes(child, routes);
         }
     }
 }

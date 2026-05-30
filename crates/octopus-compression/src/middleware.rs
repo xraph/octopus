@@ -163,8 +163,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_middleware_disabled() {
-        let mut config = CompressionConfig::default();
-        config.enabled = false;
+        let config = CompressionConfig {
+            enabled: false,
+            ..Default::default()
+        };
         let middleware = CompressionMiddleware::new(config);
 
         let req = Request::builder()

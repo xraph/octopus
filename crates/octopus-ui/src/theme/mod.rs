@@ -112,7 +112,7 @@ impl Theme {
     #[must_use]
     pub fn to_css_variables(&self) -> String {
         format!(
-            r#":root {{
+            r":root {{
   --primary: {};
   --primary-foreground: {};
   --secondary: {};
@@ -133,7 +133,7 @@ impl Theme {
   --input: {};
   --ring: {};
   --radius: {};
-}}"#,
+}}",
             self.colors.primary,
             self.colors.primary_foreground,
             self.colors.secondary,

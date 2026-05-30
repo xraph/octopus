@@ -19,6 +19,7 @@ struct OidcDiscovery {
     issuer: String,
     jwks_uri: String,
     #[serde(default)]
+    #[allow(dead_code)]
     id_token_signing_alg_values_supported: Vec<String>,
 }
 
@@ -35,11 +36,13 @@ struct JwkKey {
     kty: String,
     alg: Option<String>,
     #[serde(rename = "use")]
+    #[allow(dead_code)]
     use_: Option<String>,
     n: Option<String>,
     e: Option<String>,
     x: Option<String>,
     y: Option<String>,
+    #[allow(dead_code)]
     crv: Option<String>,
 }
 
@@ -174,30 +177,29 @@ impl AuthProviderInstance for OidcProvider {
 
         // Get cached keys
         let keys_guard = self.cached_keys.read().await;
-        let cached = match keys_guard.as_ref() {
-            Some(c) => c,
-            None => {
-                drop(keys_guard);
-                // Try discovery again
-                if let Err(e) = self.discover().await {
-                    error!(error = %e, "OIDC discovery failed");
-                    return Ok(AuthResult::Failed("OIDC provider unavailable".to_string()));
+        let cached = if let Some(c) = keys_guard.as_ref() {
+            c
+        } else {
+            drop(keys_guard);
+            // Try discovery again
+            if let Err(e) = self.discover().await {
+                error!(error = %e, "OIDC discovery failed");
+                return Ok(AuthResult::Failed("OIDC provider unavailable".to_string()));
+            }
+            let keys_guard = self.cached_keys.read().await;
+            match keys_guard.as_ref() {
+                Some(c) => {
+                    // Validate inline since we hold the guard
+                    return validate_with_keys(
+                        c,
+                        token,
+                        &self.name,
+                        &self.config,
+                        self.issuer.read().await.as_deref(),
+                    );
                 }
-                let keys_guard = self.cached_keys.read().await;
-                match keys_guard.as_ref() {
-                    Some(c) => {
-                        // Validate inline since we hold the guard
-                        return validate_with_keys(
-                            c,
-                            token,
-                            &self.name,
-                            &self.config,
-                            self.issuer.read().await.as_deref(),
-                        );
-                    }
-                    None => {
-                        return Ok(AuthResult::Failed("No JWKS keys available".to_string()));
-                    }
+                None => {
+                    return Ok(AuthResult::Failed("No JWKS keys available".to_string()));
                 }
             }
         };
@@ -216,7 +218,7 @@ impl AuthProviderInstance for OidcProvider {
         &self.name
     }
 
-    fn provider_type(&self) -> &str {
+    fn provider_type(&self) -> &'static str {
         "oidc"
     }
 }
@@ -230,23 +232,23 @@ fn validate_with_keys(
 ) -> anyhow::Result<AuthResult> {
     // Decode header to get kid
     let header = jsonwebtoken::decode_header(token)
-        .map_err(|e| anyhow::anyhow!("Invalid JWT header: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Invalid JWT header: {e}"))?;
 
     let kid = header.kid.unwrap_or_default();
 
     // Find key by kid, or try all keys if no kid
-    let keys_to_try: Vec<_> = if !kid.is_empty() {
-        cached
-            .keys
-            .get(&kid)
-            .map(|e| vec![(e.value().0.clone(), e.value().1)])
-            .unwrap_or_default()
-    } else {
+    let keys_to_try: Vec<_> = if kid.is_empty() {
         cached
             .keys
             .iter()
             .map(|e| (e.value().0.clone(), e.value().1))
             .collect()
+    } else {
+        cached
+            .keys
+            .get(&kid)
+            .map(|e| vec![(e.value().0.clone(), e.value().1)])
+            .unwrap_or_default()
     };
 
     if keys_to_try.is_empty() {
@@ -262,39 +264,37 @@ fn validate_with_keys(
             validation.set_audience(&[audience]);
         }
 
-        match decode::<Claims>(token, decoding_key, &validation) {
-            Ok(token_data) => {
-                let claims = token_data.claims;
+        // On decode failure, fall through to try the next key.
+        if let Ok(token_data) = decode::<Claims>(token, decoding_key, &validation) {
+            let claims = token_data.claims;
 
-                // Check required scopes
-                let token_scopes: Vec<String> = claims
-                    .scope
-                    .map(|s| s.split_whitespace().map(String::from).collect())
-                    .unwrap_or_default();
+            // Check required scopes
+            let token_scopes: Vec<String> = claims
+                .scope
+                .map(|s| s.split_whitespace().map(String::from).collect())
+                .unwrap_or_default();
 
-                if !config.required_scopes.is_empty() {
-                    let has_all = config
-                        .required_scopes
-                        .iter()
-                        .all(|s| token_scopes.contains(s));
-                    if !has_all {
-                        return Ok(AuthResult::Failed(format!(
-                            "Missing required scopes: {:?}",
-                            config.required_scopes
-                        )));
-                    }
+            if !config.required_scopes.is_empty() {
+                let has_all = config
+                    .required_scopes
+                    .iter()
+                    .all(|s| token_scopes.contains(s));
+                if !has_all {
+                    return Ok(AuthResult::Failed(format!(
+                        "Missing required scopes: {:?}",
+                        config.required_scopes
+                    )));
                 }
-
-                return Ok(AuthResult::Authenticated(Principal {
-                    id: claims.sub,
-                    name: claims.name.unwrap_or_default(),
-                    roles: claims.roles,
-                    scopes: token_scopes,
-                    provider: provider_name.to_string(),
-                    attributes: HashMap::new(),
-                }));
             }
-            Err(_) => continue, // Try next key
+
+            return Ok(AuthResult::Authenticated(Principal {
+                id: claims.sub,
+                name: claims.name.unwrap_or_default(),
+                roles: claims.roles,
+                scopes: token_scopes,
+                provider: provider_name.to_string(),
+                attributes: HashMap::new(),
+            }));
         }
     }
 
@@ -343,21 +343,19 @@ async fn refresh_keys(
 ) -> anyhow::Result<()> {
     let uri = {
         let guard = jwks_uri.read().await;
-        match guard.as_ref() {
-            Some(u) => u.clone(),
-            None => {
-                // Re-discover
-                let discovery_url = format!(
-                    "{}/.well-known/openid-configuration",
-                    issuer_url.trim_end_matches('/')
-                );
-                let discovery: OidcDiscovery =
-                    client.get(&discovery_url).send().await?.json().await?;
-                *issuer.write().await = Some(discovery.issuer);
-                let uri = discovery.jwks_uri;
-                *jwks_uri.write().await = Some(uri.clone());
-                uri
-            }
+        if let Some(u) = guard.as_ref() {
+            u.clone()
+        } else {
+            // Re-discover
+            let discovery_url = format!(
+                "{}/.well-known/openid-configuration",
+                issuer_url.trim_end_matches('/')
+            );
+            let discovery: OidcDiscovery = client.get(&discovery_url).send().await?.json().await?;
+            *issuer.write().await = Some(discovery.issuer);
+            let uri = discovery.jwks_uri;
+            *jwks_uri.write().await = Some(uri.clone());
+            uri
         }
     };
 
@@ -365,7 +363,7 @@ async fn refresh_keys(
     let keys = DashMap::new();
 
     for jwk in &jwks.keys {
-        if let Some((kid, decoding_key, algorithm)) = parse_jwk(&jwk) {
+        if let Some((kid, decoding_key, algorithm)) = parse_jwk(jwk) {
             keys.insert(kid, (decoding_key, algorithm));
         }
     }

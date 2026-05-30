@@ -20,7 +20,7 @@ impl<B: StateBackend> RateLimiter<B> {
     }
 
     async fn check_limit(&self, client_id: &str) -> Result<bool> {
-        let key = format!("ratelimit:{}", client_id);
+        let key = format!("ratelimit:{client_id}");
 
         let count = self
             .backend
@@ -31,7 +31,7 @@ impl<B: StateBackend> RateLimiter<B> {
     }
 
     async fn get_remaining(&self, client_id: &str) -> Result<i64> {
-        let key = format!("ratelimit:{}", client_id);
+        let key = format!("ratelimit:{client_id}");
 
         if let Some(value) = self.backend.get(&key).await? {
             let count: i64 = String::from_utf8_lossy(&value).parse().unwrap_or(0);
@@ -51,7 +51,7 @@ async fn main() -> Result<()> {
     let limiter = RateLimiter::new(backend, 5, Duration::from_secs(10));
 
     // Simulate requests from different clients
-    let clients = vec!["client_a", "client_b", "client_a", "client_a"];
+    let clients = ["client_a", "client_b", "client_a", "client_a"];
 
     for (i, client) in clients.iter().enumerate() {
         let allowed = limiter.check_limit(client).await?;
@@ -59,7 +59,7 @@ async fn main() -> Result<()> {
 
         println!("Request {} from {}:", i + 1, client);
         if allowed {
-            println!("  ✅ ALLOWED (remaining: {})", remaining);
+            println!("  ✅ ALLOWED (remaining: {remaining})");
         } else {
             println!("  ❌ RATE LIMITED (remaining: 0)");
         }
@@ -74,9 +74,9 @@ async fn main() -> Result<()> {
         let allowed = limiter.check_limit("client_c").await?;
         let remaining = limiter.get_remaining("client_c").await?;
 
-        print!("Request {}: ", i);
+        print!("Request {i}: ");
         if allowed {
-            println!("✅ ALLOWED (remaining: {})", remaining);
+            println!("✅ ALLOWED (remaining: {remaining})");
         } else {
             println!("❌ RATE LIMITED");
         }
@@ -92,7 +92,7 @@ async fn main() -> Result<()> {
     let remaining = limiter.get_remaining("client_c").await?;
 
     if allowed {
-        println!("✅ Request allowed again! (remaining: {})", remaining);
+        println!("✅ Request allowed again! (remaining: {remaining})");
     }
 
     Ok(())

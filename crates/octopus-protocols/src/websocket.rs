@@ -45,6 +45,7 @@ impl Default for WebSocketConfig {
 
 impl WebSocketConfig {
     /// Build a `tungstenite::protocol::WebSocketConfig` for size limits
+    #[must_use]
     pub fn to_tungstenite_config(
         &self,
     ) -> tokio_tungstenite::tungstenite::protocol::WebSocketConfig {
@@ -81,6 +82,7 @@ pub fn is_websocket_upgrade<B>(req: &Request<B>) -> bool {
 /// Generate the `Sec-WebSocket-Accept` value from `Sec-WebSocket-Key`.
 ///
 /// Per RFC 6455 §1.3: concatenate key with GUID, SHA-1 hash, base64 encode.
+#[must_use]
 pub fn generate_accept_key(key: &str) -> String {
     let mut sha1 = Sha1::new();
     sha1.update(key.as_bytes());

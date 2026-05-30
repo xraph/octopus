@@ -138,7 +138,6 @@ fn load_config_paths(paths: &[PathBuf]) -> octopus_core::Result<octopus_config::
 
         if path.is_dir() {
             // Directory: glob all config files, sort, merge
-            let pattern = path.join("*.yaml");
             let mut files: Vec<PathBuf> = Vec::new();
 
             for ext in &["yaml", "yml", "json", "toml"] {

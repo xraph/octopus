@@ -4,20 +4,31 @@ use crate::provider::{
     DiscoveryEvent, DiscoveryProvider, ServiceHealth, ServiceInstance, ServiceMetadata,
 };
 use async_trait::async_trait;
+use hickory_resolver::config::ResolverConfig;
+use hickory_resolver::net::runtime::TokioRuntimeProvider;
+use hickory_resolver::proto::rr::RData;
+use hickory_resolver::TokioResolver;
 use octopus_core::{Error, Result};
 use std::net::IpAddr;
 use std::time::Duration;
 use tokio::time;
 use tracing::{debug, error, info};
-use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
-use trust_dns_resolver::TokioAsyncResolver;
 
 /// DNS service discovery
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DnsDiscovery {
-    resolver: TokioAsyncResolver,
+    resolver: TokioResolver,
     default_port: u16,
     watch_interval: Duration,
+}
+
+impl std::fmt::Debug for DnsDiscovery {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DnsDiscovery")
+            .field("default_port", &self.default_port)
+            .field("watch_interval", &self.watch_interval)
+            .finish()
+    }
 }
 
 /// DNS discovery configuration
@@ -46,11 +57,16 @@ impl Default for DnsConfig {
 impl DnsDiscovery {
     /// Create a new DNS discovery client
     pub async fn new(config: DnsConfig) -> Result<Self> {
-        let resolver = if let Some(resolver_config) = config.resolver_config {
-            TokioAsyncResolver::tokio(resolver_config, ResolverOpts::default())
-        } else {
-            TokioAsyncResolver::tokio(ResolverConfig::default(), ResolverOpts::default())
+        let builder = match config.resolver_config {
+            Some(resolver_config) => {
+                TokioResolver::builder_with_config(resolver_config, TokioRuntimeProvider::default())
+            }
+            None => TokioResolver::builder_tokio()
+                .map_err(|e| Error::Discovery(format!("DNS resolver init failed: {e}")))?,
         };
+        let resolver = builder
+            .build()
+            .map_err(|e| Error::Discovery(format!("DNS resolver build failed: {e}")))?;
 
         Ok(Self {
             resolver,
@@ -92,9 +108,12 @@ impl DnsDiscovery {
 
         let mut instances = Vec::new();
 
-        for srv in response.iter() {
-            let target = srv.target().to_string();
-            let port = srv.port();
+        for record in response.answers() {
+            let RData::SRV(srv) = &record.data else {
+                continue;
+            };
+            let target = srv.target.to_string();
+            let port = srv.port;
 
             // Resolve the target hostname
             match self.resolve_name(&target).await {

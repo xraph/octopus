@@ -123,11 +123,9 @@ impl HttpProxy {
         upstream: &UpstreamInstance,
     ) -> Result<Response<Incoming>> {
         // Check circuit breaker first
-        if self.config.enable_circuit_breaker {
-            if !self.circuit_breaker.allow_request(&upstream.id) {
-                warn!(upstream = %upstream.id, "Circuit breaker is OPEN, rejecting request");
-                return Err(Error::CircuitBreakerOpen(upstream.id.clone()));
-            }
+        if self.config.enable_circuit_breaker && !self.circuit_breaker.allow_request(&upstream.id) {
+            warn!(upstream = %upstream.id, "Circuit breaker is OPEN, rejecting request");
+            return Err(Error::CircuitBreakerOpen(upstream.id.clone()));
         }
 
         // Execute the request

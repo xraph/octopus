@@ -197,7 +197,7 @@ async fn test_multiple_audit_events() {
     // Log multiple events
     for i in 0..10 {
         let event = AuditEvent::new(AuditEventType::RequestReceived)
-            .with_request_id(format!("req-{}", i))
+            .with_request_id(format!("req-{i}"))
             .with_client_ip(format!("192.168.1.{}", i + 1).parse().unwrap())
             .with_uri("/api/test".to_string())
             .with_method("GET".to_string());

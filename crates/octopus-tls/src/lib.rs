@@ -25,3 +25,18 @@ pub use acceptor::{extract_client_cn, TlsAcceptor, TlsClientCn};
 pub use config::TlsConfig;
 pub use loader::{load_certificates, load_private_key, CertificateReloader};
 pub use mtls::{MtlsConfig, TargetTlsConfig};
+
+/// Ensure a process-wide rustls [`CryptoProvider`] is installed.
+///
+/// With rustls 0.23 both the `aws-lc-rs` and `ring` backends can be compiled in
+/// at once (e.g. under `--all-features`), and then `ClientConfig`/`ServerConfig`
+/// builders cannot choose one automatically and panic. Installing a default once
+/// removes that ambiguity; the call is idempotent and a no-op if a provider
+/// already exists.
+pub(crate) fn ensure_crypto_provider() {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    });
+}

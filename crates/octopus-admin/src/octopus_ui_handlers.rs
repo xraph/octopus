@@ -194,10 +194,8 @@ pub async fn octopus_ui_dashboard_handler(
         .collect::<Vec<_>>()
         .join("\n");
 
-    let health_checks_grid = format!(
-        r#"<div class="grid gap-4 md:grid-cols-2">{}</div>"#,
-        health_checks_html
-    );
+    let health_checks_grid =
+        format!(r#"<div class="grid gap-4 md:grid-cols-2">{health_checks_html}</div>"#);
 
     // Generate plugins grid
     let plugins_html = plugins
@@ -206,10 +204,8 @@ pub async fn octopus_ui_dashboard_handler(
         .collect::<Vec<_>>()
         .join("\n");
 
-    let plugins_grid = format!(
-        r#"<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">{}</div>"#,
-        plugins_html
-    );
+    let plugins_grid =
+        format!(r#"<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">{plugins_html}</div>"#);
 
     let template = OctopusUiDashboardTemplate {
         stats_cards,
@@ -256,10 +252,7 @@ pub async fn octopus_ui_routes_handler(State(_state): State<Arc<AppState>>) -> i
         .collect::<Vec<_>>()
         .join("\n");
 
-    let routes_grid = format!(
-        r#"<div class="grid gap-4 md:grid-cols-2">{}</div>"#,
-        routes_grid
-    );
+    let routes_grid = format!(r#"<div class="grid gap-4 md:grid-cols-2">{routes_grid}</div>"#);
 
     let template = OctopusUiRoutesTemplate {
         routes_table,
@@ -299,10 +292,8 @@ pub async fn octopus_ui_health_handler(State(_state): State<Arc<AppState>>) -> i
         .collect::<Vec<_>>()
         .join("\n");
 
-    let health_checks_grid = format!(
-        r#"<div class="grid gap-4 md:grid-cols-2">{}</div>"#,
-        health_checks_html
-    );
+    let health_checks_grid =
+        format!(r#"<div class="grid gap-4 md:grid-cols-2">{health_checks_html}</div>"#);
 
     let template = OctopusUiHealthTemplate {
         health_checks: health_checks_grid,
@@ -356,10 +347,8 @@ pub async fn octopus_ui_plugins_handler(State(_state): State<Arc<AppState>>) -> 
         .collect::<Vec<_>>()
         .join("\n");
 
-    let plugins_grid = format!(
-        r#"<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">{}</div>"#,
-        plugins_html
-    );
+    let plugins_grid =
+        format!(r#"<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">{plugins_html}</div>"#);
 
     let active_plugins = plugins.iter().filter(|p| p.enabled).count();
 

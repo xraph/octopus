@@ -7,6 +7,7 @@ use octopus_farp::{
     SchemaDescriptor, SchemaEndpoints, SchemaLocation, SchemaManifest, SchemaRegistry, SchemaType,
 };
 use std::sync::Arc;
+use tokio::runtime::Runtime;
 
 fn create_test_manifest(service_name: &str, instance_id: &str) -> SchemaManifest {
     let mut manifest = SchemaManifest::new(service_name, "1.0.0", instance_id);
@@ -35,36 +36,40 @@ fn create_test_manifest(service_name: &str, instance_id: &str) -> SchemaManifest
 }
 
 fn bench_register_service(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
     let registry = Arc::new(SchemaRegistry::new());
 
     c.bench_function("register_service", |b| {
         let mut counter = 0;
         b.iter(|| {
-            let manifest = create_test_manifest("test-service", &format!("inst-{}", counter));
-            registry.register_service(black_box(manifest)).unwrap();
+            let manifest = create_test_manifest("test-service", &format!("inst-{counter}"));
+            rt.block_on(registry.register_service(black_box(manifest)))
+                .unwrap();
             counter += 1;
         });
     });
 }
 
 fn bench_get_service(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
     let registry = Arc::new(SchemaRegistry::new());
 
     // Pre-populate with 100 services
     for i in 0..100 {
-        let manifest = create_test_manifest(&format!("service-{}", i), &format!("inst-{}", i));
-        registry.register_service(manifest).unwrap();
+        let manifest = create_test_manifest(&format!("service-{i}"), &format!("inst-{i}"));
+        rt.block_on(registry.register_service(manifest)).unwrap();
     }
 
     c.bench_function("get_service", |b| {
         b.iter(|| {
             let result = registry.get_service(black_box("service-50"));
-            black_box(result);
+            let _ = black_box(result);
         });
     });
 }
 
 fn bench_list_services(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
     let mut group = c.benchmark_group("list_services");
 
     for size in [10, 100, 1000].iter() {
@@ -72,8 +77,8 @@ fn bench_list_services(c: &mut Criterion) {
 
         // Pre-populate
         for i in 0..*size {
-            let manifest = create_test_manifest(&format!("service-{}", i), &format!("inst-{}", i));
-            registry.register_service(manifest).unwrap();
+            let manifest = create_test_manifest(&format!("service-{i}"), &format!("inst-{i}"));
+            rt.block_on(registry.register_service(manifest)).unwrap();
         }
 
         group.throughput(Throughput::Elements(*size as u64));
@@ -88,18 +93,20 @@ fn bench_list_services(c: &mut Criterion) {
 }
 
 fn bench_update_service(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
     let registry = Arc::new(SchemaRegistry::new());
 
     // Register initial service
     let manifest = create_test_manifest("test-service", "inst-1");
-    registry.register_service(manifest).unwrap();
+    rt.block_on(registry.register_service(manifest)).unwrap();
 
     c.bench_function("update_service", |b| {
         b.iter(|| {
             let mut manifest = create_test_manifest("test-service", "inst-1");
             manifest.service_version = "2.0.0".to_string();
             manifest.update_checksum().unwrap();
-            registry.update_service(black_box(manifest)).unwrap();
+            rt.block_on(registry.update_service(black_box(manifest)))
+                .unwrap();
         });
     });
 }
@@ -121,12 +128,13 @@ fn bench_concurrent_registrations(c: &mut Criterion) {
                     for thread_id in 0..num_threads {
                         let registry = Arc::clone(&registry);
                         let handle = thread::spawn(move || {
+                            let rt = Runtime::new().unwrap();
                             for i in 0..10 {
                                 let manifest = create_test_manifest(
-                                    &format!("service-{}-{}", thread_id, i),
-                                    &format!("inst-{}-{}", thread_id, i),
+                                    &format!("service-{thread_id}-{i}"),
+                                    &format!("inst-{thread_id}-{i}"),
                                 );
-                                registry.register_service(manifest).unwrap();
+                                rt.block_on(registry.register_service(manifest)).unwrap();
                             }
                         });
                         handles.push(handle);
@@ -145,12 +153,13 @@ fn bench_concurrent_registrations(c: &mut Criterion) {
 }
 
 fn bench_rate_limiting(c: &mut Criterion) {
+    let rt = Runtime::new().unwrap();
     // Test rate limiting overhead
     let registry = Arc::new(SchemaRegistry::with_rate_limit(1000)); // 1000/min = ~16/sec
 
     // Register initial service
     let manifest = create_test_manifest("test-service", "inst-1");
-    registry.register_service(manifest).unwrap();
+    rt.block_on(registry.register_service(manifest)).unwrap();
 
     c.bench_function("rate_limited_update", |b| {
         b.iter(|| {
@@ -159,8 +168,8 @@ fn bench_rate_limiting(c: &mut Criterion) {
             manifest.update_checksum().unwrap();
 
             // This should succeed (under rate limit)
-            let result = registry.update_service(black_box(manifest));
-            black_box(result);
+            let result = rt.block_on(registry.update_service(black_box(manifest)));
+            let _ = black_box(result);
         });
     });
 }
@@ -173,7 +182,7 @@ fn bench_manifest_checksum(c: &mut Criterion) {
         let schema = SchemaDescriptor::new(
             SchemaType::OpenAPI,
             "3.1.0",
-            SchemaLocation::http(&format!("http://localhost/api-{}.json", i)),
+            SchemaLocation::http(format!("http://localhost/api-{i}.json")),
             "application/json",
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
             1024,

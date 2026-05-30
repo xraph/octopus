@@ -174,10 +174,7 @@ pub async fn octopus_ui_routes_handler(State(_state): State<Arc<AppState>>) -> i
         .map(ui_components::route_card)
         .collect::<Vec<_>>()
         .join("\n");
-    let routes_grid = format!(
-        r#"<div class="grid gap-4 md:grid-cols-2">{}</div>"#,
-        routes_grid
-    );
+    let routes_grid = format!(r#"<div class="grid gap-4 md:grid-cols-2">{routes_grid}</div>"#);
 
     let content = VStack::new()
         .gap("6")
@@ -236,10 +233,8 @@ pub async fn octopus_ui_routes_handler(State(_state): State<Arc<AppState>>) -> i
 /// Health page using pure Rust
 pub async fn octopus_ui_health_handler(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
     let health_checks_html = r#"<p class="text-muted-foreground">Health checks will be displayed here once configured.</p>"#.to_string();
-    let health_checks_grid = format!(
-        r#"<div class="grid gap-4 md:grid-cols-2">{}</div>"#,
-        health_checks_html
-    );
+    let health_checks_grid =
+        format!(r#"<div class="grid gap-4 md:grid-cols-2">{health_checks_html}</div>"#);
 
     let content = VStack::new()
         .gap("6")
@@ -325,10 +320,8 @@ pub async fn octopus_ui_health_handler(State(_state): State<Arc<AppState>>) -> i
 /// Plugins page using pure Rust
 pub async fn octopus_ui_plugins_handler(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
     let plugins_html = r#"<p class="text-muted-foreground">Plugins will be displayed here once the plugin system is configured.</p>"#.to_string();
-    let plugins_grid = format!(
-        r#"<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">{}</div>"#,
-        plugins_html
-    );
+    let plugins_grid =
+        format!(r#"<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">{plugins_html}</div>"#);
 
     let content = VStack::new()
         .gap("6")

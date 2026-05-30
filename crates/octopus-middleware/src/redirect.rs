@@ -14,20 +14,15 @@ use std::fmt;
 pub type Body = Full<Bytes>;
 
 /// Trailing slash behavior
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TrailingSlash {
     /// Add a trailing slash if missing
     Add,
     /// Strip trailing slash if present
     Strip,
     /// Do nothing
+    #[default]
     Ignore,
-}
-
-impl Default for TrailingSlash {
-    fn default() -> Self {
-        TrailingSlash::Ignore
-    }
 }
 
 /// A single redirect rule
@@ -122,7 +117,7 @@ impl Redirect {
     /// Build a redirect response
     fn redirect_response(location: &str, status: StatusCode) -> Result<Response<Body>> {
         let header_val = HeaderValue::from_str(location)
-            .map_err(|e| Error::Internal(format!("Invalid redirect location: {}", e)))?;
+            .map_err(|e| Error::Internal(format!("Invalid redirect location: {e}")))?;
         Response::builder()
             .status(status)
             .header(header::LOCATION, header_val)
@@ -142,7 +137,7 @@ impl Redirect {
                 .or_else(|| uri.authority().map(|a| a.as_str()))
                 .unwrap_or("localhost");
             let path_and_query = uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
-            Some(format!("https://{}{}", authority, path_and_query))
+            Some(format!("https://{authority}{path_and_query}"))
         } else {
             None
         }
@@ -156,7 +151,7 @@ impl Redirect {
                 if path == "/" || path.ends_with('/') {
                     None
                 } else {
-                    Some(format!("{}/", path))
+                    Some(format!("{path}/"))
                 }
             }
             TrailingSlash::Strip => {
@@ -177,7 +172,7 @@ impl Redirect {
                 // Replace capture groups ($1, $2, etc.)
                 for i in 1..caps.len() {
                     if let Some(m) = caps.get(i) {
-                        target = target.replace(&format!("${}", i), m.as_str());
+                        target = target.replace(&format!("${i}"), m.as_str());
                     }
                 }
                 // Preserve query string if configured
@@ -185,9 +180,9 @@ impl Redirect {
                     if let Some(q) = query {
                         if !q.is_empty() {
                             if target.contains('?') {
-                                target = format!("{}&{}", target, q);
+                                target = format!("{target}&{q}");
                             } else {
-                                target = format!("{}?{}", target, q);
+                                target = format!("{target}?{q}");
                             }
                         }
                     }
@@ -235,7 +230,7 @@ impl Middleware for Redirect {
         // 3. Trailing slash normalization
         if let Some(new_path) = self.normalize_trailing_slash(path) {
             let location = if let Some(q) = query {
-                format!("{}?{}", new_path, q)
+                format!("{new_path}?{q}")
             } else {
                 new_path
             };

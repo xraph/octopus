@@ -243,7 +243,7 @@ impl Middleware for AuthGatewayMiddleware {
                 return Ok(self.error_response(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "auth_error",
-                    &format!("Authentication error: {}", e),
+                    &format!("Authentication error: {e}"),
                     Some(provider_name),
                     None,
                 ));

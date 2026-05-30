@@ -196,7 +196,7 @@ mod tests {
         for i in 0..5 {
             log.record(
                 Method::GET,
-                format!("/path{}", i),
+                format!("/path{i}"),
                 StatusCode::OK,
                 Duration::from_millis(50),
                 "service".to_string(),

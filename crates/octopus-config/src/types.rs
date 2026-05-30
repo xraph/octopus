@@ -913,20 +913,12 @@ pub struct RouteRateLimitConfig {
 /// Admin dashboard configuration
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
+#[derive(Default)]
 pub struct AdminConfig {
     /// Auth provider name for protecting admin dashboard (None = no auth)
     pub auth_provider: Option<String>,
     /// IP allowlist for admin access (empty = all allowed)
     pub allowed_ips: Vec<String>,
-}
-
-impl Default for AdminConfig {
-    fn default() -> Self {
-        Self {
-            auth_provider: None,
-            allowed_ips: vec![],
-        }
-    }
 }
 
 // Auth config defaults

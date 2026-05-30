@@ -1,7 +1,6 @@
 //! Resilience features integration tests
 
 use super::*;
-use http::StatusCode;
 use octopus_health::circuit_breaker::CircuitState;
 use octopus_proxy::{HttpClient, HttpProxy, ProxyConfig};
 use std::time::Duration;
@@ -188,8 +187,7 @@ async fn test_connect_timeout() {
     // Note: Connection refused is faster than timeout
     assert!(
         elapsed < Duration::from_secs(2),
-        "Should fail within reasonable time, took: {:?}",
-        elapsed
+        "Should fail within reasonable time, took: {elapsed:?}"
     );
 }
 
@@ -229,9 +227,7 @@ async fn test_graceful_degradation_with_partial_failures() {
     // With retries, we should have more successes than failures
     assert!(
         success_count > failure_count,
-        "With retries, success rate should be higher. Success: {}, Failures: {}",
-        success_count,
-        failure_count
+        "With retries, success rate should be higher. Success: {success_count}, Failures: {failure_count}"
     );
 }
 

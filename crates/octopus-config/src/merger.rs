@@ -17,13 +17,17 @@ use std::collections::HashMap;
 ///
 /// # Example
 ///
-/// ```rust
-/// use octopus_config::merger::merge_configs;
+/// ```no_run
+/// use octopus_config::{load_str, merge_configs, ConfigFormat};
 ///
-/// let base = Config { /* ... */ };
-/// let override_config = Config { /* ... */ };
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+/// let yaml = "gateway:\n  listen: \"127.0.0.1:8080\"\n";
+/// let base = load_str(yaml, ConfigFormat::Yaml)?;
+/// let override_config = load_str(yaml, ConfigFormat::Yaml)?;
 ///
 /// let merged = merge_configs(vec![base, override_config])?;
+/// # Ok(())
+/// # }
 /// ```
 pub fn merge_configs(configs: Vec<Config>) -> Result<Config> {
     if configs.is_empty() {
@@ -133,7 +137,7 @@ mod tests {
     fn create_test_config(listen_port: u16, workers: usize) -> Config {
         Config {
             gateway: GatewayConfig {
-                listen: format!("127.0.0.1:{}", listen_port)
+                listen: format!("127.0.0.1:{listen_port}")
                     .parse::<SocketAddr>()
                     .unwrap(),
                 workers,

@@ -23,7 +23,7 @@ pub struct Stack {
 impl Stack {
     /// Create a new stack
     #[must_use]
-    pub fn new(direction: StackDirection) -> Self {
+    pub const fn new(direction: StackDirection) -> Self {
         Self {
             direction,
             gap: String::new(),
@@ -101,7 +101,7 @@ pub struct VStack {
 impl VStack {
     /// Create a new vertical stack
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             inner: Stack::new(StackDirection::Vertical),
         }
@@ -157,7 +157,7 @@ pub struct HStack {
 impl HStack {
     /// Create a new horizontal stack
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             inner: Stack::new(StackDirection::Horizontal),
         }

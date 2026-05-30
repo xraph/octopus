@@ -327,22 +327,22 @@ pub struct RateLimitKeyBuilder;
 impl RateLimitKeyBuilder {
     /// Build key from client IP
     pub fn by_ip(ip: &str) -> String {
-        format!("ip:{}", ip)
+        format!("ip:{ip}")
     }
 
     /// Build key from user ID
     pub fn by_user(user_id: &str) -> String {
-        format!("user:{}", user_id)
+        format!("user:{user_id}")
     }
 
     /// Build key from API key
     pub fn by_api_key(api_key: &str) -> String {
-        format!("apikey:{}", api_key)
+        format!("apikey:{api_key}")
     }
 
     /// Build key from path
     pub fn by_path(path: &str) -> String {
-        format!("path:{}", path)
+        format!("path:{path}")
     }
 
     /// Build composite key
@@ -393,8 +393,8 @@ mod tests {
         let results: Vec<_> = (0..11).map(|_| limiter.check("test-key")).collect();
 
         // First 10 should succeed
-        for i in 0..10 {
-            assert!(results[i].is_allowed(), "Request {} should be allowed", i);
+        for (i, result) in results.iter().enumerate().take(10) {
+            assert!(result.is_allowed(), "Request {i} should be allowed");
         }
 
         // 11th request should be rate limited
@@ -440,13 +440,11 @@ mod tests {
         for i in 0..5 {
             assert!(
                 key1_results[i].is_allowed(),
-                "key1 request {} should be allowed",
-                i
+                "key1 request {i} should be allowed"
             );
             assert!(
                 key2_results[i].is_allowed(),
-                "key2 request {} should be allowed",
-                i
+                "key2 request {i} should be allowed"
             );
         }
 

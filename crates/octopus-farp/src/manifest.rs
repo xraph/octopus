@@ -32,7 +32,7 @@ pub struct SchemaManifest {
     /// Schemas exposed by this instance
     pub schemas: Vec<SchemaDescriptor>,
 
-    /// Capabilities/protocols supported (e.g., ["rest", "grpc", "websocket"])
+    /// Capabilities/protocols supported (e.g., `["rest", "grpc", "websocket"]`)
     pub capabilities: Vec<String>,
 
     /// Endpoints for introspection and health
@@ -60,7 +60,7 @@ pub struct SchemaManifest {
 }
 
 /// Authentication configuration declared by a FARP service
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ServiceAuthConfig {
     /// Auth provider name to use for this service's routes
     #[serde(default)]
@@ -134,13 +134,13 @@ impl SchemaManifest {
         self
     }
 
-    /// Set route table (v1.1.0) and compute routes_checksum
+    /// Set route table (v1.1.0) and compute `routes_checksum`
     pub fn set_route_table(&mut self, routes: Vec<farp::types::RouteDescriptor>) {
         self.route_table = routes;
         self.update_routes_checksum();
     }
 
-    /// Update the routes checksum from the current route_table
+    /// Update the routes checksum from the current `route_table`
     pub fn update_routes_checksum(&mut self) {
         if self.route_table.is_empty() {
             self.routes_checksum = None;
@@ -157,6 +157,7 @@ impl SchemaManifest {
     }
 
     /// Check if this manifest has a pre-computed route table (v1.1.0)
+    #[must_use]
     pub fn has_route_table(&self) -> bool {
         !self.route_table.is_empty()
     }
@@ -489,7 +490,6 @@ pub fn diff_manifests(old: &SchemaManifest, new: &SchemaManifest) -> ManifestDif
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::LocationType;
 
     #[test]
     fn test_manifest_creation() {

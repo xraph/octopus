@@ -41,7 +41,7 @@ async fn main() -> Result<()> {
         let count = backend
             .increment("ratelimit:client1", 1, Some(Duration::from_secs(60)))
             .await?;
-        println!("Request {}: count = {}", i, count);
+        println!("Request {i}: count = {count}");
 
         if count > 3 {
             println!("  ❌ Rate limit exceeded!");
@@ -59,13 +59,13 @@ async fn main() -> Result<()> {
     let acquired = backend
         .compare_and_swap("lock:resource1", b"unlocked".to_vec(), b"locked".to_vec())
         .await?;
-    println!("Lock acquired: {}", acquired);
+    println!("Lock acquired: {acquired}");
 
     // Try to acquire again (should fail)
     let acquired_again = backend
         .compare_and_swap("lock:resource1", b"unlocked".to_vec(), b"locked".to_vec())
         .await?;
-    println!("Lock acquired again: {}", acquired_again);
+    println!("Lock acquired again: {acquired_again}");
 
     // Batch operations
     println!("\n=== Batch Operations ===");
@@ -95,13 +95,13 @@ async fn main() -> Result<()> {
     // Pattern matching
     println!("\n=== Pattern Matching ===");
     let keys = backend.keys("product:*").await?;
-    println!("Keys matching 'product:*': {:?}", keys);
+    println!("Keys matching 'product:*': {keys:?}");
 
     // Health check
     println!("\n=== Health Check ===");
     match backend.health_check().await {
         Ok(_) => println!("✅ Backend healthy"),
-        Err(e) => println!("❌ Backend unhealthy: {}", e),
+        Err(e) => println!("❌ Backend unhealthy: {e}"),
     }
 
     Ok(())

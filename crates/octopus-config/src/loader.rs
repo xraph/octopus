@@ -103,14 +103,17 @@ pub fn load_config<P: AsRef<Path>>(path: P, _env_overrides: bool) -> Result<Conf
 ///
 /// # Example
 ///
-/// ```
+/// ```no_run
 /// use octopus_config::load_and_merge;
 ///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let config = load_and_merge(vec![
 ///     "config/base.yaml",
 ///     "config/production.yaml",
 ///     "config/secrets.yaml",
 /// ])?;
+/// # Ok(())
+/// # }
 /// ```
 pub fn load_and_merge<P: AsRef<Path>>(paths: Vec<P>) -> Result<Config> {
     if paths.is_empty() {

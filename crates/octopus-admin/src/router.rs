@@ -33,7 +33,6 @@ pub struct DashboardRouter;
 
 impl DashboardRouter {
     /// Build the dashboard router
-    #[must_use]
     pub fn build(state: Arc<AppState>) -> Router {
         // UI distribution path
         let ui_dist = concat!(env!("CARGO_MANIFEST_DIR"), "/ui/dist");

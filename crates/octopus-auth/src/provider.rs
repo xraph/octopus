@@ -44,11 +44,13 @@ impl User {
     }
 
     /// Check if user has a specific role
+    #[must_use]
     pub fn has_role(&self, role: &str) -> bool {
         self.roles.iter().any(|r| r == role)
     }
 
     /// Check if user has any of the specified roles
+    #[must_use]
     pub fn has_any_role(&self, roles: &[String]) -> bool {
         roles.iter().any(|role| self.has_role(role))
     }
@@ -82,6 +84,7 @@ impl Default for UserStore {
 
 impl UserStore {
     /// Create a new user store
+    #[must_use]
     pub fn new() -> Self {
         Self {
             users: Arc::new(DashMap::new()),
@@ -97,6 +100,7 @@ impl UserStore {
     }
 
     /// Get a user by username
+    #[must_use]
     pub fn get_by_username(&self, username: &str) -> Option<User> {
         self.users.iter().find_map(|entry| {
             if entry.username == username {
@@ -108,11 +112,11 @@ impl UserStore {
     }
 
     /// Verify password (simple comparison for demo - use proper hashing in production!)
+    #[must_use]
     pub fn verify_password(&self, username: &str, password: &str) -> bool {
         self.credentials
             .get(username)
-            .map(|hash| hash.value() == password)
-            .unwrap_or(false)
+            .is_some_and(|hash| hash.value() == password)
     }
 }
 
@@ -161,8 +165,8 @@ mod tests {
     fn test_user_has_any_role() {
         let user = User::new("1", "alice", "alice@example.com").with_role("admin");
 
-        assert!(user.has_any_role(&vec!["admin".to_string(), "user".to_string()]));
-        assert!(!user.has_any_role(&vec!["superadmin".to_string(), "moderator".to_string()]));
+        assert!(user.has_any_role(&["admin".to_string(), "user".to_string()]));
+        assert!(!user.has_any_role(&["superadmin".to_string(), "moderator".to_string()]));
     }
 
     #[tokio::test]

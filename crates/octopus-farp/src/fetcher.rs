@@ -19,7 +19,7 @@ use consul::Client as ConsulClient;
 use etcd_client::Client as EtcdClient;
 
 /// Registry backend configuration
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum RegistryBackend {
     /// No registry backend configured
     None,
@@ -31,6 +31,18 @@ pub enum RegistryBackend {
     #[cfg(feature = "etcd-backend")]
     /// etcd key-value store
     Etcd(Arc<EtcdClient>),
+}
+
+impl std::fmt::Debug for RegistryBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::None => f.write_str("RegistryBackend::None"),
+            #[cfg(feature = "consul-backend")]
+            Self::Consul(_) => f.write_str("RegistryBackend::Consul"),
+            #[cfg(feature = "etcd-backend")]
+            Self::Etcd(_) => f.write_str("RegistryBackend::Etcd"),
+        }
+    }
 }
 
 /// Schema fetcher handles retrieving schemas from various locations
@@ -229,19 +241,15 @@ impl SchemaFetcher {
             "Fetching schema from Consul KV"
         );
 
-        // Use the consul crate's KV read API
-        let (kv_pair, _meta) = client
-            .kv
-            .read(path, None)
-            .await
+        // Use the consul crate's KV read API (synchronous)
+        let (kv_pair, _meta) = consul::kv::KV::get(client, path, None)
             .map_err(|e| Error::Farp(format!("Consul KV read failed for '{path}': {e}")))?;
 
         let kv = kv_pair
             .ok_or_else(|| Error::Farp(format!("Schema not found in Consul KV at path: {path}")))?;
 
-        // Consul KV values are stored as bytes (already decoded by the consul crate)
-        let value_str = String::from_utf8(kv.Value.clone().unwrap_or_default())
-            .map_err(|e| Error::Farp(format!("Invalid UTF-8 in Consul KV value: {e}")))?;
+        // The consul crate returns KV values already decoded into a String
+        let value_str = kv.Value;
 
         let schema: Value = serde_json::from_str(&value_str)
             .map_err(|e| Error::Farp(format!("Invalid JSON in Consul KV at '{path}': {e}")))?;

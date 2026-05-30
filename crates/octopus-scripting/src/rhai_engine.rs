@@ -371,7 +371,7 @@ mod tests {
         "#;
         let source = ScriptSource::inline(script);
 
-        let mut ctx = RequestContext {
+        let ctx = RequestContext {
             method: "GET".to_string(),
             uri: "/test".to_string(),
             version: "HTTP/1.1".to_string(),

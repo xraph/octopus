@@ -32,7 +32,8 @@ impl Permission {
     }
 
     /// Check if this permission matches another (considering wildcards)
-    pub fn matches(&self, other: &Permission) -> bool {
+    #[must_use]
+    pub fn matches(&self, other: &Self) -> bool {
         let resource_match = self.resource == other.resource || self.resource == "*";
         let action_match = self.action == other.action || self.action == "*";
         resource_match && action_match
@@ -61,6 +62,7 @@ impl Role {
     }
 
     /// Add a permission to the role
+    #[must_use]
     pub fn with_permission(mut self, permission: Permission) -> Self {
         self.permissions.push(permission);
         self
@@ -87,6 +89,7 @@ impl Default for RoleBasedAccessControl {
 
 impl RoleBasedAccessControl {
     /// Create a new RBAC system
+    #[must_use]
     pub fn new() -> Self {
         Self {
             roles: Arc::new(DashMap::new()),
@@ -99,6 +102,7 @@ impl RoleBasedAccessControl {
     }
 
     /// Get a role by name
+    #[must_use]
     pub fn get_role(&self, name: &str) -> Option<Role> {
         self.roles.get(name).map(|r| r.clone())
     }

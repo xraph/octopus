@@ -27,6 +27,7 @@ pub struct GrpcHandler {
     services: HashMap<String, String>,
 
     /// Enable gRPC reflection proxy
+    #[allow(dead_code)]
     enable_reflection: bool,
 
     /// Maximum message size in bytes
@@ -93,7 +94,7 @@ impl GrpcHandler {
         Self::is_grpc_content_type(req.headers()) || Self::is_grpc_web_content_type(req.headers())
     }
 
-    /// Check if request is a gRPC request (buffered body version for ProtocolHandler trait)
+    /// Check if request is a gRPC request (buffered body version for `ProtocolHandler` trait)
     pub fn is_grpc_request(req: &Request<Full<Bytes>>) -> bool {
         Self::is_grpc_content_type(req.headers())
     }
@@ -136,6 +137,7 @@ impl GrpcHandler {
 
     /// Parse grpc-timeout header into a Duration
     /// Format: Nunit where unit is: n(nano), u(micro), m(milli), S(sec), M(min), H(hour)
+    #[must_use]
     pub fn parse_grpc_timeout(value: &str) -> Option<Duration> {
         if value.is_empty() {
             return None;
@@ -154,32 +156,37 @@ impl GrpcHandler {
     }
 
     /// Encode Duration as grpc-timeout header value
+    #[must_use]
     pub fn encode_grpc_timeout(d: Duration) -> String {
         let millis = d.as_millis();
         if millis < 1000 {
-            format!("{}m", millis)
+            format!("{millis}m")
         } else {
             format!("{}S", d.as_secs())
         }
     }
 
     /// Get the configured services map
-    pub fn services(&self) -> &HashMap<String, String> {
+    #[must_use]
+    pub const fn services(&self) -> &HashMap<String, String> {
         &self.services
     }
 
     /// Whether gRPC-Web is enabled
-    pub fn grpc_web_enabled(&self) -> bool {
+    #[must_use]
+    pub const fn grpc_web_enabled(&self) -> bool {
         self.enable_grpc_web
     }
 
     /// Whether deadline propagation is enabled
-    pub fn deadline_propagation_enabled(&self) -> bool {
+    #[must_use]
+    pub const fn deadline_propagation_enabled(&self) -> bool {
         self.deadline_propagation
     }
 
     /// Get max message size
-    pub fn max_message_size(&self) -> usize {
+    #[must_use]
+    pub const fn max_message_size(&self) -> usize {
         self.max_message_size
     }
 }
@@ -208,10 +215,11 @@ const GRPC_HOP_BY_HOP_HEADERS: &[&str] = &[
 ];
 
 /// Build upstream gRPC headers from the original request
+#[must_use]
 pub fn build_grpc_upstream_headers(original_headers: &http::HeaderMap) -> http::HeaderMap {
     let mut headers = http::HeaderMap::new();
 
-    for (key, value) in original_headers.iter() {
+    for (key, value) in original_headers {
         let key_str = key.as_str();
 
         // Skip hop-by-hop headers

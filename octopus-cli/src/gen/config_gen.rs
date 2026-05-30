@@ -11,25 +11,17 @@ use tracing::{debug, info};
 pub async fn process_service(service: &ServiceGenConfig) -> Result<GenOutput> {
     let spec = fetch_spec(service).await?;
 
-    let mut routes = Vec::new();
-    let mut scoped_ops = Vec::new();
-
     let mut channels = Vec::new();
 
-    match service.service_type.as_str() {
-        "openapi" | "farp" => {
-            let (r, ops) = extract_openapi_routes(&spec, service)?;
-            routes = r;
-            scoped_ops = ops;
-        }
+    let (routes, scoped_ops) = match service.service_type.as_str() {
+        "openapi" | "farp" => extract_openapi_routes(&spec, service)?,
         "asyncapi" => {
             let (r, ops, ch) = extract_asyncapi_routes(&spec, service)?;
-            routes = r;
-            scoped_ops = ops;
             channels = ch;
+            (r, ops)
         }
         other => anyhow::bail!("Unsupported service type: {other}"),
-    }
+    };
 
     info!(
         service = %service.name,
@@ -315,11 +307,7 @@ fn extract_request_body_type(operation: &Value) -> Option<String> {
         .and_then(|rb| rb.get("content"))
         .and_then(|c| c.get("application/json"))
         .and_then(|j| j.get("schema"))
-        .and_then(|s| {
-            s.get("$ref")
-                .and_then(|r| r.as_str())
-                .map(|r| ref_to_type_name(r))
-        })
+        .and_then(|s| s.get("$ref").and_then(|r| r.as_str()).map(ref_to_type_name))
 }
 
 /// Extract response type reference (from 200/201 response)
@@ -549,7 +537,7 @@ fn extract_asyncapi_v3_routes(
                 .entry(channel_key)
                 .or_default()
                 .extend(messages),
-            "receive" | _ => channel_receives
+            _ => channel_receives
                 .entry(channel_key)
                 .or_default()
                 .extend(messages),
@@ -819,7 +807,7 @@ fn extract_single_message(spec: &Value, message: &Value) -> Option<ChannelMessag
         .get("headers")
         .and_then(|h| h.get("$ref"))
         .and_then(|r| r.as_str())
-        .map(|r| ref_to_type_name(r));
+        .map(ref_to_type_name);
 
     Some(ChannelMessageInfo {
         name,
@@ -933,7 +921,7 @@ fn build_union_type_name(
 
 /// Simple pascal case conversion
 fn pascal_case_simple(s: &str) -> String {
-    s.split(|c: char| c == '_' || c == '-' || c == '/' || c == '.')
+    s.split(['_', '-', '/', '.'])
         .filter(|part| !part.is_empty())
         .map(|part| {
             let mut chars = part.chars();

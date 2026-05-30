@@ -1,6 +1,9 @@
 //! JWT Authentication Plugin for Octopus API Gateway
 
-#[cfg(feature = "dashboard")]
+// The dashboard is a Leptos/WASM frontend module (gloo_net, `view!`/`#[component]`).
+// It only builds for the browser target, so gate it to wasm32 to keep native
+// `--all-features` builds (e.g. `cargo test --workspace --all-features`) working.
+#[cfg(all(feature = "dashboard", target_arch = "wasm32"))]
 pub mod dashboard;
 
 use async_trait::async_trait;
@@ -116,7 +119,7 @@ impl JwtAuthPlugin {
     /// Validate JWT token
     fn validate_token(&self, token: &str) -> Result<Claims> {
         let token_data = decode::<Claims>(token, &self.decoding_key, &self.validation)
-            .map_err(|e| Error::Authentication(format!("Invalid JWT: {}", e)))?;
+            .map_err(|e| Error::Authentication(format!("Invalid JWT: {e}")))?;
 
         Ok(token_data.claims)
     }

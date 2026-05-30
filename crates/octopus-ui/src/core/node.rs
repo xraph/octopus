@@ -48,7 +48,7 @@ impl Node {
 
     /// Create a group of nodes
     #[must_use]
-    pub fn group(nodes: Vec<Node>) -> Self {
+    pub const fn group(nodes: Vec<Self>) -> Self {
         Self::Group(nodes)
     }
 
@@ -69,7 +69,7 @@ impl Node {
 
     /// Add a child node to an element
     #[must_use]
-    pub fn child(mut self, node: Node) -> Self {
+    pub fn child(mut self, node: Self) -> Self {
         if let Self::Element {
             ref mut children, ..
         } = self
@@ -81,7 +81,7 @@ impl Node {
 
     /// Add multiple child nodes to an element
     #[must_use]
-    pub fn children(mut self, nodes: Vec<Node>) -> Self {
+    pub fn children(mut self, nodes: Vec<Self>) -> Self {
         if let Self::Element {
             ref mut children, ..
         } = self

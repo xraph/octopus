@@ -18,7 +18,7 @@ use uuid::Uuid;
 /// WebSocket event message
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WsMessage {
-    /// Event type (e.g., "stats_update", "route_changed", "upstream_health")
+    /// Event type (e.g., "`stats_update`", "`route_changed`", "`upstream_health`")
     pub msg_type: String,
     /// Event timestamp
     pub timestamp: DateTime<Utc>,
@@ -37,26 +37,31 @@ impl WsMessage {
     }
 
     /// Create a stats update message
+    #[must_use]
     pub fn stats_update(data: serde_json::Value) -> Self {
         Self::new("stats_update", data)
     }
 
     /// Create a route change message
+    #[must_use]
     pub fn route_changed(data: serde_json::Value) -> Self {
         Self::new("route_changed", data)
     }
 
     /// Create an upstream health message
+    #[must_use]
     pub fn upstream_health(data: serde_json::Value) -> Self {
         Self::new("upstream_health", data)
     }
 
     /// Create a circuit breaker state change message
+    #[must_use]
     pub fn circuit_breaker(data: serde_json::Value) -> Self {
         Self::new("circuit_breaker", data)
     }
 
     /// Create a request completed message
+    #[must_use]
     pub fn request_completed(data: serde_json::Value) -> Self {
         Self::new("request_completed", data)
     }
@@ -77,6 +82,7 @@ pub struct WsHub {
 
 impl WsHub {
     /// Create a new WebSocket hub
+    #[must_use]
     pub fn new() -> Self {
         let (broadcast_tx, _) = broadcast::channel(256);
         Self {
@@ -97,12 +103,12 @@ impl WsHub {
     }
 
     /// Handle a WebSocket upgrade request
-    pub async fn handle_upgrade(hub: Arc<WsHub>, ws: WebSocketUpgrade) -> impl IntoResponse {
+    pub async fn handle_upgrade(hub: Arc<Self>, ws: WebSocketUpgrade) -> impl IntoResponse {
         ws.on_upgrade(move |socket| Self::handle_connection(hub, socket))
     }
 
     /// Handle a new WebSocket connection
-    async fn handle_connection(hub: Arc<WsHub>, ws: WebSocket) {
+    async fn handle_connection(hub: Arc<Self>, ws: WebSocket) {
         let client_id = Uuid::new_v4();
         let (mut ws_sender, mut ws_receiver) = ws.split();
         let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
@@ -132,7 +138,7 @@ impl WsHub {
                         match result {
                             Ok(msg) => {
                                 if let Ok(json) = serde_json::to_string(&msg) {
-                                    if ws_sender.send(Message::Text(json.into())).await.is_err() {
+                                    if ws_sender.send(Message::Text(json)).await.is_err() {
                                         break;
                                     }
                                 }

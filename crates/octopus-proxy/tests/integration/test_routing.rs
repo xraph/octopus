@@ -1,8 +1,6 @@
 //! Advanced routing and load balancing integration tests
 
 use super::*;
-use bytes::Bytes;
-use http::{Method, StatusCode};
 use octopus_proxy::routing::{CanaryConfig, Router, RoutingConfig, RoutingStrategy, ShadowConfig};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -175,8 +173,7 @@ async fn test_weighted_round_robin() {
     let up2_count = selections.get("up2").unwrap_or(&0);
     assert!(
         *up2_count > 20,
-        "Weighted upstream should get more selections, got {}",
-        up2_count
+        "Weighted upstream should get more selections, got {up2_count}"
     );
 }
 
@@ -258,14 +255,14 @@ async fn test_error_aware_routing() {
 
 #[tokio::test]
 async fn test_canary_deployment_10_percent() {
-    let stable = vec![TestFixtures::upstream()
+    let stable = [TestFixtures::upstream()
         .id("stable-1")
         .host("localhost")
         .port(8001)
         .version("v1")
         .build()];
 
-    let canary = vec![TestFixtures::upstream()
+    let canary = [TestFixtures::upstream()
         .id("canary-1")
         .host("localhost")
         .port(8002)
@@ -303,27 +300,25 @@ async fn test_canary_deployment_10_percent() {
 
     // Approximately 10% should go to canary (allow some variance)
     assert!(
-        canary_count >= 5 && canary_count <= 20,
-        "Canary should get ~10% of traffic, got {}/100",
-        canary_count
+        (5..=20).contains(&canary_count),
+        "Canary should get ~10% of traffic, got {canary_count}/100"
     );
     assert!(
         stable_count >= 80,
-        "Stable should get ~90% of traffic, got {}/100",
-        stable_count
+        "Stable should get ~90% of traffic, got {stable_count}/100"
     );
 }
 
 #[tokio::test]
 async fn test_canary_deployment_50_percent() {
-    let stable = vec![TestFixtures::upstream()
+    let stable = [TestFixtures::upstream()
         .id("stable-1")
         .host("localhost")
         .port(8001)
         .version("v1")
         .build()];
 
-    let canary = vec![TestFixtures::upstream()
+    let canary = [TestFixtures::upstream()
         .id("canary-1")
         .host("localhost")
         .port(8002)
@@ -361,14 +356,12 @@ async fn test_canary_deployment_50_percent() {
 
     // Approximately 50% to each (allow variance)
     assert!(
-        canary_count >= 35 && canary_count <= 65,
-        "Canary should get ~50% of traffic, got {}/100",
-        canary_count
+        (35..=65).contains(&canary_count),
+        "Canary should get ~50% of traffic, got {canary_count}/100"
     );
     assert!(
-        stable_count >= 35 && stable_count <= 65,
-        "Stable should get ~50% of traffic, got {}/100",
-        stable_count
+        (35..=65).contains(&stable_count),
+        "Stable should get ~50% of traffic, got {stable_count}/100"
     );
 }
 
@@ -409,9 +402,8 @@ async fn test_request_shadowing_percentage() {
 
     // Allow variance, expect roughly 25%
     assert!(
-        shadowed_count >= 15 && shadowed_count <= 40,
-        "Should shadow ~25% of requests, got {}/100",
-        shadowed_count
+        (15..=40).contains(&shadowed_count),
+        "Should shadow ~25% of requests, got {shadowed_count}/100"
     );
 }
 
@@ -447,7 +439,7 @@ async fn test_router_with_multiple_strategies() {
 
     for strategy in strategies {
         let config = RoutingConfig {
-            strategy: strategy.clone(),
+            strategy,
             ..Default::default()
         };
 
@@ -457,8 +449,7 @@ async fn test_router_with_multiple_strategies() {
         let selected = router.select(&upstreams, None).unwrap();
         assert!(
             upstreams.iter().any(|u| u.id == selected.id),
-            "Strategy {:?} should select valid upstream",
-            strategy
+            "Strategy {strategy:?} should select valid upstream"
         );
     }
 }

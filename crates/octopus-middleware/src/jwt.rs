@@ -331,7 +331,7 @@ mod tests {
         let next = Next::new(stack.clone());
         let req = Request::builder()
             .uri("/protected")
-            .header("Authorization", format!("Bearer {}", token))
+            .header("Authorization", format!("Bearer {token}"))
             .body(Body::from(""))
             .unwrap();
 
@@ -389,7 +389,7 @@ mod tests {
         let next = Next::new(stack.clone());
         let req = Request::builder()
             .uri("/protected")
-            .header("Authorization", format!("Bearer {}", token))
+            .header("Authorization", format!("Bearer {token}"))
             .body(Body::from(""))
             .unwrap();
 
@@ -442,7 +442,7 @@ mod tests {
         let next = Next::new(stack.clone());
         let req = Request::builder()
             .uri("/protected")
-            .header("Authorization", format!("Bearer {}", token))
+            .header("Authorization", format!("Bearer {token}"))
             .body(Body::from(""))
             .unwrap();
 

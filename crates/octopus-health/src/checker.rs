@@ -400,10 +400,7 @@ impl HealthCheck for GrpcHealthCheck {
 
             if let Some(status) = grpc_status {
                 if status != 0 {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("gRPC status: {status}"),
-                    ));
+                    return Err(std::io::Error::other(format!("gRPC status: {status}")));
                 }
             }
 

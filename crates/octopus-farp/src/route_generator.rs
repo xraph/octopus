@@ -59,6 +59,7 @@ impl RouteGenerator {
     ///
     /// When a manifest includes a pre-computed `route_table`, this method converts
     /// the `RouteDescriptor`s directly to `GeneratedRoute`s without schema parsing.
+    #[must_use]
     pub fn generate_from_route_table(
         &self,
         route_table: &[farp::types::RouteDescriptor],
@@ -305,7 +306,7 @@ mod tests {
         assert_eq!(prefixed[0].path, "/api/v1/users");
     }
 
-    /// Helper to create a minimal RouteDescriptor for tests
+    /// Helper to create a minimal `RouteDescriptor` for tests
     fn test_route_descriptor(
         path: &str,
         methods: Vec<&str>,

@@ -65,6 +65,7 @@ pub const SSE_CACHE_CONTROL: &str = "no-cache";
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytes::Bytes;
     use http_body_util::Full;
 
     #[test]

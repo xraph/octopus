@@ -220,9 +220,9 @@ where
 
                 std::task::Poll::Ready(Some(Ok(frame)))
             }
-            std::task::Poll::Ready(Some(Err(e))) => std::task::Poll::Ready(Some(Err(Box::new(
-                std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
-            )))),
+            std::task::Poll::Ready(Some(Err(e))) => {
+                std::task::Poll::Ready(Some(Err(Box::new(std::io::Error::other(e.to_string())))))
+            }
             std::task::Poll::Ready(None) => std::task::Poll::Ready(None),
             std::task::Poll::Pending => std::task::Poll::Pending,
         }
@@ -288,7 +288,7 @@ mod tests {
         // Too many headers
         let mut builder = http::Request::builder();
         for i in 0..150 {
-            builder = builder.header(format!("x-header-{}", i), "value");
+            builder = builder.header(format!("x-header-{i}"), "value");
         }
         let req = builder.body(()).unwrap();
 

@@ -12,6 +12,14 @@ pub struct PluginTestHarness<P: Plugin> {
     state: PluginState,
 }
 
+impl<P: Plugin> std::fmt::Debug for PluginTestHarness<P> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PluginTestHarness")
+            .field("state", &self.state)
+            .finish_non_exhaustive()
+    }
+}
+
 impl<P: Plugin> PluginTestHarness<P> {
     /// Create a new test harness with a plugin
     pub fn new(plugin: P) -> Self {
@@ -107,6 +115,7 @@ impl<P: Plugin> PluginTestHarness<P> {
 }
 
 /// Test context helper
+#[derive(Debug)]
 pub struct TestContext {
     request_id: String,
     remote_addr: SocketAddr,

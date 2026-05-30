@@ -22,6 +22,12 @@ use std::time::Duration;
 /// Body type alias
 pub type Body = Full<Bytes>;
 
+/// A shared, unkeyed in-memory governor rate limiter.
+type SharedLimiter = Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock>>;
+
+/// A map of keys (path or identity) to their dedicated limiters.
+type KeyedLimiters = Arc<DashMap<String, SharedLimiter>>;
+
 /// Rate limit strategy
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RateLimitStrategy {
@@ -126,13 +132,11 @@ impl RouteRateLimit {
 pub struct RateLimit {
     config: RateLimitConfig,
     /// Global rate limiter
-    limiter: Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock>>,
+    limiter: SharedLimiter,
     /// Per-route rate limiters (path -> limiter)
-    route_limiters:
-        Arc<DashMap<String, Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock>>>>,
+    route_limiters: KeyedLimiters,
     /// Per-identity rate limiters (identity key -> limiter)
-    identity_limiters:
-        Arc<DashMap<String, Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock>>>>,
+    identity_limiters: KeyedLimiters,
 }
 
 impl RateLimit {
@@ -229,14 +233,7 @@ impl RateLimit {
     }
 
     /// Get the appropriate rate limiter for a request
-    fn get_limiter_for_request(
-        &self,
-        path: &str,
-    ) -> (
-        Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock>>,
-        Duration,
-        Option<String>,
-    ) {
+    fn get_limiter_for_request(&self, path: &str) -> (SharedLimiter, Duration, Option<String>) {
         // Check if there's a per-route limiter for this path
         if let Some(route_limiter) = self.route_limiters.get(path) {
             let route_config = self

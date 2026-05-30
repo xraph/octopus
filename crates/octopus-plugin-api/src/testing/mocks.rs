@@ -153,9 +153,12 @@ pub struct MockInterceptor {
     response_calls: Arc<Mutex<usize>>,
 }
 
+/// Action a [`MockInterceptor`] takes when invoked.
 #[derive(Debug, Clone)]
 pub enum InterceptorActionType {
+    /// Continue processing the request/response chain.
     Continue,
+    /// Abort the chain.
     Abort,
 }
 

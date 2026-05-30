@@ -57,6 +57,7 @@ impl SchemaFederation {
     }
 
     /// Returns whether service tags should be collapsed.
+    #[must_use]
     pub fn collapse_service_tags(&self) -> bool {
         self.collapse_service_tags
             .load(std::sync::atomic::Ordering::Relaxed)
@@ -159,7 +160,7 @@ impl SchemaFederation {
 
                 // Parse into OpenAPISpec (optional - merger can work without it)
                 let parsed = farp::merger::parse_openapi_schema(&schema_value).ok();
-                
+
                 // Create a manifest for the merger with OpenAPI schema descriptor
                 // The merger needs manifests with schemas to determine inclusion
                 let mut manifest = new_manifest(
@@ -167,13 +168,13 @@ impl SchemaFederation {
                     desc.version.clone(),
                     desc.id.clone(),
                 );
-                
+
                 // Add a schema descriptor so the merger includes this service
                 // Use placeholder hash from content
                 let mut hasher = sha2::Sha256::new();
                 hasher.update(desc.content.as_bytes());
                 let hash = format!("{:x}", hasher.finalize());
-                
+
                 // Use external farp types for the schema descriptor
                 let location = farp::types::SchemaLocation {
                     location_type: farp::types::LocationType::Inline,
@@ -181,7 +182,7 @@ impl SchemaFederation {
                     registry_path: None,
                     headers: None,
                 };
-                
+
                 let schema_desc = farp::types::SchemaDescriptor {
                     schema_type: farp::types::SchemaType::OpenAPI,
                     spec_version: desc.version.clone(),
@@ -193,9 +194,9 @@ impl SchemaFederation {
                     compatibility: None,
                     metadata: None,
                 };
-                
+
                 manifest.schemas.push(schema_desc);
-                
+
                 Some(ServiceSchema {
                     manifest,
                     schema: schema_value,
@@ -228,11 +229,11 @@ impl SchemaFederation {
         // Perform the merge
         let merge_result = merger
             .merge(service_schemas)
-            .map_err(|e| Error::Farp(format!("Failed to merge OpenAPI schemas: {}", e)))?;
+            .map_err(|e| Error::Farp(format!("Failed to merge OpenAPI schemas: {e}")))?;
 
         // Convert MergeResult to JSON, then post-process to set gateway server
         let mut spec_value = serde_json::to_value(&merge_result.spec)
-            .map_err(|e| Error::Farp(format!("Failed to serialize merged schema: {}", e)))?;
+            .map_err(|e| Error::Farp(format!("Failed to serialize merged schema: {e}")))?;
 
         // Set the servers array to point to the gateway root.
         // Without this, Swagger UI defaults to the fetch URL (/farp/openapi.json)
@@ -253,8 +254,7 @@ impl SchemaFederation {
         let path_count = spec_value
             .get("paths")
             .and_then(|p| p.as_object())
-            .map(|p| p.len())
-            .unwrap_or(0);
+            .map_or(0, serde_json::Map::len);
         tracing::info!(
             path_count = path_count,
             services = ?sources,
@@ -262,7 +262,7 @@ impl SchemaFederation {
         );
 
         let content = serde_json::to_string_pretty(&spec_value)
-            .map_err(|e| Error::Farp(format!("Failed to serialize merged schema: {}", e)))?;
+            .map_err(|e| Error::Farp(format!("Failed to serialize merged schema: {e}")))?;
 
         let federated = FederatedSchema {
             format: SchemaFormat::OpenApi,
@@ -349,12 +349,12 @@ impl SchemaFederation {
         // Perform the merge
         let merge_result = merger
             .merge(service_schemas)
-            .map_err(|e| Error::Farp(format!("Failed to merge AsyncAPI schemas: {}", e)))?;
+            .map_err(|e| Error::Farp(format!("Failed to merge AsyncAPI schemas: {e}")))?;
 
         // Convert AsyncAPIMergeResult to our FederatedSchema
         let content =
             serde_json::to_string_pretty(&serde_json::to_value(&merge_result.spec).unwrap())
-                .map_err(|e| Error::Farp(format!("Failed to serialize merged schema: {}", e)))?;
+                .map_err(|e| Error::Farp(format!("Failed to serialize merged schema: {e}")))?;
 
         let federated = FederatedSchema {
             format: SchemaFormat::AsyncApi,

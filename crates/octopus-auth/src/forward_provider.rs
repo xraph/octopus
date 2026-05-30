@@ -52,10 +52,7 @@ impl AuthProviderInstance for ForwardAuthProvider {
             Ok(r) => r,
             Err(e) => {
                 warn!(error = %e, "Forward auth request failed");
-                return Ok(AuthResult::Failed(format!(
-                    "Auth service unreachable: {}",
-                    e
-                )));
+                return Ok(AuthResult::Failed(format!("Auth service unreachable: {e}")));
             }
         };
 
@@ -95,8 +92,7 @@ impl AuthProviderInstance for ForwardAuthProvider {
         } else {
             let body = response.text().await.unwrap_or_default();
             Ok(AuthResult::Failed(format!(
-                "Auth service returned {}: {}",
-                status, body
+                "Auth service returned {status}: {body}"
             )))
         }
     }
@@ -105,7 +101,7 @@ impl AuthProviderInstance for ForwardAuthProvider {
         &self.name
     }
 
-    fn provider_type(&self) -> &str {
+    fn provider_type(&self) -> &'static str {
         "forward_auth"
     }
 }

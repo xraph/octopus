@@ -565,8 +565,6 @@ mod tests {
 
     #[test]
     fn test_canary_deployment() {
-        use std::collections::HashMap;
-
         let config = RoutingConfig {
             strategy: RoutingStrategy::RoundRobin,
             enable_canary: true,

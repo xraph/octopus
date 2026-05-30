@@ -31,16 +31,10 @@ pub struct CanaryRule {
 }
 
 /// Canary deployment configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CanaryConfig {
     /// List of canary routing rules evaluated in order
     pub rules: Vec<CanaryRule>,
-}
-
-impl Default for CanaryConfig {
-    fn default() -> Self {
-        Self { rules: Vec::new() }
-    }
 }
 
 /// Canary deployment middleware

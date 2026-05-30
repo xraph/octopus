@@ -69,6 +69,7 @@ pub struct AuthProviderRegistry {
 
 impl AuthProviderRegistry {
     /// Create a new registry
+    #[must_use]
     pub fn new(default_provider: Option<String>, cache_ttl: Duration) -> Self {
         Self {
             providers: DashMap::new(),
@@ -84,16 +85,19 @@ impl AuthProviderRegistry {
     }
 
     /// Get the default provider name
-    pub fn default_provider(&self) -> Option<&String> {
+    #[must_use]
+    pub const fn default_provider(&self) -> Option<&String> {
         self.default_provider.as_ref()
     }
 
     /// Get a provider by name
+    #[must_use]
     pub fn get(&self, name: &str) -> Option<Arc<dyn AuthProviderInstance>> {
         self.providers.get(name).map(|p| Arc::clone(p.value()))
     }
 
     /// List all registered provider names
+    #[must_use]
     pub fn list(&self) -> Vec<String> {
         self.providers.iter().map(|e| e.key().clone()).collect()
     }
@@ -124,7 +128,7 @@ impl AuthProviderRegistry {
         let provider = self
             .providers
             .get(provider_name)
-            .ok_or_else(|| anyhow::anyhow!("Auth provider '{}' not found", provider_name))?;
+            .ok_or_else(|| anyhow::anyhow!("Auth provider '{provider_name}' not found"))?;
 
         let result = provider.authenticate(req).await?;
 
@@ -150,12 +154,12 @@ impl AuthProviderRegistry {
                 hasher.update(provider_name.as_bytes());
                 hasher.update(value.as_bytes());
                 let hash = hasher.finalize();
-                return Some(format!("{:x}", hash));
+                return Some(format!("{hash:x}"));
             }
         }
         // For API key in custom header or mTLS, use those values
         if let Some(cn) = req.tls_client_cn {
-            return Some(format!("mtls:{}:{}", provider_name, cn));
+            return Some(format!("mtls:{provider_name}:{cn}"));
         }
         None
     }
@@ -167,11 +171,13 @@ impl AuthProviderRegistry {
     }
 
     /// Number of cached entries
+    #[must_use]
     pub fn cache_size(&self) -> usize {
         self.token_cache.len()
     }
 
     /// Number of registered providers
+    #[must_use]
     pub fn provider_count(&self) -> usize {
         self.providers.len()
     }
@@ -203,7 +209,7 @@ mod tests {
             &self.name
         }
 
-        fn provider_type(&self) -> &str {
+        fn provider_type(&self) -> &'static str {
             "mock"
         }
     }

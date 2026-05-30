@@ -269,7 +269,7 @@ impl AuditLogger {
         // Log to structured logging
         if self.log_to_tracing {
             let event_json = serde_json::to_string(event).unwrap_or_else(|e| {
-                format!("{{\"error\": \"Failed to serialize audit event: {}\"}}", e)
+                format!("{{\"error\": \"Failed to serialize audit event: {e}\"}}")
             });
 
             if event.is_security_critical() {
@@ -314,7 +314,7 @@ impl AuditLogger {
         let mut file = OpenOptions::new().create(true).append(true).open(path)?;
 
         let event_json = serde_json::to_string(event)?;
-        writeln!(file, "{}", event_json)?;
+        writeln!(file, "{event_json}")?;
 
         Ok(())
     }

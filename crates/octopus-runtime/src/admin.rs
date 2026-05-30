@@ -56,6 +56,7 @@ impl std::fmt::Debug for AdminHandler {
 
 impl AdminHandler {
     /// Build an AppState populated with real data sources
+    #[allow(clippy::too_many_arguments)]
     fn build_app_state(
         router: &Arc<Router>,
         metrics_collector: &Option<Arc<MetricsCollector>>,
@@ -127,6 +128,7 @@ impl AdminHandler {
     }
 
     /// Create a new admin handler with all features
+    #[allow(clippy::too_many_arguments)]
     pub fn with_all(
         router: Arc<Router>,
         request_count: Arc<AtomicUsize>,
@@ -183,14 +185,14 @@ impl AdminHandler {
 
         let req = req_builder
             .body(Body::empty())
-            .map_err(|e| Error::InvalidRequest(format!("Failed to build request: {}", e)))?;
+            .map_err(|e| Error::InvalidRequest(format!("Failed to build request: {e}")))?;
 
         // Call the Axum router
         let router = self.admin_router.clone();
         let response = router
             .oneshot(req)
             .await
-            .map_err(|e| Error::InvalidRequest(format!("Admin router error: {}", e)))?;
+            .map_err(|e| Error::InvalidRequest(format!("Admin router error: {e}")))?;
 
         // Convert Axum Response<Body> to Response<Full<Bytes>>
         let (parts, body) = response.into_parts();
@@ -198,7 +200,7 @@ impl AdminHandler {
         // Collect the body
         let body_bytes = axum::body::to_bytes(body, usize::MAX)
             .await
-            .map_err(|e| Error::InvalidRequest(format!("Failed to read response body: {}", e)))?;
+            .map_err(|e| Error::InvalidRequest(format!("Failed to read response body: {e}")))?;
 
         let response = Response::from_parts(parts, Full::new(body_bytes));
         Ok(response)
@@ -226,6 +228,6 @@ impl AdminHandler {
             .status(StatusCode::OK)
             .header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
             .body(Full::new(Bytes::from(metrics_text)))
-            .map_err(|e| Error::InvalidRequest(format!("Failed to build response: {}", e)))
+            .map_err(|e| Error::InvalidRequest(format!("Failed to build response: {e}")))
     }
 }

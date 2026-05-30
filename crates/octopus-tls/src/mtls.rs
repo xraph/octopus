@@ -42,6 +42,7 @@ impl MtlsConfig {
 
     /// Build a client certificate verifier for rustls ServerConfig
     pub fn build_client_verifier(&self) -> Result<Arc<dyn ClientCertVerifier>> {
+        crate::ensure_crypto_provider();
         let root_store = self.load_client_ca_roots()?;
         let builder = WebPkiClientVerifier::builder(Arc::new(root_store));
 
@@ -110,6 +111,7 @@ impl Default for TargetTlsConfig {
 impl TargetTlsConfig {
     /// Build a rustls ClientConfig for connecting to this upstream target
     pub fn build_client_config(&self) -> Result<rustls::ClientConfig> {
+        crate::ensure_crypto_provider();
         // Build root cert store
         let root_store = if let Some(ref ca_path) = self.ca_cert_file {
             let ca_certs = load_certificates(ca_path)?;

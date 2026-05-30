@@ -16,7 +16,7 @@ pub struct Flex {
 impl Flex {
     /// Create a new flex container
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             direction: None,
             justify: None,

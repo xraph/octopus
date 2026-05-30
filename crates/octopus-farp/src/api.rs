@@ -41,7 +41,7 @@ pub struct RegistrationRequest {
 }
 
 /// FARP v1 push registration request (per FARP spec section 17.4)
-/// Payload: {instance: ServiceInstance, manifest: SchemaManifest}
+/// Payload: {instance: `ServiceInstance`, manifest: `SchemaManifest`}
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PushRegistrationRequest {
     /// Service instance info
@@ -83,7 +83,7 @@ pub struct PushInstanceInfo {
     pub status: Option<String>,
 }
 
-/// Heartbeat request (§17.4.1 — routes_checksum is optional for reconciliation)
+/// Heartbeat request (§17.4.1 — `routes_checksum` is optional for reconciliation)
 #[derive(Debug, Serialize, Deserialize)]
 pub struct HeartbeatRequest {
     /// Instance status
@@ -190,12 +190,14 @@ impl FarpApiHandler {
     }
 
     /// Get a reference to the schema registry
-    pub fn registry(&self) -> &Arc<SchemaRegistry> {
+    #[must_use]
+    pub const fn registry(&self) -> &Arc<SchemaRegistry> {
         &self.registry
     }
 
     /// Get a reference to the schema federation
-    pub fn federation(&self) -> &Arc<SchemaFederation> {
+    #[must_use]
+    pub const fn federation(&self) -> &Arc<SchemaFederation> {
         &self.federation
     }
 
@@ -344,8 +346,7 @@ impl FarpApiHandler {
             if let Some(ref metadata) = instance.metadata {
                 if metadata
                     .get("farp.collapse_service_tags")
-                    .map(|v| v == "true")
-                    .unwrap_or(false)
+                    .is_some_and(|v| v == "true")
                 {
                     self.federation.set_collapse_service_tags(true);
                 }
@@ -641,7 +642,7 @@ impl FarpApiHandler {
         )
     }
 
-    /// Get the routes_checksum and schema count for an instance.
+    /// Get the `routes_checksum` and schema count for an instance.
     fn get_instance_state(&self, instance_id: &str) -> (String, usize) {
         for name in self.registry.list_services() {
             if let Ok(reg) = self.registry.get_service(&name) {
@@ -661,7 +662,7 @@ impl FarpApiHandler {
             self.registry.list_services().iter().find_map(|name| {
                 self.registry.get_service(name).ok().and_then(|reg| {
                     if reg.manifest.instance_id == instance_id {
-                        reg.manifest_url.clone().map(|url| (name.clone(), url))
+                        reg.manifest_url.map(|url| (name.clone(), url))
                     } else {
                         None
                     }
@@ -864,7 +865,7 @@ impl FarpApiHandler {
         }
     }
 
-    /// Supplement the federated OpenAPI spec with routes from the gateway router.
+    /// Supplement the federated `OpenAPI` spec with routes from the gateway router.
     /// Adds any gateway routes that are missing from the federated spec.
     fn supplement_spec_with_routes(&self, spec_content: &str, router: &Router) -> String {
         let mut spec: serde_json::Value = match serde_json::from_str(spec_content) {
@@ -1257,6 +1258,19 @@ mod tests {
         let mut manifest = SchemaManifest::new(name, version, instance);
         // Add required health endpoint for external registry validation
         manifest.endpoints.health = "http://localhost:8080/health".to_string();
+        // Attach a schema and compute the checksum so the manifest satisfies strict
+        // JSON-schema validation, which requires a 64-char SHA256 checksum.
+        manifest.add_schema(crate::types::SchemaDescriptor::new(
+            crate::types::SchemaType::OpenAPI,
+            "3.1.0",
+            crate::types::SchemaLocation::http("http://localhost:8080/openapi.json"),
+            "application/json",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            1024,
+        ));
+        manifest
+            .update_checksum()
+            .expect("failed to compute manifest checksum");
         manifest
     }
 

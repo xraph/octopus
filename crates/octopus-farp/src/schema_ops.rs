@@ -15,6 +15,7 @@ use tracing::{debug, info, warn};
 
 /// Check if a path is a standard introspection endpoint that should be filtered
 /// from federated specs by default.
+#[must_use]
 pub fn is_introspection_path(path: &str) -> bool {
     path == "/"
         || path == "/_/info"
@@ -27,12 +28,13 @@ pub fn is_introspection_path(path: &str) -> bool {
 
 /// Returns true if introspection endpoints should be excluded from federated specs.
 /// By default they are excluded. Set `FARP_INCLUDE_INTROSPECTION_ENDPOINTS=1` to include them.
+#[must_use]
 pub fn should_exclude_introspection() -> bool {
     std::env::var("FARP_INCLUDE_INTROSPECTION_ENDPOINTS").is_err()
 }
 
 /// Map a manifest `SchemaType` to a registry `SchemaFormat`.
-fn schema_type_to_format(schema_type: &SchemaType) -> SchemaFormat {
+const fn schema_type_to_format(schema_type: &SchemaType) -> SchemaFormat {
     match schema_type {
         SchemaType::OpenAPI => SchemaFormat::OpenApi,
         SchemaType::AsyncAPI => SchemaFormat::AsyncApi,

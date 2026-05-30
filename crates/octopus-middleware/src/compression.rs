@@ -164,18 +164,18 @@ impl Compression {
                 );
                 encoder
                     .write_all(input)
-                    .map_err(|e| Error::Internal(format!("gzip compression failed: {}", e)))?;
+                    .map_err(|e| Error::Internal(format!("gzip compression failed: {e}")))?;
                 encoder
                     .finish()
-                    .map_err(|e| Error::Internal(format!("gzip finish failed: {}", e)))?
+                    .map_err(|e| Error::Internal(format!("gzip finish failed: {e}")))?
             }
             CompressionAlgorithm::Brotli => {
                 let mut output = Vec::with_capacity(input.len());
                 {
                     let mut encoder = brotli::CompressorWriter::new(&mut output, 4096, level, 22);
-                    encoder.write_all(input).map_err(|e| {
-                        Error::Internal(format!("brotli compression failed: {}", e))
-                    })?;
+                    encoder
+                        .write_all(input)
+                        .map_err(|e| Error::Internal(format!("brotli compression failed: {e}")))?;
                     // CompressorWriter flushes on drop, but we explicitly drop to capture errors
                 }
                 output
@@ -185,13 +185,13 @@ impl Compression {
                     Vec::with_capacity(input.len()),
                     level as i32,
                 )
-                .map_err(|e| Error::Internal(format!("zstd encoder creation failed: {}", e)))?;
+                .map_err(|e| Error::Internal(format!("zstd encoder creation failed: {e}")))?;
                 encoder
                     .write_all(input)
-                    .map_err(|e| Error::Internal(format!("zstd compression failed: {}", e)))?;
+                    .map_err(|e| Error::Internal(format!("zstd compression failed: {e}")))?;
                 encoder
                     .finish()
-                    .map_err(|e| Error::Internal(format!("zstd finish failed: {}", e)))?
+                    .map_err(|e| Error::Internal(format!("zstd finish failed: {e}")))?
             }
         };
 

@@ -1,0 +1,14 @@
+# cargo-audit configuration (read automatically by `cargo audit`).
+#
+# Each ignored advisory is a documented, deliberate risk acceptance — not a
+# blanket suppression. Revisit on every dependency bump.
+
+[advisories]
+ignore = [
+    # RUSTSEC-2023-0071 — "Marvin Attack" RSA timing side-channel.
+    # No fixed upgrade exists in the `rsa` crate. It reaches us only transitively
+    # via sqlx -> sqlx-mysql -> rsa (MySQL auth handshake). The gateway does not
+    # perform attacker-timed RSA private-key decryption, so the practical exposure
+    # is negligible. Drop this entry the moment `rsa` ships a patched release.
+    "RUSTSEC-2023-0071",
+]

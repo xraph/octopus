@@ -85,6 +85,10 @@ pub trait CacheStore: Send + Sync + fmt::Debug {
     async fn delete(&self, key: &str);
     /// Get the number of entries
     async fn len(&self) -> usize;
+    /// Returns `true` if the cache has no entries
+    async fn is_empty(&self) -> bool {
+        self.len().await == 0
+    }
 }
 
 /// In-memory cache store using DashMap

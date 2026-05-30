@@ -7,6 +7,8 @@ use octopus_core::Result;
 
 #[cfg(feature = "validation")]
 use jsonschema::JSONSchema;
+#[cfg(feature = "validation")]
+use octopus_core::Error;
 
 /// FARP v1.0.0 Schema Manifest JSON Schema
 #[allow(dead_code)]
@@ -301,7 +303,7 @@ mod tests {
 
         let result = validator.validate(&manifest);
         if let Err(e) = &result {
-            eprintln!("Validation error: {}", e);
+            eprintln!("Validation error: {e}");
         }
 
         #[cfg(feature = "validation")]

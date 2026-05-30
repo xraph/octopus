@@ -348,7 +348,7 @@ mod tests {
     #[test]
     fn test_loader_debug_format() {
         let loader = PluginLoader::new();
-        let debug_str = format!("{:?}", loader);
+        let debug_str = format!("{loader:?}");
         assert!(debug_str.contains("PluginLoader"));
         assert!(debug_str.contains("loaded_libraries"));
     }

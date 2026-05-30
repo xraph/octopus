@@ -34,7 +34,7 @@ pub struct AppState {
     pub config: Option<Arc<octopus_config::Config>>,
     /// FARP schema registry for federated API discovery
     pub farp_registry: Option<Arc<octopus_farp::SchemaRegistry>>,
-    /// FARP schema federation for merged OpenAPI output
+    /// FARP schema federation for merged `OpenAPI` output
     pub farp_federation: Option<Arc<octopus_farp::SchemaFederation>>,
     /// Server start time for uptime calculation
     pub start_time: std::time::Instant,
@@ -277,7 +277,7 @@ pub async fn routes_handler(State(state): State<Arc<AppState>>) -> impl IntoResp
 
     let template = RoutesTemplate {
         routes,
-        page_start: if total > 0 { 1 } else { 0 },
+        page_start: usize::from(total > 0),
         page_end: total,
         total_routes: total,
     };
@@ -427,7 +427,7 @@ pub async fn api_health_handler(State(state): State<Arc<AppState>>) -> impl Into
 // Helper functions to extract real data from AppState
 // ============================================================================
 
-/// Build DashboardStats from real metrics
+/// Build `DashboardStats` from real metrics
 pub(crate) fn build_dashboard_stats(state: &AppState) -> DashboardStats {
     let (total_requests, total_errors, active_connections, avg_latency, uptime) =
         if let Some(ref m) = state.metrics {
@@ -483,7 +483,7 @@ pub(crate) fn build_dashboard_stats(state: &AppState) -> DashboardStats {
         } else {
             0.0
         };
-        (sys.global_cpu_usage() as f64, mem_pct)
+        (f64::from(sys.global_cpu_usage()), mem_pct)
     };
 
     DashboardStats {
@@ -547,7 +547,7 @@ pub(crate) fn build_routes_from_state(state: &AppState) -> Vec<RouteInfo> {
                 id: format!("route-{i}"),
                 path: route.path.clone(),
                 method: route.method.to_string(),
-                upstream: route.upstream_name.clone(),
+                upstream: route.upstream_name,
                 request_count,
                 is_healthy,
                 avg_latency_ms,
@@ -610,14 +610,14 @@ pub(crate) fn build_health_from_state(state: &AppState) -> Vec<HealthCheckInfo> 
                     }
                     .to_string(),
                     response_time_ms: 0,
-                    message: if !inst.is_healthy() {
-                        Some("Instance marked unhealthy".to_string())
-                    } else {
+                    message: if inst.is_healthy() {
                         None
+                    } else {
+                        Some("Instance marked unhealthy".to_string())
                     },
                     endpoint: Some(inst.base_url()),
                     last_check: now.clone(),
-                    consecutive_failures: if inst.is_healthy() { 0 } else { 1 },
+                    consecutive_failures: u32::from(!inst.is_healthy()),
                 });
             }
         }

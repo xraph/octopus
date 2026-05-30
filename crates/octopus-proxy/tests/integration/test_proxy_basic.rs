@@ -125,7 +125,7 @@ async fn test_concurrent_requests() {
         let upstream_clone = upstream.clone();
 
         let handle = tokio::spawn(async move {
-            let req = TestFixtures::request().uri(format!("/test/{}", i)).build();
+            let req = TestFixtures::request().uri(format!("/test/{i}")).build();
             proxy_clone.proxy(req, &upstream_clone).await
         });
         handles.push(handle);
@@ -228,8 +228,7 @@ async fn test_different_http_methods() {
         assert_eq!(
             response.status(),
             StatusCode::OK,
-            "Failed for method: {:?}",
-            method
+            "Failed for method: {method:?}"
         );
     }
 

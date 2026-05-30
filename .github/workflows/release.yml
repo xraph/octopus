@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to build (e.g. v1.2.3)'
+        required: true
 
 permissions:
   contents: write
@@ -21,21 +26,33 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            asset_name: octopus-linux-amd64
+            goos: linux
+            goarch: x86_64
+            asset_name: octopus-linux-x86_64
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
+            goos: linux
+            goarch: arm64
             asset_name: octopus-linux-arm64
           - os: macos-13
             target: x86_64-apple-darwin
-            asset_name: octopus-darwin-amd64
+            goos: darwin
+            goarch: x86_64
+            asset_name: octopus-darwin-x86_64
           - os: macos-latest
             target: aarch64-apple-darwin
+            goos: darwin
+            goarch: arm64
             asset_name: octopus-darwin-arm64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            asset_name: octopus-windows-amd64.exe
+            goos: windows
+            goarch: x86_64
+            asset_name: octopus-windows-x86_64
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -60,30 +77,207 @@ jobs:
         if: runner.os == 'Windows'
         run: choco install protoc -y
 
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          REF="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "version=${REF#v}" >> "$GITHUB_OUTPUT"
+
       - name: Build
         run: cargo build --release --target ${{ matrix.target }} --bin octopus
 
-      - name: Stage binary
+      - name: Package archive
+        id: package
         shell: bash
         run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          NAME="octopus-${VERSION}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          BINDIR="target/${{ matrix.target }}/release"
+          mkdir -p stage
           if [ "${{ runner.os }}" = "Windows" ]; then
-            cp "target/${{ matrix.target }}/release/octopus.exe" "${{ matrix.asset_name }}"
+            cp "${BINDIR}/octopus.exe" stage/octopus.exe
           else
-            strip "target/${{ matrix.target }}/release/octopus" || true
-            cp "target/${{ matrix.target }}/release/octopus" "${{ matrix.asset_name }}"
+            strip "${BINDIR}/octopus" || true
+            cp "${BINDIR}/octopus" stage/octopus
+          fi
+          cp LICENSE README.md stage/ 2>/dev/null || true
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            ( cd stage && 7z a "../${NAME}.zip" . >/dev/null )
+            echo "archive=${NAME}.zip" >> "$GITHUB_OUTPUT"
+          else
+            tar -czf "${NAME}.tar.gz" -C stage .
+            echo "archive=${NAME}.tar.gz" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Publish to GitHub Release
+      - name: Upload archive to release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.asset_name }}
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: ${{ steps.package.outputs.archive }}
           fail_on_unmatched_files: true
+
+      - name: Upload archive artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: ${{ steps.package.outputs.archive }}
+          retention-days: 1
+
+  publish-packages:
+    name: Publish checksums, Homebrew & Scoop
+    needs: build-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Download all archives
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          REF="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "version=${REF#v}" >> "$GITHUB_OUTPUT"
+          if echo "${REF#v}" | grep -q '-'; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate checksums
+        id: checksums
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          cd artifacts
+          sha256sum * > checksums.txt
+          cat checksums.txt
+          sha() { grep "  $1\$" checksums.txt | cut -d' ' -f1; }
+          {
+            echo "darwin_x86_64=$(sha "octopus-${VERSION}-darwin-x86_64.tar.gz")"
+            echo "darwin_arm64=$(sha "octopus-${VERSION}-darwin-arm64.tar.gz")"
+            echo "linux_x86_64=$(sha "octopus-${VERSION}-linux-x86_64.tar.gz")"
+            echo "linux_arm64=$(sha "octopus-${VERSION}-linux-arm64.tar.gz")"
+            echo "windows_x86_64=$(sha "octopus-${VERSION}-windows-x86_64.zip")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Upload checksums to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: artifacts/checksums.txt
+          fail_on_unmatched_files: true
+
+      - name: Publish Homebrew formula
+        if: steps.version.outputs.prerelease == 'false'
+        env:
+          TAP_TOKEN: ${{ secrets.GORELEASER_TOKEN || secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA_DARWIN_X86: ${{ steps.checksums.outputs.darwin_x86_64 }}
+          SHA_DARWIN_ARM: ${{ steps.checksums.outputs.darwin_arm64 }}
+          SHA_LINUX_X86: ${{ steps.checksums.outputs.linux_x86_64 }}
+          SHA_LINUX_ARM: ${{ steps.checksums.outputs.linux_arm64 }}
+        run: |
+          set -euo pipefail
+          BASE="https://github.com/xraph/octopus/releases/download/v${VERSION}"
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/xraph/homebrew-tap.git" tap
+          mkdir -p tap/Formula
+          cat > tap/Formula/octopus.rb <<EOF
+          # typed: false
+          # frozen_string_literal: true
+
+          class Octopus < Formula
+            desc "High-performance API gateway with FARP schema federation"
+            homepage "https://github.com/xraph/octopus"
+            version "${VERSION}"
+            license any_of: ["MIT", "Apache-2.0"]
+
+            on_macos do
+              if Hardware::CPU.intel?
+                url "${BASE}/octopus-${VERSION}-darwin-x86_64.tar.gz"
+                sha256 "${SHA_DARWIN_X86}"
+              end
+              if Hardware::CPU.arm?
+                url "${BASE}/octopus-${VERSION}-darwin-arm64.tar.gz"
+                sha256 "${SHA_DARWIN_ARM}"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.intel?
+                url "${BASE}/octopus-${VERSION}-linux-x86_64.tar.gz"
+                sha256 "${SHA_LINUX_X86}"
+              end
+              if Hardware::CPU.arm?
+                url "${BASE}/octopus-${VERSION}-linux-arm64.tar.gz"
+                sha256 "${SHA_LINUX_ARM}"
+              end
+            end
+
+            def install
+              bin.install "octopus"
+            end
+
+            test do
+              system "#{bin}/octopus", "--version"
+            end
+          end
+          EOF
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/octopus.rb
+          git commit -m "octopus ${VERSION}" || { echo "No formula changes"; exit 0; }
+          git push
+
+      - name: Publish Scoop manifest
+        if: steps.version.outputs.prerelease == 'false'
+        env:
+          TAP_TOKEN: ${{ secrets.GORELEASER_TOKEN || secrets.SCOOP_BUCKET_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA_WIN: ${{ steps.checksums.outputs.windows_x86_64 }}
+        run: |
+          set -euo pipefail
+          BASE="https://github.com/xraph/octopus/releases/download/v${VERSION}"
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/xraph/scoop-bucket.git" bucket
+          cat > bucket/octopus.json <<EOF
+          {
+              "version": "${VERSION}",
+              "architecture": {
+                  "64bit": {
+                      "url": "${BASE}/octopus-${VERSION}-windows-x86_64.zip",
+                      "bin": [
+                          "octopus.exe"
+                      ],
+                      "hash": "${SHA_WIN}"
+                  }
+              },
+              "homepage": "https://github.com/xraph/octopus",
+              "license": "MIT OR Apache-2.0",
+              "description": "High-performance API gateway with FARP schema federation"
+          }
+          EOF
+          cd bucket
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add octopus.json
+          git commit -m "octopus ${VERSION}" || { echo "No manifest changes"; exit 0; }
+          git push
 
   publish-crates:
     name: Publish to crates.io
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Install system dependencies

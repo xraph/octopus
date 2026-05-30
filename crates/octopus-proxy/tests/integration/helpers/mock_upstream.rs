@@ -160,7 +160,7 @@ impl MockUpstream {
                                         .serve_connection(io, service)
                                         .await
                                     {
-                                        eprintln!("Mock server error: {}", e);
+                                        eprintln!("Mock server error: {e}");
                                     }
 
                                     // Untrack connection
@@ -169,7 +169,7 @@ impl MockUpstream {
                                 });
                             }
                             Err(e) => {
-                                eprintln!("Accept error: {}", e);
+                                eprintln!("Accept error: {e}");
                             }
                         }
                     }

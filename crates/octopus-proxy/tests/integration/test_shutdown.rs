@@ -216,11 +216,11 @@ async fn test_shutdown_with_active_tasks() {
                     // Cleanup work
                     tokio::time::sleep(Duration::from_millis(10)).await;
                     drop(guard); // Drop connection guard
-                    format!("task-{}-shutdown", i)
+                    format!("task-{i}-shutdown")
                 }
                 _ = tokio::time::sleep(Duration::from_secs(10)) => {
                     drop(guard);
-                    format!("task-{}-timeout", i)
+                    format!("task-{i}-timeout")
                 }
             }
         });
@@ -243,8 +243,7 @@ async fn test_shutdown_with_active_tasks() {
         let msg = result.unwrap().unwrap();
         assert!(
             msg.contains("shutdown"),
-            "Task should take shutdown path: {}",
-            msg
+            "Task should take shutdown path: {msg}"
         );
     }
 
@@ -279,7 +278,7 @@ async fn test_shutdown_force_timeout() {
 #[tokio::test]
 async fn test_shutdown_signal_clone() {
     let handle = ShutdownHandle::default_config();
-    let signal = handle.subscribe();
+    let _signal = handle.subscribe();
 
     // Clone the handle
     let handle_clone = handle.clone();

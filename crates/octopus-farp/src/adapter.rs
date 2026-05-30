@@ -22,7 +22,7 @@ pub use farp::registry::{
 // Re-export gateway client
 pub use farp::gateway::{Client as GatewayClient, ServiceRoute};
 
-/// Adapter for SchemaManifest to bridge between external and internal representations
+/// Adapter for `SchemaManifest` to bridge between external and internal representations
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SchemaManifestAdapter {
     inner: ExternalSchemaManifest,
@@ -30,37 +30,44 @@ pub struct SchemaManifestAdapter {
 
 impl SchemaManifestAdapter {
     /// Create a new adapter from external manifest
-    pub fn new(manifest: ExternalSchemaManifest) -> Self {
+    #[must_use]
+    pub const fn new(manifest: ExternalSchemaManifest) -> Self {
         Self { inner: manifest }
     }
 
     /// Get reference to inner manifest
-    pub fn inner(&self) -> &ExternalSchemaManifest {
+    #[must_use]
+    pub const fn inner(&self) -> &ExternalSchemaManifest {
         &self.inner
     }
 
     /// Convert into inner manifest
+    #[must_use]
     pub fn into_inner(self) -> ExternalSchemaManifest {
         self.inner
     }
 
     /// Get service name
+    #[must_use]
     pub fn service_name(&self) -> &str {
         &self.inner.service_name
     }
 
     /// Get service version
+    #[must_use]
     pub fn service_version(&self) -> &str {
         &self.inner.service_version
     }
 
     /// Get schemas
+    #[must_use]
     pub fn schemas(&self) -> &[ExternalSchemaDescriptor] {
         &self.inner.schemas
     }
 
     /// Get endpoints
-    pub fn endpoints(&self) -> &SchemaEndpoints {
+    #[must_use]
+    pub const fn endpoints(&self) -> &SchemaEndpoints {
         &self.inner.endpoints
     }
 }
@@ -89,6 +96,7 @@ impl RegistryAdapter {
     }
 
     /// Get the underlying registry
+    #[must_use]
     pub fn registry(&self) -> &Arc<dyn ExternalSchemaRegistry> {
         &self.registry
     }
@@ -146,13 +154,15 @@ impl Clone for RegistryAdapter {
     }
 }
 
-/// Convert octopus_core::Error to farp::Error
+/// Convert `octopus_core::Error` to `farp::Error`
+#[must_use]
 pub fn to_farp_error(err: octopus_core::Error) -> FarpError {
     // Use the validation helper to create a general error
     FarpError::validation("general", err.to_string())
 }
 
-/// Convert farp::Error to octopus_core::Error
+/// Convert `farp::Error` to `octopus_core::Error`
+#[must_use]
 pub fn from_farp_error(err: FarpError) -> octopus_core::Error {
     octopus_core::Error::Farp(err.to_string())
 }
@@ -166,7 +176,7 @@ mod tests {
         use farp::manifest::new_manifest;
 
         let manifest = new_manifest("test-service", "1.0.0", "instance-1");
-        let adapter = SchemaManifestAdapter::new(manifest.clone());
+        let adapter = SchemaManifestAdapter::new(manifest);
 
         assert_eq!(adapter.service_name(), "test-service");
         assert_eq!(adapter.service_version(), "1.0.0");

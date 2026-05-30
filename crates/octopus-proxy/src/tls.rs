@@ -8,6 +8,20 @@ use tokio::net::TcpStream;
 use tokio_rustls::{client::TlsStream, TlsConnector};
 use tracing::{debug, warn};
 
+/// Ensure a process-wide rustls [`CryptoProvider`] is installed.
+///
+/// With rustls 0.23 both the `aws-lc-rs` and `ring` backends can be compiled in
+/// at once (e.g. under `--all-features`), and then `ClientConfig::builder()`
+/// cannot choose one automatically and panics. Installing a default once removes
+/// that ambiguity; the call is idempotent and a no-op if a provider already exists.
+fn ensure_crypto_provider() {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    });
+}
+
 /// TLS configuration for upstream connections
 #[derive(Clone)]
 pub struct TlsConfig {
@@ -24,24 +38,25 @@ pub struct TlsConfig {
 impl TlsConfig {
     /// Create a new TLS configuration with system root certificates
     pub fn new() -> Result<Self> {
+        ensure_crypto_provider();
         let mut root_store = RootCertStore::empty();
 
         // Load system root certificates
-        match rustls_native_certs::load_native_certs() {
-            Ok(certs) => {
-                for cert in certs {
-                    if let Err(e) = root_store.add(cert) {
-                        warn!("Failed to add certificate: {:?}", e);
-                    }
+        let native = rustls_native_certs::load_native_certs();
+        for err in &native.errors {
+            warn!("Failed to load a system certificate: {}", err);
+        }
+        if native.certs.is_empty() {
+            // Fall back to webpki roots
+            root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+            debug!("Using webpki root certificates as fallback");
+        } else {
+            for cert in native.certs {
+                if let Err(e) = root_store.add(cert) {
+                    warn!("Failed to add certificate: {:?}", e);
                 }
-                debug!("Loaded {} system root certificates", root_store.len());
             }
-            Err(e) => {
-                warn!("Failed to load system certificates: {}", e);
-                // Fall back to webpki roots
-                root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-                debug!("Using webpki root certificates as fallback");
-            }
+            debug!("Loaded {} system root certificates", root_store.len());
         }
 
         let config = ClientConfig::builder()
@@ -57,6 +72,7 @@ impl TlsConfig {
 
     /// Create a new TLS configuration with custom root certificates
     pub fn with_custom_roots(root_store: RootCertStore) -> Result<Self> {
+        ensure_crypto_provider();
         let config = ClientConfig::builder()
             .with_root_certificates(root_store.clone())
             .with_no_client_auth();
@@ -74,6 +90,7 @@ impl TlsConfig {
     /// This is insecure and should only be used for testing or development.
     /// Never use this in production!
     pub fn insecure() -> Result<Self> {
+        ensure_crypto_provider();
         let config = ClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(NoVerifier))
@@ -95,7 +112,7 @@ impl TlsConfig {
     /// Connect to a TLS server
     pub async fn connect(&self, stream: TcpStream, domain: &str) -> Result<TlsStream<TcpStream>> {
         let server_name = ServerName::try_from(domain.to_string())
-            .map_err(|e| Error::UpstreamConnection(format!("Invalid server name: {}", e)))?;
+            .map_err(|e| Error::UpstreamConnection(format!("Invalid server name: {e}")))?;
 
         debug!(
             domain = %domain,
@@ -106,7 +123,7 @@ impl TlsConfig {
         self.connector
             .connect(server_name, stream)
             .await
-            .map_err(|e| Error::UpstreamConnection(format!("TLS handshake failed: {}", e)))
+            .map_err(|e| Error::UpstreamConnection(format!("TLS handshake failed: {e}")))
     }
 
     /// Get the connector

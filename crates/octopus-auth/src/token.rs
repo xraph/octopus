@@ -54,12 +54,14 @@ impl ApiKey {
     }
 
     /// Set expiration
-    pub fn expires_at(mut self, expires_at: SystemTime) -> Self {
+    #[must_use]
+    pub const fn expires_at(mut self, expires_at: SystemTime) -> Self {
         self.expires_at = Some(expires_at);
         self
     }
 
     /// Check if key is expired
+    #[must_use]
     pub fn is_expired(&self) -> bool {
         if let Some(expires_at) = self.expires_at {
             SystemTime::now() > expires_at
@@ -69,6 +71,7 @@ impl ApiKey {
     }
 
     /// Check if key is valid (active and not expired)
+    #[must_use]
     pub fn is_valid(&self) -> bool {
         self.active && !self.is_expired()
     }
@@ -88,6 +91,7 @@ impl Default for ApiKeyStore {
 
 impl ApiKeyStore {
     /// Create a new API key store
+    #[must_use]
     pub fn new() -> Self {
         Self {
             keys: Arc::new(DashMap::new()),
@@ -139,6 +143,7 @@ impl ApiKeyStore {
     }
 
     /// Get all keys for an owner
+    #[must_use]
     pub fn get_keys_by_owner(&self, owner: &str) -> Vec<ApiKey> {
         self.keys
             .iter()
@@ -185,7 +190,7 @@ mod tests {
         let key =
             ApiKey::new("key-123", "secret-key-xyz", "user-456", "Test key").with_scope("admin");
 
-        store.add_key(key.clone());
+        store.add_key(key);
 
         let fetched = store.validate_key("secret-key-xyz").unwrap();
         assert_eq!(fetched.id, "key-123");

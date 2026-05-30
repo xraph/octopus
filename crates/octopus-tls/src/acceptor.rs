@@ -20,6 +20,8 @@ pub struct TlsAcceptor {
 impl TlsAcceptor {
     /// Create a new TLS acceptor from configuration
     pub fn new(config: &TlsConfig) -> Result<Self> {
+        crate::ensure_crypto_provider();
+
         // Validate configuration
         config.validate()?;
 

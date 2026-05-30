@@ -58,7 +58,7 @@ pub struct Classes {
 impl Classes {
     /// Create a new Classes helper
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             classes: Vec::new(),
         }
@@ -96,7 +96,7 @@ impl From<Classes> for (String, String) {
 
 /// Fragment - render multiple nodes without a wrapper (alias for Group)
 #[must_use]
-pub fn fragment(nodes: Vec<Node>) -> Node {
+pub const fn fragment(nodes: Vec<Node>) -> Node {
     Node::group(nodes)
 }
 
@@ -116,7 +116,7 @@ mod tests {
     #[test]
     fn test_map() {
         let items = vec!["A", "B", "C"];
-        let node = map(&items, |item| Node::text(item));
+        let node = map(&items, |item| Node::text(*item));
         assert_eq!(node.render(), "ABC");
     }
 

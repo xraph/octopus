@@ -12,7 +12,7 @@ pub struct Card {
 impl Card {
     /// Create a new card
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             class: String::new(),
             children: Vec::new(),
@@ -85,7 +85,7 @@ pub struct CardHeader {
 impl CardHeader {
     /// Create a new card header
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             class: String::new(),
             children: Vec::new(),
@@ -251,7 +251,7 @@ pub struct CardContent {
 impl CardContent {
     /// Create a new card content
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             class: String::new(),
             children: Vec::new(),
@@ -318,7 +318,7 @@ pub struct CardFooter {
 impl CardFooter {
     /// Create a new card footer
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             class: String::new(),
             children: Vec::new(),

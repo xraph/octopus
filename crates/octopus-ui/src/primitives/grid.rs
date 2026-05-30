@@ -14,7 +14,7 @@ pub struct Grid {
 impl Grid {
     /// Create a new grid
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             cols: None,
             gap: String::new(),
@@ -25,7 +25,7 @@ impl Grid {
 
     /// Set number of columns
     #[must_use]
-    pub fn cols(mut self, cols: u8) -> Self {
+    pub const fn cols(mut self, cols: u8) -> Self {
         self.cols = Some(cols);
         self
     }

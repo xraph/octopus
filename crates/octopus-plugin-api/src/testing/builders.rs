@@ -9,6 +9,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
 /// Builder for creating test HTTP requests
+#[derive(Debug)]
 pub struct RequestBuilder {
     method: Method,
     uri: String,
@@ -113,6 +114,7 @@ impl Default for RequestBuilder {
 }
 
 /// Builder for creating test HTTP responses
+#[derive(Debug)]
 pub struct ResponseBuilder {
     status: StatusCode,
     headers: HashMap<String, String>,

@@ -44,6 +44,12 @@ pub struct RoundRobinLB {
     counter: AtomicU64,
 }
 
+impl Default for RoundRobinLB {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RoundRobinLB {
     /// Create a new round-robin load balancer.
     pub fn new() -> Self {
@@ -74,6 +80,12 @@ impl LoadBalancer for RoundRobinLB {
 #[derive(Debug)]
 pub struct WeightedRoundRobinLB {
     counter: AtomicU64,
+}
+
+impl Default for WeightedRoundRobinLB {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl WeightedRoundRobinLB {

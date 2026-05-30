@@ -2,7 +2,7 @@
 
 use super::*;
 use bytes::Bytes;
-use http::{HeaderValue, Method, StatusCode};
+use http::{HeaderValue, Method};
 use octopus_proxy::{InMemoryRateLimiter, ProxyLimits, RateLimitConfig, RateLimitKeyBuilder};
 use std::time::Duration;
 
@@ -68,7 +68,7 @@ async fn test_header_count_limit() {
 
     // Add 15 headers (exceeds limit)
     for i in 0..15 {
-        let header_name: http::HeaderName = format!("x-custom-{}", i).parse().unwrap();
+        let header_name: http::HeaderName = format!("x-custom-{i}").parse().unwrap();
         req.headers_mut()
             .insert(header_name, HeaderValue::from_static("value"));
     }
@@ -94,7 +94,7 @@ async fn test_header_total_size_limit() {
     // Add headers that exceed total size limit
     for i in 0..10 {
         let value = "x".repeat(50); // 50 chars each
-        let header_name: http::HeaderName = format!("x-header-{}", i).parse().unwrap();
+        let header_name: http::HeaderName = format!("x-header-{i}").parse().unwrap();
         req.headers_mut()
             .insert(header_name, HeaderValue::from_str(&value).unwrap());
     }
@@ -117,9 +117,9 @@ async fn test_rate_limiter_basic() {
 
     // First 10 requests should succeed (burst)
     for i in 0..10 {
-        let key = format!("user-123");
+        let key = "user-123".to_string();
         let result = limiter.check(&key);
-        assert!(result.is_allowed(), "Request {} should be allowed", i);
+        assert!(result.is_allowed(), "Request {i} should be allowed");
     }
 
     // 11th request should be rate limited

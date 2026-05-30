@@ -30,7 +30,7 @@ impl Icon {
 
     /// Set icon size
     #[must_use]
-    pub fn size(mut self, size: u32) -> Self {
+    pub const fn size(mut self, size: u32) -> Self {
         self.size = size;
         self
     }
@@ -44,7 +44,7 @@ impl Icon {
 
     /// Set stroke width
     #[must_use]
-    pub fn stroke_width(mut self, width: u32) -> Self {
+    pub const fn stroke_width(mut self, width: u32) -> Self {
         self.stroke_width = width;
         self
     }

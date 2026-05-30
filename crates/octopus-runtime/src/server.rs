@@ -116,7 +116,7 @@ impl Server {
                     Some(acceptor)
                 }
                 Err(e) => {
-                    return Err(Error::Runtime(format!("Failed to initialize TLS: {}", e)));
+                    return Err(Error::Runtime(format!("Failed to initialize TLS: {e}")));
                 }
             }
         } else {
@@ -337,7 +337,7 @@ impl Server {
                                                                 .status(status)
                                                                 .body(http_body_util::Either::Left(
                                                                     http_body_util::Full::new(bytes::Bytes::from(
-                                                                        format!("Error: {}", e)
+                                                                        format!("Error: {e}")
                                                                     ))
                                                                 ))
                                                                 .map_err(|e| {
@@ -375,7 +375,7 @@ impl Server {
                                                         .status(status)
                                                         .body(http_body_util::Either::Left(
                                                             http_body_util::Full::new(bytes::Bytes::from(
-                                                                format!("Error: {}", e)
+                                                                format!("Error: {e}")
                                                             ))
                                                         ))
                                                         .map_err(|e| {
@@ -662,7 +662,7 @@ impl ServerBuilder {
             for method_str in &route_config.methods {
                 let method = method_str
                     .parse()
-                    .map_err(|_| Error::Config(format!("Invalid HTTP method: {}", method_str)))?;
+                    .map_err(|_| Error::Config(format!("Invalid HTTP method: {method_str}")))?;
 
                 let mut builder = octopus_router::RouteBuilder::new()
                     .path(&route_config.path)
@@ -989,7 +989,7 @@ mod tests {
     use std::time::Duration;
 
     fn test_config() -> Config {
-        use crate::types::CompressionConfig;
+        use octopus_config::types::CompressionConfig;
         ConfigBuilder::new()
             .gateway(GatewayConfig {
                 listen: "127.0.0.1:8080".parse().unwrap(),

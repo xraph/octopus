@@ -16,6 +16,7 @@ pub struct MtlsProvider {
 
 impl MtlsProvider {
     /// Create from config
+    #[must_use]
     pub fn from_config(name: &str, config: &MtlsProviderConfig) -> Self {
         Self {
             name: name.to_string(),
@@ -25,7 +26,7 @@ impl MtlsProvider {
         }
     }
 
-    /// Match CN against patterns in cn_to_roles
+    /// Match CN against patterns in `cn_to_roles`
     fn roles_for_cn(&self, cn: &str) -> Vec<String> {
         let mut roles = Vec::new();
         for (pattern, pattern_roles) in &self.cn_to_roles {
@@ -44,7 +45,7 @@ impl AuthProviderInstance for MtlsProvider {
             Some(cn) if self.extract_cn => {
                 let roles = self.roles_for_cn(cn);
                 Ok(AuthResult::Authenticated(Principal {
-                    id: format!("mtls:{}", cn),
+                    id: format!("mtls:{cn}"),
                     name: cn.to_string(),
                     roles,
                     scopes: vec![],
@@ -74,7 +75,7 @@ impl AuthProviderInstance for MtlsProvider {
         &self.name
     }
 
-    fn provider_type(&self) -> &str {
+    fn provider_type(&self) -> &'static str {
         "mtls"
     }
 }

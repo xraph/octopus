@@ -3,5 +3,5 @@
 pub mod fixtures;
 pub mod mock_upstream;
 
-pub use fixtures::{RequestBuilder, TestFixtures, UpstreamBuilder};
+pub use fixtures::TestFixtures;
 pub use mock_upstream::{MockConfig, MockResponse, MockUpstream};

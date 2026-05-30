@@ -24,12 +24,14 @@ impl Document {
     }
 
     /// Add a node to the head
+    #[must_use]
     pub fn head(mut self, node: Node) -> Self {
         self.head_nodes.push(node);
         self
     }
 
     /// Add a node to the body
+    #[must_use]
     pub fn body(mut self, node: Node) -> Self {
         self.body_nodes.push(node);
         self
@@ -48,6 +50,7 @@ impl Document {
     }
 
     /// Add stylesheet link
+    #[must_use]
     pub fn stylesheet(self, href: &str) -> Self {
         self.head(
             Node::element("link")
@@ -57,16 +60,19 @@ impl Document {
     }
 
     /// Add script
+    #[must_use]
     pub fn script(self, src: &str) -> Self {
         self.head(Node::element("script").attr("src", src).attr("defer", ""))
     }
 
     /// Add inline script
+    #[must_use]
     pub fn inline_script(self, content: &str) -> Self {
         self.head(Node::element("script").child(Node::raw(content)))
     }
 
     /// Add meta tag
+    #[must_use]
     pub fn meta(self, name: &str, content: &str) -> Self {
         self.head(
             Node::element("meta")
@@ -76,6 +82,7 @@ impl Document {
     }
 
     /// Build the complete HTML document
+    #[must_use]
     pub fn build(self) -> Node {
         let mut head = Node::element("head")
             .child(Node::element("meta").attr("charset", "UTF-8"))
@@ -110,6 +117,7 @@ impl Document {
     }
 
     /// Render to string
+    #[must_use]
     pub fn render_to_string(self) -> String {
         self.build().render_to_string()
     }

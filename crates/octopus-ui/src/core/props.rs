@@ -67,7 +67,7 @@ impl BaseProps {
 
     /// Get all attributes
     #[must_use]
-    pub fn attributes(&self) -> &HashMap<String, String> {
+    pub const fn attributes(&self) -> &HashMap<String, String> {
         &self.attrs
     }
 }

@@ -25,7 +25,7 @@ impl Badge {
 
     /// Set the variant
     #[must_use]
-    pub fn variant(mut self, variant: Variant) -> Self {
+    pub const fn variant(mut self, variant: Variant) -> Self {
         self.variant = variant;
         self
     }

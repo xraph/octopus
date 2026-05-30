@@ -69,8 +69,7 @@ impl JwtProvider {
                 }
                 _ => {
                     return Err(anyhow::anyhow!(
-                        "Public key not supported for {:?}",
-                        algorithm
+                        "Public key not supported for {algorithm:?}"
                     ))
                 }
             }
@@ -85,15 +84,13 @@ impl JwtProvider {
                 }
                 _ => {
                     return Err(anyhow::anyhow!(
-                        "Public key file not supported for {:?}",
-                        algorithm
+                        "Public key file not supported for {algorithm:?}"
                     ))
                 }
             }
         } else {
             return Err(anyhow::anyhow!(
-                "JWT provider '{}' requires secret, public_key, or public_key_file",
-                name
+                "JWT provider '{name}' requires secret, public_key, or public_key_file"
             ));
         };
 
@@ -150,7 +147,7 @@ impl AuthProviderInstance for JwtProvider {
                     attributes: HashMap::new(),
                 }))
             }
-            Err(e) => Ok(AuthResult::Failed(format!("Invalid JWT: {}", e))),
+            Err(e) => Ok(AuthResult::Failed(format!("Invalid JWT: {e}"))),
         }
     }
 
@@ -158,7 +155,7 @@ impl AuthProviderInstance for JwtProvider {
         &self.name
     }
 
-    fn provider_type(&self) -> &str {
+    fn provider_type(&self) -> &'static str {
         "jwt"
     }
 }
@@ -173,6 +170,6 @@ fn parse_algorithm(s: &str) -> anyhow::Result<Algorithm> {
         "RS512" => Ok(Algorithm::RS512),
         "ES256" => Ok(Algorithm::ES256),
         "ES384" => Ok(Algorithm::ES384),
-        _ => Err(anyhow::anyhow!("Unsupported JWT algorithm: {}", s)),
+        _ => Err(anyhow::anyhow!("Unsupported JWT algorithm: {s}")),
     }
 }

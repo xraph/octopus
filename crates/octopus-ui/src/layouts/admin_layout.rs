@@ -32,7 +32,8 @@ impl NavItem {
         self
     }
 
-    pub fn active(mut self, active: bool) -> Self {
+    #[must_use]
+    pub const fn active(mut self, active: bool) -> Self {
         self.active = active;
         self
     }
@@ -47,16 +48,19 @@ impl AdminLayout {
         }
     }
 
+    #[must_use]
     pub fn nav_item(mut self, item: NavItem) -> Self {
         self.nav_items.push(item);
         self
     }
 
+    #[must_use]
     pub fn content(mut self, content: Node) -> Self {
         self.content = content;
         self
     }
 
+    #[must_use]
     pub fn build(self) -> Node {
         Node::element("div")
             .attr("class", "flex h-full")

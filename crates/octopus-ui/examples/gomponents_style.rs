@@ -2,7 +2,7 @@
 //!
 //! Run with: cargo run --example gomponents_style
 
-use octopus_ui::core::{fragment, if_node, map, Classes, Node, Render};
+use octopus_ui::core::{fragment, if_node, map, Classes, Node};
 
 /// Navigation link data structure
 #[derive(Debug, Clone)]

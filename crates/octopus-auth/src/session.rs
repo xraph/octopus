@@ -35,6 +35,7 @@ impl Session {
     }
 
     /// Check if session is expired
+    #[must_use]
     pub fn is_expired(&self) -> bool {
         SystemTime::now() > self.expires_at
     }
@@ -54,6 +55,7 @@ pub struct SessionManager {
 
 impl SessionManager {
     /// Create a new session manager
+    #[must_use]
     pub fn new(default_duration: Duration) -> Self {
         Self {
             sessions: Arc::new(DashMap::new()),
@@ -109,6 +111,7 @@ impl SessionManager {
     }
 
     /// Get active session count
+    #[must_use]
     pub fn active_count(&self) -> usize {
         self.sessions.len()
     }

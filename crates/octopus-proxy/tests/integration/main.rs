@@ -1,5 +1,8 @@
 //! Integration test runner for octopus-proxy
 
+// Tests favor `let mut cfg = T::default(); cfg.field = ...;` for readability.
+#![allow(clippy::field_reassign_with_default)]
+
 mod helpers;
 mod test_observability;
 mod test_proxy_basic;
