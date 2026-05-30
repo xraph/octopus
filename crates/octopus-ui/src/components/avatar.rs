@@ -47,7 +47,15 @@ impl Default for Avatar {
 
 impl Render for Avatar {
     fn render(&self) -> Node {
-        let mut classes = vec!["relative", "flex", "h-10", "w-10", "shrink-0", "overflow-hidden", "rounded-full"];
+        let mut classes = vec![
+            "relative",
+            "flex",
+            "h-10",
+            "w-10",
+            "shrink-0",
+            "overflow-hidden",
+            "rounded-full",
+        ];
         if !self.class.is_empty() {
             classes.push(&self.class);
         }

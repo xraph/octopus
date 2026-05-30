@@ -1,8 +1,7 @@
 //! etcd service discovery implementation
 
 use crate::provider::{
-    DiscoveryEvent, DiscoveryProvider, ServiceHealth, ServiceInstance,
-    ServiceMetadata,
+    DiscoveryEvent, DiscoveryProvider, ServiceHealth, ServiceInstance, ServiceMetadata,
 };
 use async_trait::async_trait;
 use etcd_client::{Client, GetOptions, WatchOptions};
@@ -88,16 +87,15 @@ impl std::fmt::Debug for EtcdProvider {
 impl EtcdProvider {
     /// Create a new etcd provider with the given configuration.
     pub async fn new(config: EtcdConfig) -> Result<Self> {
-        let connect_options = etcd_client::ConnectOptions::new()
-            .with_timeout(config.connect_timeout);
+        let connect_options =
+            etcd_client::ConnectOptions::new().with_timeout(config.connect_timeout);
 
-        let connect_options = if let (Some(ref user), Some(ref pass)) =
-            (&config.username, &config.password)
-        {
-            connect_options.with_user(user, pass)
-        } else {
-            connect_options
-        };
+        let connect_options =
+            if let (Some(ref user), Some(ref pass)) = (&config.username, &config.password) {
+                connect_options.with_user(user, pass)
+            } else {
+                connect_options
+            };
 
         let client = Client::connect(&config.endpoints, Some(connect_options))
             .await
@@ -220,11 +218,7 @@ impl DiscoveryProvider for EtcdProvider {
             .map_err(|e| Error::Discovery(format!("etcd watch failed: {e}")))?;
 
         loop {
-            let msg = tokio::time::timeout(
-                self.config.watch_interval * 10,
-                stream.message(),
-            )
-            .await;
+            let msg = tokio::time::timeout(self.config.watch_interval * 10, stream.message()).await;
 
             // Timeout just means no events in that window; keep going
             let resp = match msg {

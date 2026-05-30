@@ -33,14 +33,19 @@ impl IpPattern {
     pub fn parse(s: &str) -> std::result::Result<Self, String> {
         if let Some((base, prefix)) = s.split_once('/') {
             let addr = IpAddr::from_str(base).map_err(|e| format!("invalid IP in CIDR: {e}"))?;
-            let prefix_len: u8 = prefix.parse().map_err(|e| format!("invalid prefix length: {e}"))?;
+            let prefix_len: u8 = prefix
+                .parse()
+                .map_err(|e| format!("invalid prefix length: {e}"))?;
             let max_prefix = if addr.is_ipv4() { 32 } else { 128 };
             if prefix_len > max_prefix {
-                return Err(format!("prefix length {prefix_len} exceeds maximum {max_prefix}"));
+                return Err(format!(
+                    "prefix length {prefix_len} exceeds maximum {max_prefix}"
+                ));
             }
             Ok(IpPattern::Cidr(addr, prefix_len))
         } else if let Some((start, end)) = s.split_once('-') {
-            let start_addr = IpAddr::from_str(start).map_err(|e| format!("invalid start IP: {e}"))?;
+            let start_addr =
+                IpAddr::from_str(start).map_err(|e| format!("invalid start IP: {e}"))?;
             let end_addr = IpAddr::from_str(end).map_err(|e| format!("invalid end IP: {e}"))?;
             Ok(IpPattern::Range(start_addr, end_addr))
         } else {
@@ -197,7 +202,11 @@ impl IpFilter {
 
         // If allow list is non-empty, IP must match at least one entry
         if !self.config.allow_ips.is_empty() {
-            return self.config.allow_ips.iter().any(|pattern| pattern.matches(ip));
+            return self
+                .config
+                .allow_ips
+                .iter()
+                .any(|pattern| pattern.matches(ip));
         }
 
         // No deny match and no allow list → allow all

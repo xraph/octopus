@@ -15,16 +15,14 @@ struct NavLink {
 fn navbar(logged_in: bool, links: &[NavLink], current_path: &str) -> Node {
     Node::element("nav")
         .attr("class", "navbar")
-        .child(
-            Node::element("ol").children(vec![
-                // Map links to navbar items
-                map(links, |link| {
-                    navbar_item(&link.name, &link.path, link.path == current_path)
-                }),
-                // Conditional logout link
-                if_node(logged_in, navbar_item("Log out", "/logout", false)),
-            ]),
-        )
+        .child(Node::element("ol").children(vec![
+            // Map links to navbar items
+            map(links, |link| {
+                navbar_item(&link.name, &link.path, link.path == current_path)
+            }),
+            // Conditional logout link
+            if_node(logged_in, navbar_item("Log out", "/logout", false)),
+        ]))
 }
 
 /// Navbar item component
@@ -35,13 +33,11 @@ fn navbar_item(name: &str, path: &str, active: bool) -> Node {
         .add("inactive", !active)
         .build();
 
-    Node::element("li")
-        .attr("class", &classes)
-        .child(
-            Node::element("a")
-                .attr("href", path)
-                .child(Node::text(name)),
-        )
+    Node::element("li").attr("class", &classes).child(
+        Node::element("a")
+            .attr("href", path)
+            .child(Node::text(name)),
+    )
 }
 
 /// Page layout component
@@ -62,8 +58,7 @@ fn page_layout(title: &str, logged_in: bool, content: Node) -> Node {
     ];
 
     Node::element("html")
-        .child(
-            Node::element("head").children(vec![
+        .child(Node::element("head").children(vec![
                 Node::element("meta")
                     .attr("charset", "UTF-8")
                     .self_closing(),
@@ -72,16 +67,13 @@ fn page_layout(title: &str, logged_in: bool, content: Node) -> Node {
                     .attr("rel", "stylesheet")
                     .attr("href", "/styles.css")
                     .self_closing(),
-            ]),
-        )
-        .child(
-            Node::element("body").children(vec![
+            ]))
+        .child(Node::element("body").children(vec![
                 navbar(logged_in, &links, "/"),
                 Node::element("main")
                     .attr("class", "container")
                     .child(content),
-            ]),
-        )
+            ]))
 }
 
 /// Home page content
@@ -97,7 +89,11 @@ fn home_page(logged_in: bool) -> Node {
             !logged_in,
             Node::element("p")
                 .child(Node::text("Please "))
-                .child(Node::element("a").attr("href", "/login").child(Node::text("log in")))
+                .child(
+                    Node::element("a")
+                        .attr("href", "/login")
+                        .child(Node::text("log in")),
+                )
                 .child(Node::text(".")),
         ),
     ])

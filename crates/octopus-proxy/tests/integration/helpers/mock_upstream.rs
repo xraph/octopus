@@ -1,18 +1,18 @@
 //! Mock HTTP upstream server for integration testing
 
+use bytes::Bytes;
+use http_body_util::{BodyExt, Full};
+use hyper::service::service_fn;
+use hyper::{body::Incoming, Request, Response, StatusCode};
+use hyper_util::rt::TokioIo;
+use hyper_util::server::conn::auto::Builder;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tokio::time::sleep;
-use hyper::{Request, Response, StatusCode, body::Incoming};
-use hyper::service::service_fn;
-use hyper_util::rt::TokioIo;
-use hyper_util::server::conn::auto::Builder;
-use http_body_util::{Full, BodyExt};
-use bytes::Bytes;
-use tokio::net::TcpListener;
 
 /// Configuration for mock upstream behavior
 #[derive(Debug, Clone)]
@@ -100,7 +100,7 @@ impl MockUpstream {
     /// Create a new mock upstream server
     pub async fn new(port: u16) -> anyhow::Result<Self> {
         let addr = SocketAddr::from(([127, 0, 0, 1], port));
-        
+
         Ok(Self {
             config: Arc::new(RwLock::new(MockConfig::default())),
             routes: Arc::new(RwLock::new(HashMap::new())),
@@ -145,12 +145,12 @@ impl MockUpstream {
 
                                 tokio::spawn(async move {
                                     let io = TokioIo::new(stream);
-                                    
+
                                     let service = service_fn(|req: Request<Incoming>| {
                                         let config = Arc::clone(&config);
                                         let routes = Arc::clone(&routes);
                                         let stats = Arc::clone(&stats);
-                                        
+
                                         async move {
                                             handle_request(req, config, routes, stats).await
                                         }
@@ -233,7 +233,7 @@ async fn handle_request(
     // Read request body
     let path = req.uri().path().to_string();
     let (_parts, body) = req.into_parts();
-    
+
     let body_bytes = match body.collect().await {
         Ok(collected) => {
             let bytes = collected.to_bytes();
@@ -246,7 +246,7 @@ async fn handle_request(
 
     // Check for route-specific response
     let route_response = routes.read().await.get(&path).cloned();
-    
+
     if let Some(mock_resp) = route_response {
         // Apply delay
         if let Some(delay) = mock_resp.delay {
@@ -254,7 +254,7 @@ async fn handle_request(
         }
 
         let mut response = Response::builder().status(mock_resp.status);
-        
+
         // Add headers
         for (k, v) in &mock_resp.headers {
             response = response.header(k, v);

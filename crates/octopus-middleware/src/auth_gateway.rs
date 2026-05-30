@@ -14,8 +14,7 @@ use bytes::Bytes;
 use http::{Method, Request, Response, StatusCode};
 use http_body_util::Full;
 use octopus_auth::{
-    AuthProviderRegistry, AuthRequest, AuthResult, AuthzDecision, AuthzEvaluator,
-    RouteAuthzContext,
+    AuthProviderRegistry, AuthRequest, AuthResult, AuthzDecision, AuthzEvaluator, RouteAuthzContext,
 };
 use octopus_config::types::AuthConfig;
 use octopus_core::middleware::{Middleware, Next};
@@ -145,7 +144,7 @@ impl AuthGatewayMiddleware {
                     "jwt" | "oidc" => Some("Bearer"),
                     "api_key" => Some("ApiKey"),
                     "forward_auth" => Some("Bearer"),
-                    _ => None,  // mTLS - no WWW-Authenticate
+                    _ => None, // mTLS - no WWW-Authenticate
                 },
                 None => Some("Bearer"), // default
             };
@@ -233,7 +232,11 @@ impl Middleware for AuthGatewayMiddleware {
             tls_client_cn: tls_cn.as_deref(),
         };
 
-        let auth_result = match self.registry.authenticate(provider_name, &auth_request).await {
+        let auth_result = match self
+            .registry
+            .authenticate(provider_name, &auth_request)
+            .await
+        {
             Ok(r) => r,
             Err(e) => {
                 warn!(error = %e, provider = %provider_name, "Auth provider error");

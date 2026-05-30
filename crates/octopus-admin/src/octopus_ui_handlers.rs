@@ -222,9 +222,7 @@ pub async fn octopus_ui_dashboard_handler(
 }
 
 /// Handler for routes page using octopus-ui
-pub async fn octopus_ui_routes_handler(
-    State(_state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn octopus_ui_routes_handler(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
     let routes = vec![
         RouteInfo {
             id: "route1".to_string(),
@@ -258,7 +256,10 @@ pub async fn octopus_ui_routes_handler(
         .collect::<Vec<_>>()
         .join("\n");
 
-    let routes_grid = format!(r#"<div class="grid gap-4 md:grid-cols-2">{}</div>"#, routes_grid);
+    let routes_grid = format!(
+        r#"<div class="grid gap-4 md:grid-cols-2">{}</div>"#,
+        routes_grid
+    );
 
     let template = OctopusUiRoutesTemplate {
         routes_table,
@@ -270,9 +271,7 @@ pub async fn octopus_ui_routes_handler(
 }
 
 /// Handler for health page using octopus-ui
-pub async fn octopus_ui_health_handler(
-    State(_state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn octopus_ui_health_handler(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
     let health_checks = vec![
         HealthCheckInfo {
             name: "PostgreSQL Database".to_string(),
@@ -317,9 +316,7 @@ pub async fn octopus_ui_health_handler(
 }
 
 /// Handler for plugins page using octopus-ui
-pub async fn octopus_ui_plugins_handler(
-    State(_state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn octopus_ui_plugins_handler(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
     let plugins = vec![
         PluginInfo {
             id: "auth-jwt".to_string(),

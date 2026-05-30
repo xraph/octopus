@@ -119,7 +119,7 @@ impl TimeoutConfig {
         // Subsequent attempts get reduced timeout
         // This prevents slow retries from consuming too much time
         let reduced = self.request_timeout / (attempt + 1);
-        
+
         // But never go below a minimum (e.g., 5 seconds)
         let minimum = Duration::from_secs(5);
         reduced.max(minimum)
@@ -141,7 +141,7 @@ impl TimeoutConfig {
 pub struct TimeoutContext {
     /// When the operation started
     start_time: std::time::Instant,
-    
+
     /// Timeout configuration
     config: TimeoutConfig,
 }
@@ -184,7 +184,7 @@ impl TimeoutContext {
     pub fn timeout_for_attempt(&self, attempt: u32) -> Option<Duration> {
         let attempt_timeout = self.config.timeout_for_attempt(attempt);
         let remaining = self.remaining_total()?;
-        
+
         Some(attempt_timeout.min(remaining))
     }
 
@@ -337,7 +337,7 @@ mod tests {
 
         // Simulate 35 seconds elapsed
         std::thread::sleep(Duration::from_millis(10)); // Small delay for test
-        
+
         // First attempt should get min(30s, remaining_budget)
         let timeout = ctx.timeout_for_attempt(0);
         assert!(timeout.is_some());

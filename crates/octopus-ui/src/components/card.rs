@@ -177,7 +177,12 @@ impl CardTitle {
 
 impl Render for CardTitle {
     fn render(&self) -> Node {
-        let mut classes = vec!["text-2xl", "font-semibold", "leading-none", "tracking-tight"];
+        let mut classes = vec![
+            "text-2xl",
+            "font-semibold",
+            "leading-none",
+            "tracking-tight",
+        ];
 
         if !self.class.is_empty() {
             classes.push(&self.class);
@@ -377,7 +382,11 @@ mod tests {
     #[test]
     fn test_card() {
         let card = Card::new()
-            .child(CardHeader::new().child(CardTitle::new("Title").render()).render())
+            .child(
+                CardHeader::new()
+                    .child(CardTitle::new("Title").render())
+                    .render(),
+            )
             .child(CardContent::new().child(Node::text("Content")).render());
 
         let html = card.render_to_string();

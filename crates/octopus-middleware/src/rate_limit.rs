@@ -1,5 +1,6 @@
 //! Rate limiting middleware using token bucket algorithm
 
+use crate::auth_gateway::AuthRateLimitKey;
 use async_trait::async_trait;
 use bytes::Bytes;
 use dashmap::DashMap;
@@ -10,7 +11,6 @@ use governor::{
 };
 use http::{Request, Response, StatusCode};
 use http_body_util::Full;
-use crate::auth_gateway::AuthRateLimitKey;
 use octopus_core::{Middleware, Next, Result};
 use serde_json;
 use std::collections::HashMap;
@@ -128,9 +128,11 @@ pub struct RateLimit {
     /// Global rate limiter
     limiter: Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock>>,
     /// Per-route rate limiters (path -> limiter)
-    route_limiters: Arc<DashMap<String, Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock>>>>,
+    route_limiters:
+        Arc<DashMap<String, Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock>>>>,
     /// Per-identity rate limiters (identity key -> limiter)
-    identity_limiters: Arc<DashMap<String, Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock>>>>,
+    identity_limiters:
+        Arc<DashMap<String, Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock>>>>,
 }
 
 impl RateLimit {
@@ -445,10 +447,7 @@ impl<B: octopus_state::StateBackend> DistributedRateLimit<B> {
         Response::builder()
             .status(StatusCode::TOO_MANY_REQUESTS)
             .header("Content-Type", "application/json")
-            .header(
-                "Retry-After",
-                self.config.window_size.as_secs().to_string(),
-            )
+            .header("Retry-After", self.config.window_size.as_secs().to_string())
             .header(
                 "X-RateLimit-Limit",
                 self.config.requests_per_window.to_string(),
@@ -856,8 +855,7 @@ mod tests {
             let rl = DistributedRateLimit::new(config, backend);
             let handler = TestHandler;
 
-            let stack: Arc<[Arc<dyn Middleware>]> =
-                Arc::new([Arc::new(rl), Arc::new(handler)]);
+            let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(rl), Arc::new(handler)]);
 
             // First 5 requests should succeed
             for _ in 0..5 {
@@ -894,8 +892,7 @@ mod tests {
             let rl = DistributedRateLimit::new(config, backend);
             let handler = TestHandler;
 
-            let stack: Arc<[Arc<dyn Middleware>]> =
-                Arc::new([Arc::new(rl), Arc::new(handler)]);
+            let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(rl), Arc::new(handler)]);
 
             // 2 requests from IP-A should be fine
             for _ in 0..2 {
@@ -945,8 +942,7 @@ mod tests {
             let rl = DistributedRateLimit::new(config, backend);
             let handler = TestHandler;
 
-            let stack: Arc<[Arc<dyn Middleware>]> =
-                Arc::new([Arc::new(rl), Arc::new(handler)]);
+            let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(rl), Arc::new(handler)]);
 
             // Exhaust the limit
             let next = Next::new(stack.clone());

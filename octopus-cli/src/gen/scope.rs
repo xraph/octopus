@@ -80,18 +80,13 @@ fn scope_from_operation_id(service_name: &str, operation_id: &str) -> String {
 /// GET /api/v1/users/{userId}/posts → "service.users.posts.list"
 fn scope_from_path(service_name: &str, path: &str, method: &str) -> String {
     // Strip common prefixes
-    let clean_path = path
-        .trim_start_matches('/')
-        .to_string();
+    let clean_path = path.trim_start_matches('/').to_string();
 
     // Split path and extract resource segments (skip version prefixes and params)
     let segments: Vec<&str> = clean_path
         .split('/')
         .filter(|s| {
-            !s.is_empty()
-                && !s.starts_with('{')
-                && !s.starts_with("api")
-                && !is_version_segment(s)
+            !s.is_empty() && !s.starts_with('{') && !s.starts_with("api") && !is_version_segment(s)
         })
         .collect();
 
@@ -171,11 +166,26 @@ mod tests {
 
     #[test]
     fn test_scope_from_path() {
-        assert_eq!(scope_from_path("svc", "/api/v1/users", "GET"), "svc.users.list");
-        assert_eq!(scope_from_path("svc", "/api/v1/users", "POST"), "svc.users.create");
-        assert_eq!(scope_from_path("svc", "/api/v1/users/{id}", "GET"), "svc.users.get");
-        assert_eq!(scope_from_path("svc", "/api/v1/users/{id}", "PUT"), "svc.users.update");
-        assert_eq!(scope_from_path("svc", "/api/v1/users/{id}", "DELETE"), "svc.users.delete");
+        assert_eq!(
+            scope_from_path("svc", "/api/v1/users", "GET"),
+            "svc.users.list"
+        );
+        assert_eq!(
+            scope_from_path("svc", "/api/v1/users", "POST"),
+            "svc.users.create"
+        );
+        assert_eq!(
+            scope_from_path("svc", "/api/v1/users/{id}", "GET"),
+            "svc.users.get"
+        );
+        assert_eq!(
+            scope_from_path("svc", "/api/v1/users/{id}", "PUT"),
+            "svc.users.update"
+        );
+        assert_eq!(
+            scope_from_path("svc", "/api/v1/users/{id}", "DELETE"),
+            "svc.users.delete"
+        );
         assert_eq!(
             scope_from_path("svc", "/api/v1/users/{userId}/posts", "GET"),
             "svc.users.posts.list"
@@ -184,9 +194,18 @@ mod tests {
 
     #[test]
     fn test_scope_from_operation_id() {
-        assert_eq!(scope_from_operation_id("svc", "listUsers"), "svc.users.list");
-        assert_eq!(scope_from_operation_id("svc", "createUser"), "svc.users.create");
-        assert_eq!(scope_from_operation_id("svc", "users_list"), "svc.users.list");
+        assert_eq!(
+            scope_from_operation_id("svc", "listUsers"),
+            "svc.users.list"
+        );
+        assert_eq!(
+            scope_from_operation_id("svc", "createUser"),
+            "svc.users.create"
+        );
+        assert_eq!(
+            scope_from_operation_id("svc", "users_list"),
+            "svc.users.list"
+        );
     }
 
     #[test]
@@ -203,6 +222,9 @@ mod tests {
     #[test]
     fn test_split_camel_case() {
         assert_eq!(split_camel_case("listUsers"), vec!["list", "Users"]);
-        assert_eq!(split_camel_case("getUserById"), vec!["get", "User", "By", "Id"]);
+        assert_eq!(
+            split_camel_case("getUserById"),
+            vec!["get", "User", "By", "Id"]
+        );
     }
 }

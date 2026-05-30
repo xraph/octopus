@@ -11,10 +11,10 @@ use tracing::{debug, info, warn};
 pub struct ShutdownConfig {
     /// Grace period to wait for connections to drain (default: 30s)
     pub grace_period: Duration,
-    
+
     /// Maximum time to wait for graceful shutdown before forcing (default: 60s)
     pub force_timeout: Duration,
-    
+
     /// Whether to reject new connections during shutdown (default: true)
     pub reject_new_connections: bool,
 }
@@ -34,16 +34,16 @@ impl Default for ShutdownConfig {
 pub struct ShutdownHandle {
     /// Shutdown initiated flag
     shutdown_initiated: Arc<AtomicBool>,
-    
+
     /// Active connections counter
     active_connections: Arc<AtomicUsize>,
-    
+
     /// Broadcast channel for shutdown signal
     shutdown_tx: broadcast::Sender<()>,
-    
+
     /// Notify when all connections are drained
     drained: Arc<Notify>,
-    
+
     /// Configuration
     config: ShutdownConfig,
 }
@@ -52,7 +52,7 @@ impl ShutdownHandle {
     /// Create a new shutdown handle
     pub fn new(config: ShutdownConfig) -> Self {
         let (shutdown_tx, _) = broadcast::channel(1);
-        
+
         Self {
             shutdown_initiated: Arc::new(AtomicBool::new(false)),
             active_connections: Arc::new(AtomicUsize::new(0)),
@@ -80,11 +80,8 @@ impl ShutdownHandle {
     /// Increment active connections counter
     pub fn track_connection(&self) -> ConnectionGuard {
         self.active_connections.fetch_add(1, Ordering::Relaxed);
-        debug!(
-            active = self.active_connections(),
-            "Connection tracked"
-        );
-        
+        debug!(active = self.active_connections(), "Connection tracked");
+
         ConnectionGuard {
             active_connections: self.active_connections.clone(),
             drained: self.drained.clone(),
@@ -156,10 +153,7 @@ impl ShutdownHandle {
 
             // Wait additional time before forcing
             let force_start = std::time::Instant::now();
-            let remaining_force_time = self
-                .config
-                .force_timeout
-                .saturating_sub(start.elapsed());
+            let remaining_force_time = self.config.force_timeout.saturating_sub(start.elapsed());
 
             while force_start.elapsed() < remaining_force_time {
                 if self.active_connections() == 0 {
@@ -208,11 +202,8 @@ pub struct ConnectionGuard {
 impl Drop for ConnectionGuard {
     fn drop(&mut self) {
         let prev = self.active_connections.fetch_sub(1, Ordering::Relaxed);
-        debug!(
-            active = prev - 1,
-            "Connection guard dropped"
-        );
-        
+        debug!(active = prev - 1, "Connection guard dropped");
+
         // Notify if this was the last connection
         if prev == 1 {
             self.drained.notify_waiters();
@@ -248,13 +239,13 @@ impl std::fmt::Debug for ShutdownSignal {
 pub enum ShutdownResult {
     /// Shutdown completed gracefully within grace period
     GracefullyCompleted,
-    
+
     /// Shutdown completed after grace period but before force timeout
     CompletedAfterGracePeriod,
-    
+
     /// Shutdown forced with N active connections
     ForcedWithActiveConnections(usize),
-    
+
     /// Shutdown was already in progress
     AlreadyShuttingDown,
 }
@@ -281,9 +272,9 @@ mod tests {
     #[tokio::test]
     async fn test_shutdown_no_connections() {
         let handle = ShutdownHandle::default_config();
-        
+
         let result = handle.shutdown().await;
-        
+
         assert_eq!(result, ShutdownResult::GracefullyCompleted);
         assert!(result.is_success());
         assert!(!result.was_forced());
@@ -297,24 +288,22 @@ mod tests {
             reject_new_connections: true,
         };
         let handle = ShutdownHandle::new(config);
-        
+
         // Track some connections
         let _guard1 = handle.track_connection();
         let _guard2 = handle.track_connection();
-        
+
         assert_eq!(handle.active_connections(), 2);
-        
+
         // Spawn shutdown in background
         let handle_clone = handle.clone();
-        let shutdown_task = tokio::spawn(async move {
-            handle_clone.shutdown().await
-        });
-        
+        let shutdown_task = tokio::spawn(async move { handle_clone.shutdown().await });
+
         // Wait a bit then drop guards
         tokio::time::sleep(Duration::from_millis(50)).await;
         drop(_guard1);
         drop(_guard2);
-        
+
         let result = shutdown_task.await.unwrap();
         assert_eq!(result, ShutdownResult::GracefullyCompleted);
     }
@@ -323,16 +312,16 @@ mod tests {
     async fn test_shutdown_signal() {
         let handle = ShutdownHandle::default_config();
         let mut signal = handle.subscribe();
-        
+
         // Spawn task that waits for signal
         let signal_task = tokio::spawn(async move {
             signal.recv().await;
             true
         });
-        
+
         // Initiate shutdown
         let _ = handle.shutdown().await;
-        
+
         // Task should complete
         let received = signal_task.await.unwrap();
         assert!(received);
@@ -341,35 +330,35 @@ mod tests {
     #[tokio::test]
     async fn test_connection_guard() {
         let handle = ShutdownHandle::default_config();
-        
+
         assert_eq!(handle.active_connections(), 0);
-        
+
         {
             let _guard = handle.track_connection();
             assert_eq!(handle.active_connections(), 1);
         }
-        
+
         assert_eq!(handle.active_connections(), 0);
     }
 
     #[tokio::test]
     async fn test_is_shutting_down() {
         let handle = ShutdownHandle::default_config();
-        
+
         assert!(!handle.is_shutting_down());
-        
+
         let _ = handle.shutdown().await;
-        
+
         assert!(handle.is_shutting_down());
     }
 
     #[tokio::test]
     async fn test_double_shutdown() {
         let handle = ShutdownHandle::default_config();
-        
+
         let result1 = handle.shutdown().await;
         assert_eq!(result1, ShutdownResult::GracefullyCompleted);
-        
+
         let result2 = handle.shutdown().await;
         assert_eq!(result2, ShutdownResult::AlreadyShuttingDown);
     }
@@ -382,13 +371,13 @@ mod tests {
             reject_new_connections: true,
         };
         let handle = ShutdownHandle::new(config);
-        
+
         // Keep connections alive
         let _guard1 = handle.track_connection();
         let _guard2 = handle.track_connection();
-        
+
         let result = handle.shutdown().await;
-        
+
         assert!(result.was_forced());
         if let ShutdownResult::ForcedWithActiveConnections(count) = result {
             assert_eq!(count, 2);

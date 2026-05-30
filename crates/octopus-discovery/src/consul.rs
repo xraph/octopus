@@ -116,9 +116,7 @@ impl ConsulDiscovery {
 
     /// Make HTTP request to Consul
     async fn request(&self, uri: Uri) -> Result<Vec<u8>> {
-        let mut builder = Request::builder()
-            .method(Method::GET)
-            .uri(uri);
+        let mut builder = Request::builder().method(Method::GET).uri(uri);
 
         // Add ACL token header if configured
         if let Some(ref token) = self.token {

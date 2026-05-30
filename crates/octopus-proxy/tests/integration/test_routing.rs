@@ -1,14 +1,11 @@
 //! Advanced routing and load balancing integration tests
 
 use super::*;
-use octopus_proxy::routing::{
-    Router, RoutingConfig, RoutingStrategy,
-    CanaryConfig, ShadowConfig,
-};
-use http::{Method, StatusCode};
 use bytes::Bytes;
-use std::time::Duration;
+use http::{Method, StatusCode};
+use octopus_proxy::routing::{CanaryConfig, Router, RoutingConfig, RoutingStrategy, ShadowConfig};
 use std::collections::HashMap;
+use std::time::Duration;
 
 #[tokio::test]
 async fn test_round_robin_distribution() {
@@ -16,15 +13,27 @@ async fn test_round_robin_distribution() {
     let mut mock1 = MockUpstream::new(0).await.unwrap();
     let mut mock2 = MockUpstream::new(0).await.unwrap();
     let mut mock3 = MockUpstream::new(0).await.unwrap();
-    
+
     mock1.start().await.unwrap();
     mock2.start().await.unwrap();
     mock3.start().await.unwrap();
 
     let upstreams = vec![
-        TestFixtures::upstream().id("up1").host("127.0.0.1").port(mock1.addr().port()).build(),
-        TestFixtures::upstream().id("up2").host("127.0.0.1").port(mock2.addr().port()).build(),
-        TestFixtures::upstream().id("up3").host("127.0.0.1").port(mock3.addr().port()).build(),
+        TestFixtures::upstream()
+            .id("up1")
+            .host("127.0.0.1")
+            .port(mock1.addr().port())
+            .build(),
+        TestFixtures::upstream()
+            .id("up2")
+            .host("127.0.0.1")
+            .port(mock2.addr().port())
+            .build(),
+        TestFixtures::upstream()
+            .id("up3")
+            .host("127.0.0.1")
+            .port(mock3.addr().port())
+            .build(),
     ];
 
     let config = RoutingConfig {
@@ -52,9 +61,21 @@ async fn test_round_robin_distribution() {
 #[tokio::test]
 async fn test_random_load_balancing() {
     let upstreams = vec![
-        TestFixtures::upstream().id("up1").host("localhost").port(8001).build(),
-        TestFixtures::upstream().id("up2").host("localhost").port(8002).build(),
-        TestFixtures::upstream().id("up3").host("localhost").port(8003).build(),
+        TestFixtures::upstream()
+            .id("up1")
+            .host("localhost")
+            .port(8001)
+            .build(),
+        TestFixtures::upstream()
+            .id("up2")
+            .host("localhost")
+            .port(8002)
+            .build(),
+        TestFixtures::upstream()
+            .id("up3")
+            .host("localhost")
+            .port(8003)
+            .build(),
     ];
 
     let config = RoutingConfig {
@@ -72,15 +93,30 @@ async fn test_random_load_balancing() {
     }
 
     // All upstreams should be selected at least once with high probability
-    assert!(selections.len() >= 2, "Random should distribute across multiple upstreams");
+    assert!(
+        selections.len() >= 2,
+        "Random should distribute across multiple upstreams"
+    );
 }
 
 #[tokio::test]
 async fn test_least_connections_strategy() {
     let upstreams = vec![
-        TestFixtures::upstream().id("up1").host("localhost").port(8001).build(),
-        TestFixtures::upstream().id("up2").host("localhost").port(8002).build(),
-        TestFixtures::upstream().id("up3").host("localhost").port(8003).build(),
+        TestFixtures::upstream()
+            .id("up1")
+            .host("localhost")
+            .port(8001)
+            .build(),
+        TestFixtures::upstream()
+            .id("up2")
+            .host("localhost")
+            .port(8002)
+            .build(),
+        TestFixtures::upstream()
+            .id("up3")
+            .host("localhost")
+            .port(8003)
+            .build(),
     ];
 
     let config = RoutingConfig {
@@ -101,9 +137,24 @@ async fn test_least_connections_strategy() {
 #[tokio::test]
 async fn test_weighted_round_robin() {
     let upstreams = vec![
-        TestFixtures::upstream().id("up1").host("localhost").port(8001).weight(1).build(),
-        TestFixtures::upstream().id("up2").host("localhost").port(8002).weight(3).build(), // 3x weight
-        TestFixtures::upstream().id("up3").host("localhost").port(8003).weight(1).build(),
+        TestFixtures::upstream()
+            .id("up1")
+            .host("localhost")
+            .port(8001)
+            .weight(1)
+            .build(),
+        TestFixtures::upstream()
+            .id("up2")
+            .host("localhost")
+            .port(8002)
+            .weight(3)
+            .build(), // 3x weight
+        TestFixtures::upstream()
+            .id("up3")
+            .host("localhost")
+            .port(8003)
+            .weight(1)
+            .build(),
     ];
 
     let config = RoutingConfig {
@@ -122,7 +173,11 @@ async fn test_weighted_round_robin() {
 
     // up2 should get roughly 3x more selections than up1/up3
     let up2_count = selections.get("up2").unwrap_or(&0);
-    assert!(*up2_count > 20, "Weighted upstream should get more selections, got {}", up2_count);
+    assert!(
+        *up2_count > 20,
+        "Weighted upstream should get more selections, got {}",
+        up2_count
+    );
 }
 
 #[tokio::test]
@@ -130,7 +185,7 @@ async fn test_latency_aware_routing() {
     // Start mock upstreams with different delays
     let mut mock_fast = MockUpstream::new(0).await.unwrap();
     let mut mock_slow = MockUpstream::new(0).await.unwrap();
-    
+
     mock_fast.start().await.unwrap();
     mock_slow.start().await.unwrap();
 
@@ -140,8 +195,16 @@ async fn test_latency_aware_routing() {
     mock_slow.set_config(slow_config).await;
 
     let upstreams = vec![
-        TestFixtures::upstream().id("fast").host("127.0.0.1").port(mock_fast.addr().port()).build(),
-        TestFixtures::upstream().id("slow").host("127.0.0.1").port(mock_slow.addr().port()).build(),
+        TestFixtures::upstream()
+            .id("fast")
+            .host("127.0.0.1")
+            .port(mock_fast.addr().port())
+            .build(),
+        TestFixtures::upstream()
+            .id("slow")
+            .host("127.0.0.1")
+            .port(mock_slow.addr().port())
+            .build(),
     ];
 
     let config = RoutingConfig {
@@ -163,8 +226,16 @@ async fn test_latency_aware_routing() {
 #[tokio::test]
 async fn test_error_aware_routing() {
     let upstreams = vec![
-        TestFixtures::upstream().id("healthy").host("localhost").port(8001).build(),
-        TestFixtures::upstream().id("unhealthy").host("localhost").port(8002).build(),
+        TestFixtures::upstream()
+            .id("healthy")
+            .host("localhost")
+            .port(8001)
+            .build(),
+        TestFixtures::upstream()
+            .id("unhealthy")
+            .host("localhost")
+            .port(8002)
+            .build(),
     ];
 
     let config = RoutingConfig {
@@ -187,23 +258,19 @@ async fn test_error_aware_routing() {
 
 #[tokio::test]
 async fn test_canary_deployment_10_percent() {
-    let stable = vec![
-        TestFixtures::upstream()
-            .id("stable-1")
-            .host("localhost")
-            .port(8001)
-            .version("v1")
-            .build(),
-    ];
+    let stable = vec![TestFixtures::upstream()
+        .id("stable-1")
+        .host("localhost")
+        .port(8001)
+        .version("v1")
+        .build()];
 
-    let canary = vec![
-        TestFixtures::upstream()
-            .id("canary-1")
-            .host("localhost")
-            .port(8002)
-            .version("v2")
-            .build(),
-    ];
+    let canary = vec![TestFixtures::upstream()
+        .id("canary-1")
+        .host("localhost")
+        .port(8002)
+        .version("v2")
+        .build()];
 
     let all_upstreams: Vec<_> = stable.iter().chain(canary.iter()).cloned().collect();
 
@@ -235,31 +302,33 @@ async fn test_canary_deployment_10_percent() {
     }
 
     // Approximately 10% should go to canary (allow some variance)
-    assert!(canary_count >= 5 && canary_count <= 20, 
-        "Canary should get ~10% of traffic, got {}/100", canary_count);
-    assert!(stable_count >= 80, 
-        "Stable should get ~90% of traffic, got {}/100", stable_count);
+    assert!(
+        canary_count >= 5 && canary_count <= 20,
+        "Canary should get ~10% of traffic, got {}/100",
+        canary_count
+    );
+    assert!(
+        stable_count >= 80,
+        "Stable should get ~90% of traffic, got {}/100",
+        stable_count
+    );
 }
 
 #[tokio::test]
 async fn test_canary_deployment_50_percent() {
-    let stable = vec![
-        TestFixtures::upstream()
-            .id("stable-1")
-            .host("localhost")
-            .port(8001)
-            .version("v1")
-            .build(),
-    ];
+    let stable = vec![TestFixtures::upstream()
+        .id("stable-1")
+        .host("localhost")
+        .port(8001)
+        .version("v1")
+        .build()];
 
-    let canary = vec![
-        TestFixtures::upstream()
-            .id("canary-1")
-            .host("localhost")
-            .port(8002)
-            .version("v2")
-            .build(),
-    ];
+    let canary = vec![TestFixtures::upstream()
+        .id("canary-1")
+        .host("localhost")
+        .port(8002)
+        .version("v2")
+        .build()];
 
     let all_upstreams: Vec<_> = stable.iter().chain(canary.iter()).cloned().collect();
 
@@ -291,10 +360,16 @@ async fn test_canary_deployment_50_percent() {
     }
 
     // Approximately 50% to each (allow variance)
-    assert!(canary_count >= 35 && canary_count <= 65, 
-        "Canary should get ~50% of traffic, got {}/100", canary_count);
-    assert!(stable_count >= 35 && stable_count <= 65, 
-        "Stable should get ~50% of traffic, got {}/100", stable_count);
+    assert!(
+        canary_count >= 35 && canary_count <= 65,
+        "Canary should get ~50% of traffic, got {}/100",
+        canary_count
+    );
+    assert!(
+        stable_count >= 35 && stable_count <= 65,
+        "Stable should get ~50% of traffic, got {}/100",
+        stable_count
+    );
 }
 
 #[tokio::test]
@@ -302,7 +377,7 @@ async fn test_request_shadowing_config() {
     let shadow_config = ShadowConfig {
         shadow_target: "shadow-cluster".to_string(),
         traffic_percentage: 100, // Shadow all traffic for test
-        synchronous: false, // Async - don't wait for shadow
+        synchronous: false,      // Async - don't wait for shadow
         log_failures: true,
     };
 
@@ -323,7 +398,7 @@ async fn test_request_shadowing_percentage() {
 
     // Verify configuration
     assert_eq!(shadow_config.traffic_percentage, 25);
-    
+
     // With 25%, approximately 1 in 4 requests should be shadowed
     let mut shadowed_count = 0;
     for _ in 0..100 {
@@ -333,16 +408,31 @@ async fn test_request_shadowing_percentage() {
     }
 
     // Allow variance, expect roughly 25%
-    assert!(shadowed_count >= 15 && shadowed_count <= 40,
-        "Should shadow ~25% of requests, got {}/100", shadowed_count);
+    assert!(
+        shadowed_count >= 15 && shadowed_count <= 40,
+        "Should shadow ~25% of requests, got {}/100",
+        shadowed_count
+    );
 }
 
 #[tokio::test]
 async fn test_router_with_multiple_strategies() {
     let upstreams = vec![
-        TestFixtures::upstream().id("up1").host("localhost").port(8001).build(),
-        TestFixtures::upstream().id("up2").host("localhost").port(8002).build(),
-        TestFixtures::upstream().id("up3").host("localhost").port(8003).build(),
+        TestFixtures::upstream()
+            .id("up1")
+            .host("localhost")
+            .port(8001)
+            .build(),
+        TestFixtures::upstream()
+            .id("up2")
+            .host("localhost")
+            .port(8002)
+            .build(),
+        TestFixtures::upstream()
+            .id("up3")
+            .host("localhost")
+            .port(8003)
+            .build(),
     ];
 
     // Test different routing strategies
@@ -365,8 +455,11 @@ async fn test_router_with_multiple_strategies() {
 
         // Should be able to select from upstreams
         let selected = router.select(&upstreams, None).unwrap();
-        assert!(upstreams.iter().any(|u| u.id == selected.id),
-            "Strategy {:?} should select valid upstream", strategy);
+        assert!(
+            upstreams.iter().any(|u| u.id == selected.id),
+            "Strategy {:?} should select valid upstream",
+            strategy
+        );
     }
 }
 
@@ -378,18 +471,23 @@ async fn test_routing_with_no_healthy_upstreams() {
     let router = Router::new(config);
 
     let result = router.select(&upstreams, None);
-    assert!(result.is_none(), "Should return None when no upstreams available");
+    assert!(
+        result.is_none(),
+        "Should return None when no upstreams available"
+    );
 }
 
 #[tokio::test]
 async fn test_routing_with_single_upstream() {
-    let upstreams = vec![
-        TestFixtures::upstream().id("only").host("localhost").port(8001).build(),
-    ];
+    let upstreams = vec![TestFixtures::upstream()
+        .id("only")
+        .host("localhost")
+        .port(8001)
+        .build()];
 
     let config = RoutingConfig::default();
     let router = Router::new(config);
-    
+
     // Should always select the only upstream
     for _ in 0..10 {
         let selected = router.select(&upstreams, None).unwrap();
@@ -439,5 +537,8 @@ async fn test_canary_without_canary_version() {
     }
 
     // All should be v1 since no v2 exists
-    assert_eq!(v1_count, 10, "Should fallback to stable when canary version doesn't exist");
+    assert_eq!(
+        v1_count, 10,
+        "Should fallback to stable when canary version doesn't exist"
+    );
 }

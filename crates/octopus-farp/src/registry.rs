@@ -190,10 +190,12 @@ impl SchemaRegistry {
         self.external_registry
             .register_manifest(&external_manifest)
             .await
-            .map_err(|e| Error::Farp(format!(
-                "Failed to register service in external registry: {}",
-                e
-            )))?;
+            .map_err(|e| {
+                Error::Farp(format!(
+                    "Failed to register service in external registry: {}",
+                    e
+                ))
+            })?;
 
         // Update local cache
         let registration = ServiceRegistration::new(manifest);
@@ -217,10 +219,12 @@ impl SchemaRegistry {
         self.external_registry
             .update_manifest(&external_manifest)
             .await
-            .map_err(|e| Error::Farp(format!(
-                "Failed to update service in external registry: {}",
-                e
-            )))?;
+            .map_err(|e| {
+                Error::Farp(format!(
+                    "Failed to update service in external registry: {}",
+                    e
+                ))
+            })?;
 
         // Update local cache
         if let Some(mut reg) = self.services.get_mut(&service_name) {
@@ -258,7 +262,7 @@ impl SchemaRegistry {
         self.services
             .remove(service_name)
             .ok_or_else(|| Error::Farp(format!("Service '{service_name}' not registered")))?;
-        
+
         info!(service = %service_name, "Service deregistered");
         Ok(())
     }
@@ -342,9 +346,7 @@ impl SchemaRegistry {
                 return Ok(());
             }
         }
-        Err(Error::Farp(format!(
-            "Instance '{instance_id}' not found"
-        )))
+        Err(Error::Farp(format!("Instance '{instance_id}' not found")))
     }
 
     /// Deregister a service by instance ID
@@ -373,9 +375,7 @@ impl SchemaRegistry {
             info!(instance_id = %instance_id, service = %name, "Service instance deregistered");
             Ok(())
         } else {
-            Err(Error::Farp(format!(
-                "Instance '{instance_id}' not found"
-            )))
+            Err(Error::Farp(format!("Instance '{instance_id}' not found")))
         }
     }
 
@@ -479,13 +479,9 @@ mod tests {
         // Verify it's in the external registry
         let external_registry = registry.external_registry();
         let instance_id = format!("{}-{}", manifest.service_name, manifest.service_version);
-        
-        let external_manifest = external_registry
-            .get_manifest(&instance_id)
-            .await
-            .unwrap();
-        
+
+        let external_manifest = external_registry.get_manifest(&instance_id).await.unwrap();
+
         assert_eq!(external_manifest.service_name, "test-service");
     }
 }
-

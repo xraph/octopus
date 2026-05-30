@@ -2,9 +2,9 @@
 
 use octopus_admin::models::{HealthCheckInfo, PluginInfo, RouteInfo};
 use octopus_admin::ui_components;
-use octopus_ui::core::{Node, Render, Size, Variant};
-use octopus_ui::components::Button;
 use octopus_ui::components::card::*;
+use octopus_ui::components::Button;
+use octopus_ui::core::{Node, Render, Size, Variant};
 use octopus_ui::primitives::{Grid, HStack, VStack};
 
 fn main() {
@@ -26,7 +26,9 @@ fn main() {
         "Total Requests",
         "1,234,567",
         "+20.1% from last month",
-        Some(r#"<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>"#)
+        Some(
+            r#"<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>"#,
+        ),
     );
     println!("{}\n", stats_card);
 
@@ -81,7 +83,9 @@ fn main() {
         "Dashboard",
         "/admin",
         true,
-        Some(r#"<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>"#)
+        Some(
+            r#"<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" /></svg>"#,
+        ),
     );
     println!("{}\n", nav);
 
@@ -116,15 +120,15 @@ fn main() {
                 .child(
                     Node::element("h1")
                         .attr("class", "text-3xl font-bold")
-                        .child(Node::text("Dashboard"))
+                        .child(Node::text("Dashboard")),
                 )
                 .child(
                     Button::with_text("Refresh")
                         .variant(Variant::Outline)
                         .size(Size::SM)
-                        .render()
+                        .render(),
                 )
-                .render()
+                .render(),
         )
         .child(
             Grid::new()
@@ -135,59 +139,59 @@ fn main() {
                         .child(
                             CardHeader::new()
                                 .child(CardTitle::new("Metric 1").render())
-                                .render()
+                                .render(),
                         )
                         .child(
                             CardContent::new()
                                 .child(
                                     Node::element("div")
                                         .attr("class", "text-2xl font-bold")
-                                        .child(Node::text("1,234"))
+                                        .child(Node::text("1,234")),
                                 )
-                                .render()
+                                .render(),
                         )
-                        .render()
+                        .render(),
                 )
                 .child(
                     Card::new()
                         .child(
                             CardHeader::new()
                                 .child(CardTitle::new("Metric 2").render())
-                                .render()
+                                .render(),
                         )
                         .child(
                             CardContent::new()
                                 .child(
                                     Node::element("div")
                                         .attr("class", "text-2xl font-bold")
-                                        .child(Node::text("5,678"))
+                                        .child(Node::text("5,678")),
                                 )
-                                .render()
+                                .render(),
                         )
-                        .render()
+                        .render(),
                 )
                 .child(
                     Card::new()
                         .child(
                             CardHeader::new()
                                 .child(CardTitle::new("Metric 3").render())
-                                .render()
+                                .render(),
                         )
                         .child(
                             CardContent::new()
                                 .child(
                                     Node::element("div")
                                         .attr("class", "text-2xl font-bold")
-                                        .child(Node::text("9,012"))
+                                        .child(Node::text("9,012")),
                                 )
-                                .render()
+                                .render(),
                         )
-                        .render()
+                        .render(),
                 )
-                .render()
+                .render(),
         )
         .render_to_string();
-    
+
     println!("{}\n", dashboard);
 
     // 11. Routes Table

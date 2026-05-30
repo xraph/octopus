@@ -90,7 +90,12 @@ impl Render for Icon {
 
         // For now, return a placeholder icon
         // In a full implementation, this would look up the icon path data
-        svg.child(Node::element("circle").attr("cx", "12").attr("cy", "12").attr("r", "10"))
+        svg.child(
+            Node::element("circle")
+                .attr("cx", "12")
+                .attr("cy", "12")
+                .attr("r", "10"),
+        )
     }
 }
 

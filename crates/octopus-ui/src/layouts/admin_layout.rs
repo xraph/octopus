@@ -107,26 +107,24 @@ impl AdminLayout {
         Node::element("main")
             .attr("class", "flex-1 overflow-y-auto")
             .child(
-                Node::element("div")
-                    .attr("class", "border-b")
-                    .child(
-                        Node::element("div")
-                            .attr("class", "flex h-16 items-center px-6")
-                            .child(
-                                Node::element("h2")
-                                    .attr("class", "text-2xl font-bold")
-                                    .child(Node::text(&self.title)),
-                            )
-                            .child(
-                                Node::element("div")
-                                    .attr("class", "ml-auto flex items-center gap-4")
-                                    .child(
-                                        Node::element("span")
-                                            .attr("class", "text-sm text-muted-foreground")
-                                            .child(Node::text("Built with octopus-ui")),
-                                    ),
-                            ),
-                    ),
+                Node::element("div").attr("class", "border-b").child(
+                    Node::element("div")
+                        .attr("class", "flex h-16 items-center px-6")
+                        .child(
+                            Node::element("h2")
+                                .attr("class", "text-2xl font-bold")
+                                .child(Node::text(&self.title)),
+                        )
+                        .child(
+                            Node::element("div")
+                                .attr("class", "ml-auto flex items-center gap-4")
+                                .child(
+                                    Node::element("span")
+                                        .attr("class", "text-sm text-muted-foreground")
+                                        .child(Node::text("Built with octopus-ui")),
+                                ),
+                        ),
+                ),
             )
             .child(
                 Node::element("div")
@@ -148,5 +146,3 @@ pub mod icons {
     pub const HEALTH: &str = r#"<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>"#;
     pub const PLUGINS: &str = r#"<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" /></svg>"#;
 }
-
-

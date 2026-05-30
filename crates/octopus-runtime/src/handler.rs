@@ -290,9 +290,7 @@ impl RequestHandler {
                                 .status(StatusCode::UNAUTHORIZED)
                                 .header("Content-Type", "application/json")
                                 .header("WWW-Authenticate", "Bearer")
-                                .body(buffered(
-                                    serde_json::to_vec(&body).unwrap_or_default(),
-                                ))
+                                .body(buffered(serde_json::to_vec(&body).unwrap_or_default()))
                                 .unwrap());
                         }
                         Err(_) => {
@@ -413,10 +411,7 @@ impl RequestHandler {
         if path.starts_with("/farp") {
             if let Some(farp_handler) = &self.farp_handler {
                 debug!("Routing to FARP handler");
-                return farp_handler
-                    .handle(req)
-                    .await
-                    .map(|r| r.map(Either::Left));
+                return farp_handler.handle(req).await.map(|r| r.map(Either::Left));
             }
         }
 
@@ -438,10 +433,9 @@ impl RequestHandler {
                     builder = builder.header(key, value);
                 }
 
-                let internal_req =
-                    builder.uri(internal_path).body(body).map_err(|e| {
-                        Error::InvalidRequest(format!("Failed to build request: {}", e))
-                    })?;
+                let internal_req = builder.uri(internal_path).body(body).map_err(|e| {
+                    Error::InvalidRequest(format!("Failed to build request: {}", e))
+                })?;
 
                 return farp_handler
                     .handle(internal_req)
@@ -457,34 +451,33 @@ impl RequestHandler {
                     protocol = %handler.protocol_type(),
                     "Routing to protocol handler"
                 );
-                return handler
-                    .handle(req)
-                    .await
-                    .map(|r| r.map(Either::Left));
+                return handler.handle(req).await.map(|r| r.map(Either::Left));
             }
         }
 
         // Pre-match route to inject auth context into extensions for auth middleware
         if let Ok(route) = self.router.find_route(req.method(), req.uri().path()) {
-            req.extensions_mut().insert(octopus_middleware::MatchedRouteAuth {
-                auth_provider: route.auth_provider.clone(),
-                skip_auth: route.skip_auth,
-                require_roles: route.require_roles.clone(),
-                require_scopes: route.require_scopes.clone(),
-                authz_rule: route.authz_rule.clone(),
-                upstream: route.upstream_name.clone(),
-                metadata: route.metadata.clone(),
-            });
+            req.extensions_mut()
+                .insert(octopus_middleware::MatchedRouteAuth {
+                    auth_provider: route.auth_provider.clone(),
+                    skip_auth: route.skip_auth,
+                    require_roles: route.require_roles.clone(),
+                    require_scopes: route.require_scopes.clone(),
+                    authz_rule: route.authz_rule.clone(),
+                    upstream: route.upstream_name.clone(),
+                    metadata: route.metadata.clone(),
+                });
 
             // Inject per-route CORS override if configured
             if let Some(ref cors_override) = route.cors {
-                req.extensions_mut().insert(octopus_middleware::MatchedRouteCors {
-                    allowed_origins: cors_override.allowed_origins.clone(),
-                    allowed_methods: cors_override.allowed_methods.clone(),
-                    allowed_headers: cors_override.allowed_headers.clone(),
-                    allow_credentials: cors_override.allow_credentials,
-                    max_age: cors_override.max_age,
-                });
+                req.extensions_mut()
+                    .insert(octopus_middleware::MatchedRouteCors {
+                        allowed_origins: cors_override.allowed_origins.clone(),
+                        allowed_methods: cors_override.allowed_methods.clone(),
+                        allowed_headers: cors_override.allowed_headers.clone(),
+                        allow_credentials: cors_override.allow_credentials,
+                        max_age: cors_override.max_age,
+                    });
             }
         }
 
@@ -498,20 +491,17 @@ impl RequestHandler {
             // Create final handler closure
             // Middleware chain operates on Full<Bytes> bodies (octopus_core::middleware::Body)
             let handler = self.clone();
-            let final_handler =
-                Box::new(move |req: Request<octopus_core::middleware::Body>| {
-                    let handler = handler.clone();
-                    Box::pin(async move { handler.handle_proxy_request(req).await })
-                        as std::pin::Pin<
-                            Box<
-                                dyn std::future::Future<
-                                        Output = Result<
-                                            Response<octopus_core::middleware::Body>,
-                                        >,
-                                    > + Send,
-                            >,
-                        >
-                });
+            let final_handler = Box::new(move |req: Request<octopus_core::middleware::Body>| {
+                let handler = handler.clone();
+                Box::pin(async move { handler.handle_proxy_request(req).await })
+                    as std::pin::Pin<
+                        Box<
+                            dyn std::future::Future<
+                                    Output = Result<Response<octopus_core::middleware::Body>>,
+                                > + Send,
+                        >,
+                    >
+            });
 
             // Execute middleware chain with final handler
             let next = octopus_core::middleware::Next::with_handler(
@@ -522,7 +512,9 @@ impl RequestHandler {
         }
 
         // No middleware, handle directly
-        self.handle_proxy_request(req).await.map(|r| r.map(Either::Left))
+        self.handle_proxy_request(req)
+            .await
+            .map(|r| r.map(Either::Left))
     }
 
     /// Handle WebSocket upgrade requests.
@@ -536,10 +528,7 @@ impl RequestHandler {
     /// 4. Only on success → build 101 response, extract OnUpgrade
     /// 5. Spawn background proxy task with already-connected upstream
     /// 6. Return 101 to client
-    async fn handle_websocket_upgrade(
-        &self,
-        mut req: Request<Incoming>,
-    ) -> Result<Response<Body>> {
+    async fn handle_websocket_upgrade(&self, mut req: Request<Incoming>) -> Result<Response<Body>> {
         let method = req.method().clone();
         let path = req.uri().path().to_string();
 
@@ -636,11 +625,19 @@ impl RequestHandler {
                                 ms = stats.duration.as_millis() as u64,
                                 "WebSocket proxy completed"
                             );
-                            metrics.record_request(&route_key, stats.duration, RequestOutcome::Success);
+                            metrics.record_request(
+                                &route_key,
+                                stats.duration,
+                                RequestOutcome::Success,
+                            );
                         }
                         Err(e) => {
                             tracing::warn!(error = %e, "WebSocket proxy error");
-                            metrics.record_request(&route_key, std::time::Duration::ZERO, RequestOutcome::Error);
+                            metrics.record_request(
+                                &route_key,
+                                std::time::Duration::ZERO,
+                                RequestOutcome::Error,
+                            );
                         }
                     }
                 }
@@ -690,10 +687,13 @@ impl RequestHandler {
         })?;
 
         // Select upstream instance
-        let instance = self.router.select_instance(&route.upstream_name).map_err(|e| {
-            tracing::error!(upstream = %route.upstream_name, error = %e, "No upstream for SSE");
-            Error::NoHealthyUpstream
-        })?;
+        let instance = self
+            .router
+            .select_instance(&route.upstream_name)
+            .map_err(|e| {
+                tracing::error!(upstream = %route.upstream_name, error = %e, "No upstream for SSE");
+                Error::NoHealthyUpstream
+            })?;
 
         // Build upstream URL with path rewriting + query string
         let mut upstream_path = path.clone();
@@ -816,15 +816,15 @@ impl RequestHandler {
             );
         }
         if !headers.contains_key("cache-control") {
-            headers.insert(
-                http::header::CACHE_CONTROL,
-                "no-cache".parse().unwrap(),
-            );
+            headers.insert(http::header::CACHE_CONTROL, "no-cache".parse().unwrap());
         }
 
         // Record the SSE connection start
-        self.metrics_collector
-            .record_request(&route_key, std::time::Duration::ZERO, RequestOutcome::Success);
+        self.metrics_collector.record_request(
+            &route_key,
+            std::time::Duration::ZERO,
+            RequestOutcome::Success,
+        );
 
         // Schedule cleanup when the response body is eventually dropped
         let instance_for_drop = instance_cleanup;
@@ -839,7 +839,13 @@ impl RequestHandler {
             // For accurate tracking, we'd wrap the body in a custom stream.
             // For now, rely on the upstream connection close propagating.
             // TODO: Wrap in custom body adapter for precise drop detection
-            let _ = (instance_for_drop, sse_drop_count, metrics_drop, route_key_drop, _start);
+            let _ = (
+                instance_for_drop,
+                sse_drop_count,
+                metrics_drop,
+                route_key_drop,
+                _start,
+            );
         });
 
         Ok(response)
@@ -849,10 +855,7 @@ impl RequestHandler {
     ///
     /// Called BEFORE body buffering so streaming RPCs work.
     /// Routes gRPC requests to upstream services via HTTP/2 connections.
-    async fn handle_grpc_proxy(
-        &self,
-        req: Request<Incoming>,
-    ) -> Result<Response<Body>> {
+    async fn handle_grpc_proxy(&self, req: Request<Incoming>) -> Result<Response<Body>> {
         let method = req.method().clone();
         let path = req.uri().path().to_string();
 
@@ -887,10 +890,13 @@ impl RequestHandler {
             Error::RouteNotFound(format!("No route for gRPC service: {service}"))
         })?;
 
-        let instance = self.router.select_instance(&route.upstream_name).map_err(|e| {
-            error!(upstream = %route.upstream_name, error = %e, "No upstream for gRPC");
-            Error::NoHealthyUpstream
-        })?;
+        let instance = self
+            .router
+            .select_instance(&route.upstream_name)
+            .map_err(|e| {
+                error!(upstream = %route.upstream_name, error = %e, "No upstream for gRPC");
+                Error::NoHealthyUpstream
+            })?;
 
         // Build upstream URL
         let upstream_base = instance.base_url();
@@ -943,10 +949,7 @@ impl RequestHandler {
         let proxy = self.proxy.clone();
         let result = if let Some(deadline_duration) = deadline {
             // Remaining deadline propagation
-            let remaining = format!(
-                "{}m",
-                deadline_duration.as_millis()
-            );
+            let remaining = format!("{}m", deadline_duration.as_millis());
             upstream_req
                 .headers_mut()
                 .insert("grpc-timeout", remaining.parse().unwrap());
@@ -1097,7 +1100,11 @@ impl RequestHandler {
         if upstream_path != path {
             // Rebuild the URI with the rewritten path
             let mut parts = req.uri().clone().into_parts();
-            let query = req.uri().query().map(|q| format!("?{q}")).unwrap_or_default();
+            let query = req
+                .uri()
+                .query()
+                .map(|q| format!("?{q}"))
+                .unwrap_or_default();
             parts.path_and_query = Some(
                 format!("{upstream_path}{query}")
                     .parse()
@@ -1171,11 +1178,7 @@ impl RequestHandler {
     }
 
     /// Create a buffered error response
-    fn error_response(
-        &self,
-        status: StatusCode,
-        message: &str,
-    ) -> Result<Response<Full<Bytes>>> {
+    fn error_response(&self, status: StatusCode, message: &str) -> Result<Response<Full<Bytes>>> {
         Response::builder()
             .status(status)
             .header("content-type", "text/plain")
@@ -1185,11 +1188,7 @@ impl RequestHandler {
 
     /// Create a streaming-typed error response (for use in contexts returning `Body`)
     #[allow(dead_code)]
-    fn error_body_response(
-        &self,
-        status: StatusCode,
-        message: &str,
-    ) -> Result<Response<Body>> {
+    fn error_body_response(&self, status: StatusCode, message: &str) -> Result<Response<Body>> {
         Response::builder()
             .status(status)
             .header("content-type", "text/plain")

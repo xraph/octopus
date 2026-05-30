@@ -79,7 +79,10 @@ impl HeaderTransform {
 
         // 2. Rename headers (old -> new)
         for (old_name, new_name) in &rules.rename {
-            if let (Ok(old), Ok(new)) = (old_name.parse::<HeaderName>(), new_name.parse::<HeaderName>()) {
+            if let (Ok(old), Ok(new)) = (
+                old_name.parse::<HeaderName>(),
+                new_name.parse::<HeaderName>(),
+            ) {
                 if let Some(value) = headers.remove(&old) {
                     headers.insert(new, value);
                 }
@@ -168,9 +171,7 @@ mod tests {
         }
     }
 
-    fn make_stack(
-        mw: HeaderTransform,
-    ) -> std::sync::Arc<[std::sync::Arc<dyn Middleware>]> {
+    fn make_stack(mw: HeaderTransform) -> std::sync::Arc<[std::sync::Arc<dyn Middleware>]> {
         std::sync::Arc::new([
             std::sync::Arc::new(mw) as std::sync::Arc<dyn Middleware>,
             std::sync::Arc::new(EchoHandler),
@@ -252,11 +253,7 @@ mod tests {
         // x-original should be gone, x-renamed should have its value
         assert!(resp.headers().get("x-original").is_none());
         assert_eq!(
-            resp.headers()
-                .get("x-renamed")
-                .unwrap()
-                .to_str()
-                .unwrap(),
+            resp.headers().get("x-renamed").unwrap().to_str().unwrap(),
             "from-handler"
         );
     }
@@ -281,11 +278,7 @@ mod tests {
 
         let resp = next.run(req).await.unwrap();
         assert_eq!(
-            resp.headers()
-                .get("x-original")
-                .unwrap()
-                .to_str()
-                .unwrap(),
+            resp.headers().get("x-original").unwrap().to_str().unwrap(),
             "overridden"
         );
     }

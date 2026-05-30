@@ -91,10 +91,7 @@ impl RetryPolicy {
 
     /// Check if error is retryable
     pub fn is_error_retryable(&self, error: &Error) -> bool {
-        matches!(
-            error,
-            Error::UpstreamTimeout | Error::UpstreamConnection(_)
-        )
+        matches!(error, Error::UpstreamTimeout | Error::UpstreamConnection(_))
     }
 
     /// Calculate backoff delay for attempt number
@@ -112,25 +109,25 @@ pub enum BackoffStrategy {
         /// Initial delay
         #[serde(with = "humantime_serde")]
         initial: Duration,
-        
+
         /// Maximum delay
         #[serde(with = "humantime_serde")]
         max: Duration,
-        
+
         /// Multiplier factor (typically 2.0)
         factor: f64,
-        
+
         /// Enable jitter to avoid thundering herd
         jitter: bool,
     },
-    
+
     /// Linear backoff
     Linear {
         /// Interval between retries
         #[serde(with = "humantime_serde")]
         interval: Duration,
     },
-    
+
     /// Fixed delay
     Fixed {
         /// Fixed delay between retries
@@ -162,17 +159,17 @@ impl BackoffStrategy {
             } => {
                 let base_delay = initial.as_millis() as f64 * factor.powi(attempt as i32);
                 let mut delay = Duration::from_millis(base_delay as u64);
-                
+
                 // Cap at max delay
                 if delay > *max {
                     delay = *max;
                 }
-                
+
                 // Add jitter if enabled
                 if *jitter {
                     delay = add_jitter(delay);
                 }
-                
+
                 delay
             }
             Self::Linear { interval } => *interval * attempt,
@@ -184,11 +181,11 @@ impl BackoffStrategy {
 /// Add jitter to a duration (±25% randomness)
 fn add_jitter(duration: Duration) -> Duration {
     use rand::Rng;
-    
+
     let millis = duration.as_millis() as f64;
     let jitter_range = millis * 0.25;
     let jitter = rand::thread_rng().gen_range(-jitter_range..=jitter_range);
-    
+
     Duration::from_millis((millis + jitter).max(0.0) as u64)
 }
 
@@ -197,13 +194,13 @@ fn add_jitter(duration: Duration) -> Duration {
 pub struct RetryContext {
     /// Current attempt number (0-indexed)
     pub attempt: u32,
-    
+
     /// Total attempts made so far
     pub total_attempts: u32,
-    
+
     /// Last error encountered
     pub last_error: Option<Error>,
-    
+
     /// Last status code received
     pub last_status: Option<StatusCode>,
 }

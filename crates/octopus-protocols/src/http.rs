@@ -22,7 +22,8 @@ impl Default for HttpHandler {
 
 impl HttpHandler {
     /// Create a new HTTP handler
-    #[must_use] pub fn new() -> Self {
+    #[must_use]
+    pub fn new() -> Self {
         Self {
             allowed_methods: vec![
                 Method::GET,
@@ -37,14 +38,16 @@ impl HttpHandler {
     }
 
     /// Create an HTTP handler with specific allowed methods
-    #[must_use] pub const fn with_methods(methods: Vec<Method>) -> Self {
+    #[must_use]
+    pub const fn with_methods(methods: Vec<Method>) -> Self {
         Self {
             allowed_methods: methods,
         }
     }
 
     /// Check if method is allowed
-    #[must_use] pub fn is_method_allowed(&self, method: &Method) -> bool {
+    #[must_use]
+    pub fn is_method_allowed(&self, method: &Method) -> bool {
         self.allowed_methods.contains(method)
     }
 

@@ -210,7 +210,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_registry_basic() {
-        let registry = AuthProviderRegistry::new(Some("default".to_string()), Duration::from_secs(60));
+        let registry =
+            AuthProviderRegistry::new(Some("default".to_string()), Duration::from_secs(60));
         let provider = Arc::new(MockProvider {
             name: "test".to_string(),
         });

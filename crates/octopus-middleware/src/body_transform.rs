@@ -213,8 +213,7 @@ impl Middleware for BodyTransform {
                     let new_bytes = serde_json::to_vec(&transformed)
                         .map_err(|e| Error::Internal(format!("JSON serialization failed: {e}")))?;
                     let len = new_bytes.len();
-                    let mut new_req =
-                        Request::from_parts(parts, Full::new(Bytes::from(new_bytes)));
+                    let mut new_req = Request::from_parts(parts, Full::new(Bytes::from(new_bytes)));
                     new_req.headers_mut().insert(
                         header::CONTENT_LENGTH,
                         http::HeaderValue::from_str(&len.to_string()).unwrap(),
@@ -323,8 +322,7 @@ mod tests {
         let transform = BodyTransform::with_config(config);
         let handler = EchoHandler;
 
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(transform), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(transform), Arc::new(handler)]);
 
         let input = serde_json::json!({
             "user": {
@@ -364,8 +362,7 @@ mod tests {
             }),
         };
 
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(transform), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(transform), Arc::new(handler)]);
 
         let next = Next::new(stack);
         let req = Request::builder()
@@ -393,8 +390,7 @@ mod tests {
         let transform = BodyTransform::with_config(config);
         let handler = EchoHandler;
 
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(transform), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(transform), Arc::new(handler)]);
 
         let input = serde_json::json!({ "data": 42 });
 
@@ -425,8 +421,7 @@ mod tests {
         let transform = BodyTransform::with_config(config);
         let handler = EchoHandler;
 
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(transform), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(transform), Arc::new(handler)]);
 
         let input = serde_json::json!({ "old_name": "value", "keep": true });
 
@@ -455,8 +450,7 @@ mod tests {
         let transform = BodyTransform::with_config(config);
         let handler = EchoHandler;
 
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(transform), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(transform), Arc::new(handler)]);
 
         let next = Next::new(stack);
         // text/plain -- rules should not be applied
@@ -487,8 +481,7 @@ mod tests {
         let transform = BodyTransform::with_config(config);
         let handler = EchoHandler;
 
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(transform), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(transform), Arc::new(handler)]);
 
         let input = serde_json::json!({
             "internal_id": 12345,

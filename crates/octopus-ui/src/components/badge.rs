@@ -74,10 +74,7 @@ impl Badge {
                 "hover:bg-destructive/80".to_string(),
             ],
         );
-        variant_map.insert(
-            "outline".to_string(),
-            vec!["text-foreground".to_string()],
-        );
+        variant_map.insert("outline".to_string(), vec!["text-foreground".to_string()]);
 
         CVA::new(&[
             "inline-flex",

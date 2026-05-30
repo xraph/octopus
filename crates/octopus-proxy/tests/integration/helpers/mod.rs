@@ -1,7 +1,7 @@
 //! Integration test helpers and utilities
 
-pub mod mock_upstream;
 pub mod fixtures;
+pub mod mock_upstream;
 
-pub use mock_upstream::{MockUpstream, MockConfig, MockResponse};
-pub use fixtures::{TestFixtures, RequestBuilder, UpstreamBuilder};
+pub use fixtures::{RequestBuilder, TestFixtures, UpstreamBuilder};
+pub use mock_upstream::{MockConfig, MockResponse, MockUpstream};

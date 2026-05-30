@@ -118,9 +118,12 @@ impl CircuitState {
         if let Some(at) = *opened {
             if Instant::now().duration_since(at) >= open_timeout {
                 // CAS to ensure only one probe at a time
-                let prev = self
-                    .state
-                    .compare_exchange(STATE_OPEN, STATE_HALF_OPEN, Ordering::SeqCst, Ordering::SeqCst);
+                let prev = self.state.compare_exchange(
+                    STATE_OPEN,
+                    STATE_HALF_OPEN,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                );
                 return prev.is_ok();
             }
         }
@@ -195,9 +198,7 @@ impl CircuitBreaker {
 
     /// Check if a response status code counts as a failure
     fn is_failure_status(&self, status: StatusCode) -> bool {
-        self.config
-            .failure_status_codes
-            .contains(&status.as_u16())
+        self.config.failure_status_codes.contains(&status.as_u16())
     }
 
     /// Build a 503 Service Unavailable response for an open circuit
@@ -251,10 +252,8 @@ impl Middleware for CircuitBreaker {
                 let response = next.run(req).await?;
 
                 if self.is_failure_status(response.status()) {
-                    let should_open = state.record_failure(
-                        self.config.failure_threshold,
-                        self.config.window_size,
-                    );
+                    let should_open = state
+                        .record_failure(self.config.failure_threshold, self.config.window_size);
                     if should_open {
                         tracing::warn!(upstream = %upstream, "Failure threshold reached, opening circuit");
                         state.open();
@@ -381,8 +380,7 @@ mod tests {
         let cb = CircuitBreaker::with_config(config);
         let handler = StatusHandler(StatusCode::INTERNAL_SERVER_ERROR);
 
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(cb.clone()), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(cb.clone()), Arc::new(handler)]);
 
         // Send failure_threshold requests to trigger the circuit open
         for _ in 0..3 {
@@ -397,10 +395,7 @@ mod tests {
         let req = make_request("svc-a");
         let resp = next.run(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(
-            resp.headers().get("X-Circuit-State").unwrap(),
-            "open"
-        );
+        assert_eq!(resp.headers().get("X-Circuit-State").unwrap(), "open");
     }
 
     #[tokio::test]
@@ -422,8 +417,7 @@ mod tests {
             counter: counter.clone(),
         };
 
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(cb.clone()), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(cb.clone()), Arc::new(handler)]);
 
         // Trigger failures to open the circuit
         for _ in 0..2 {
@@ -462,8 +456,7 @@ mod tests {
         let cb = CircuitBreaker::with_config(config);
         let handler = StatusHandler(StatusCode::INTERNAL_SERVER_ERROR);
 
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(cb.clone()), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(cb.clone()), Arc::new(handler)]);
 
         // Trip the circuit for upstream-1
         for _ in 0..2 {

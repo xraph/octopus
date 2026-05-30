@@ -5,7 +5,7 @@ use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, RootCertStore};
 use std::sync::Arc;
 use tokio::net::TcpStream;
-use tokio_rustls::{TlsConnector, client::TlsStream};
+use tokio_rustls::{client::TlsStream, TlsConnector};
 use tracing::{debug, warn};
 
 /// TLS configuration for upstream connections
@@ -13,10 +13,10 @@ use tracing::{debug, warn};
 pub struct TlsConfig {
     /// TLS connector
     connector: Arc<TlsConnector>,
-    
+
     /// Whether to verify server certificates (default: true)
     verify_certificates: bool,
-    
+
     /// Custom root certificates
     root_certs: Option<Arc<RootCertStore>>,
 }
@@ -25,7 +25,7 @@ impl TlsConfig {
     /// Create a new TLS configuration with system root certificates
     pub fn new() -> Result<Self> {
         let mut root_store = RootCertStore::empty();
-        
+
         // Load system root certificates
         match rustls_native_certs::load_native_certs() {
             Ok(certs) => {
@@ -69,7 +69,7 @@ impl TlsConfig {
     }
 
     /// Create a new TLS configuration that skips certificate verification
-    /// 
+    ///
     /// # Security Warning
     /// This is insecure and should only be used for testing or development.
     /// Never use this in production!
@@ -93,11 +93,7 @@ impl TlsConfig {
     }
 
     /// Connect to a TLS server
-    pub async fn connect(
-        &self,
-        stream: TcpStream,
-        domain: &str,
-    ) -> Result<TlsStream<TcpStream>> {
+    pub async fn connect(&self, stream: TcpStream, domain: &str) -> Result<TlsStream<TcpStream>> {
         let server_name = ServerName::try_from(domain.to_string())
             .map_err(|e| Error::UpstreamConnection(format!("Invalid server name: {}", e)))?;
 
@@ -197,7 +193,7 @@ mod tests {
     fn test_tls_config_new() {
         let config = TlsConfig::new();
         assert!(config.is_ok());
-        
+
         let config = config.unwrap();
         assert!(config.verifies_certificates());
     }
@@ -206,17 +202,15 @@ mod tests {
     fn test_tls_config_insecure() {
         let config = TlsConfig::insecure();
         assert!(config.is_ok());
-        
+
         let config = config.unwrap();
         assert!(!config.verifies_certificates());
     }
 
     #[test]
     fn test_tls_config_with_verification() {
-        let config = TlsConfig::new()
-            .unwrap()
-            .with_verification(false);
-        
+        let config = TlsConfig::new().unwrap().with_verification(false);
+
         // Note: This doesn't actually disable verification in the connector,
         // it's just a flag. Use insecure() for that.
         assert!(!config.verifies_certificates());
@@ -226,7 +220,7 @@ mod tests {
     async fn test_tls_connect_invalid_domain() {
         let config = TlsConfig::new().unwrap();
         let stream = TcpStream::connect("1.1.1.1:443").await.unwrap();
-        
+
         // This should fail because the domain is invalid
         let result = config.connect(stream, "").await;
         assert!(result.is_err());

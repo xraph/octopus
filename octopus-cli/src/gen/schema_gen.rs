@@ -21,7 +21,8 @@ pub fn generate_schema(
 ) -> Result<()> {
     let schema = build_schema(gen_config, outputs)?;
 
-    let output_path = if schema_opts.output.starts_with('/') || schema_opts.output.starts_with('.') {
+    let output_path = if schema_opts.output.starts_with('/') || schema_opts.output.starts_with('.')
+    {
         schema_opts.output.clone()
     } else {
         format!("{}/{}", gen_config.output_dir, schema_opts.output)
@@ -46,10 +47,7 @@ pub fn build_schema(gen_config: &GenConfig, outputs: &[GenOutput]) -> Result<Oct
     let mut all_types: HashMap<String, Value> = HashMap::new();
 
     // Type transformation config
-    let type_transforms = gen_config
-        .client
-        .as_ref()
-        .and_then(|c| c.types.as_ref());
+    let type_transforms = gen_config.client.as_ref().and_then(|c| c.types.as_ref());
 
     for output in outputs {
         // Build operations map
@@ -58,8 +56,7 @@ pub fn build_schema(gen_config: &GenConfig, outputs: &[GenOutput]) -> Result<Oct
         for op in &output.scoped_operations {
             let mut params = None;
 
-            let has_params = !op.path_params.is_empty()
-                || !op.query_params.is_empty();
+            let has_params = !op.path_params.is_empty() || !op.query_params.is_empty();
 
             if has_params {
                 let mut path_map = HashMap::new();
@@ -220,7 +217,10 @@ pub fn build_schema(gen_config: &GenConfig, outputs: &[GenOutput]) -> Result<Oct
         services.insert(
             output.name.clone(),
             OctopusServiceSchema {
-                base_path: output.prefix.clone().unwrap_or_else(|| format!("/{}", output.name)),
+                base_path: output
+                    .prefix
+                    .clone()
+                    .unwrap_or_else(|| format!("/{}", output.name)),
                 upstream: OctopusUpstream {
                     host: output.upstream.host.clone(),
                     port: output.upstream.port,
@@ -471,10 +471,7 @@ mod tests {
         };
 
         assert_eq!(transform_type_name("OldName", Some(&transforms)), "NewName");
-        assert_eq!(
-            transform_type_name("Other", Some(&transforms)),
-            "Other"
-        );
+        assert_eq!(transform_type_name("Other", Some(&transforms)), "Other");
     }
 
     #[test]
@@ -493,10 +490,7 @@ mod tests {
             ],
         };
 
-        assert_eq!(
-            transform_type_name("DtoUser", Some(&transforms)),
-            "User"
-        );
+        assert_eq!(transform_type_name("DtoUser", Some(&transforms)), "User");
         assert_eq!(
             transform_type_name("UserResponse", Some(&transforms)),
             "User"

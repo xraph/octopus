@@ -75,11 +75,8 @@ impl HttpClient {
         let mut pooled_conn = self.pool.get_connection(upstream).await?;
 
         // Send request with timeout
-        let result = tokio::time::timeout(
-            self.timeout,
-            pooled_conn.sender().send_request(req),
-        )
-        .await;
+        let result =
+            tokio::time::timeout(self.timeout, pooled_conn.sender().send_request(req)).await;
 
         let response = match result {
             Ok(Ok(resp)) => {

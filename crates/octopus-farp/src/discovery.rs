@@ -59,7 +59,8 @@ impl std::fmt::Debug for DiscoveryWatcher {
 
 impl DiscoveryWatcher {
     /// Create a new discovery watcher with default grace period (3 misses = 15 seconds)
-    #[must_use] pub fn new(registry: Arc<SchemaRegistry>, watch_interval: Duration) -> Self {
+    #[must_use]
+    pub fn new(registry: Arc<SchemaRegistry>, watch_interval: Duration) -> Self {
         Self::with_grace_period(registry, watch_interval, 3)
     }
 
@@ -68,7 +69,8 @@ impl DiscoveryWatcher {
     /// `max_missed_discoveries`: Number of consecutive missed discoveries before deregistering
     /// For example, with 5s `watch_interval` and `max_missed=3`, a service must be missing for
     /// 15 seconds before being deregistered
-    #[must_use] pub fn with_grace_period(
+    #[must_use]
+    pub fn with_grace_period(
         registry: Arc<SchemaRegistry>,
         watch_interval: Duration,
         max_missed_discoveries: u32,
@@ -87,7 +89,8 @@ impl DiscoveryWatcher {
     }
 
     /// Create a new discovery watcher with custom federation
-    #[must_use] pub fn with_federation(
+    #[must_use]
+    pub fn with_federation(
         registry: Arc<SchemaRegistry>,
         watch_interval: Duration,
         max_missed_discoveries: u32,
@@ -107,7 +110,8 @@ impl DiscoveryWatcher {
     }
 
     /// Set the router for dynamic route registration
-    #[must_use] pub fn with_router(mut self, router: Arc<Router>) -> Self {
+    #[must_use]
+    pub fn with_router(mut self, router: Arc<Router>) -> Self {
         self.router = Some(router);
         self
     }
@@ -486,8 +490,7 @@ impl DiscoveryWatcher {
         );
 
         let mut cluster = UpstreamCluster::new(service_name);
-        let instance =
-            UpstreamInstance::new(format!("{service_name}-instance-1"), address, port);
+        let instance = UpstreamInstance::new(format!("{service_name}-instance-1"), address, port);
         cluster.add_instance(instance);
 
         router.register_upstream(cluster);
@@ -532,10 +535,8 @@ impl DiscoveryWatcher {
         if let Ok(registration) = self.registry.get_service(service_name) {
             if registration.manifest.has_route_table() {
                 let route_gen = crate::route_generator::RouteGenerator::new();
-                let routes = route_gen.generate_from_route_table(
-                    &registration.manifest.route_table,
-                    service_name,
-                );
+                let routes = route_gen
+                    .generate_from_route_table(&registration.manifest.route_table, service_name);
                 info!(
                     service = %service_name,
                     route_count = routes.len(),

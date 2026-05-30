@@ -100,10 +100,7 @@ impl Redirect {
         let mut compiled_rules = Vec::with_capacity(config.rules.len());
         for rule in &config.rules {
             let pattern = Regex::new(&rule.from).map_err(|e| {
-                Error::Config(format!(
-                    "Invalid redirect regex '{}': {}",
-                    rule.from, e
-                ))
+                Error::Config(format!("Invalid redirect regex '{}': {}", rule.from, e))
             })?;
             let status = StatusCode::from_u16(rule.status).map_err(|_| {
                 Error::Config(format!("Invalid redirect status code: {}", rule.status))
@@ -144,10 +141,7 @@ impl Redirect {
             let authority = host
                 .or_else(|| uri.authority().map(|a| a.as_str()))
                 .unwrap_or("localhost");
-            let path_and_query = uri
-                .path_and_query()
-                .map(|pq| pq.as_str())
-                .unwrap_or("/");
+            let path_and_query = uri.path_and_query().map(|pq| pq.as_str()).unwrap_or("/");
             Some(format!("https://{}{}", authority, path_and_query))
         } else {
             None
@@ -271,9 +265,7 @@ mod tests {
         }
     }
 
-    fn make_stack(
-        mw: Redirect,
-    ) -> std::sync::Arc<[std::sync::Arc<dyn Middleware>]> {
+    fn make_stack(mw: Redirect) -> std::sync::Arc<[std::sync::Arc<dyn Middleware>]> {
         std::sync::Arc::new([
             std::sync::Arc::new(mw) as std::sync::Arc<dyn Middleware>,
             std::sync::Arc::new(PassthroughHandler),
@@ -404,10 +396,7 @@ mod tests {
         let stack = make_stack(mw);
         let next = Next::new(stack);
 
-        let req = Request::builder()
-            .uri("/")
-            .body(Body::from(""))
-            .unwrap();
+        let req = Request::builder().uri("/").body(Body::from("")).unwrap();
 
         let resp = next.run(req).await.unwrap();
         // Root path should not be stripped

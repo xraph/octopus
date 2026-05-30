@@ -40,11 +40,7 @@ impl Default for DeduplicationConfig {
         Self {
             header_name: "Idempotency-Key".to_string(),
             ttl: Duration::from_secs(24 * 60 * 60),
-            methods: vec![
-                "POST".to_string(),
-                "PUT".to_string(),
-                "PATCH".to_string(),
-            ],
+            methods: vec!["POST".to_string(), "PUT".to_string(), "PATCH".to_string()],
             max_entries: 10_000,
         }
     }
@@ -255,10 +251,7 @@ mod tests {
         }
     }
 
-    fn make_stack(
-        dedup: Deduplication,
-        handler: CountingHandler,
-    ) -> Arc<[Arc<dyn Middleware>]> {
+    fn make_stack(dedup: Deduplication, handler: CountingHandler) -> Arc<[Arc<dyn Middleware>]> {
         Arc::new([
             Arc::new(dedup) as Arc<dyn Middleware>,
             Arc::new(handler) as Arc<dyn Middleware>,

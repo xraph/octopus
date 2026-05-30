@@ -28,10 +28,10 @@ pub struct AdminHandler {
     // The Octopus router (for getting route data)
     router: Arc<Router>,
     request_count: Arc<AtomicUsize>,
-    
+
     // The Axum router for admin dashboard (handles all /admin routes)
     admin_router: AxumRouter,
-    
+
     // State needed for metrics display
     #[allow(dead_code)]
     app_state: Arc<AppState>,
@@ -82,8 +82,9 @@ impl AdminHandler {
 
     /// Create a new admin handler
     pub fn new(router: Arc<Router>, request_count: Arc<AtomicUsize>) -> Self {
-        let app_state =
-            Self::build_app_state(&router, &None, &None, &None, &None, &None, &None, &None, &None);
+        let app_state = Self::build_app_state(
+            &router, &None, &None, &None, &None, &None, &None, &None, &None,
+        );
         let admin_router = DashboardRouter::build(Arc::clone(&app_state));
 
         Self {
@@ -178,10 +179,8 @@ impl AdminHandler {
         }
 
         // Build a Request<Body> for Axum
-        let req_builder = Request::builder()
-            .method(method.clone())
-            .uri(path);
-        
+        let req_builder = Request::builder().method(method.clone()).uri(path);
+
         let req = req_builder
             .body(Body::empty())
             .map_err(|e| Error::InvalidRequest(format!("Failed to build request: {}", e)))?;
@@ -195,7 +194,7 @@ impl AdminHandler {
 
         // Convert Axum Response<Body> to Response<Full<Bytes>>
         let (parts, body) = response.into_parts();
-        
+
         // Collect the body
         let body_bytes = axum::body::to_bytes(body, usize::MAX)
             .await
@@ -224,9 +223,9 @@ impl AdminHandler {
         };
 
         Response::builder()
-                .status(StatusCode::OK)
-                .header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
-                .body(Full::new(Bytes::from(metrics_text)))
+            .status(StatusCode::OK)
+            .header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+            .body(Full::new(Bytes::from(metrics_text)))
             .map_err(|e| Error::InvalidRequest(format!("Failed to build response: {}", e)))
     }
 }

@@ -42,7 +42,9 @@ pub use metrics::{
 };
 pub use pool::{ConnectionPool, Http2Pool, PoolConfig, PoolStats, PooledConnection, UpstreamKey};
 pub use proxy::{HttpProxy, ProxyConfig};
-pub use ratelimit::{InMemoryRateLimiter, RateLimitConfig, RateLimitKeyBuilder, RateLimitResult, RateLimiter};
+pub use ratelimit::{
+    InMemoryRateLimiter, RateLimitConfig, RateLimitKeyBuilder, RateLimitResult, RateLimiter,
+};
 pub use retry::{BackoffStrategy, RetryContext, RetryPolicy};
 pub use routing::{CanaryConfig, Router, RoutingConfig, RoutingStrategy, ShadowConfig};
 pub use shutdown::{ShutdownHandle, ShutdownSignal};

@@ -66,10 +66,7 @@ pub struct PooledConnection {
 
 impl PooledConnection {
     /// Create a new pooled connection
-    pub fn new(
-        sender: http1::SendRequest<Full<Bytes>>,
-        upstream_key: UpstreamKey,
-    ) -> Self {
+    pub fn new(sender: http1::SendRequest<Full<Bytes>>, upstream_key: UpstreamKey) -> Self {
         let now = Instant::now();
         Self {
             sender,
@@ -146,16 +143,16 @@ impl UpstreamKey {
 struct UpstreamPool {
     /// Idle connections ready for reuse
     idle_connections: Arc<Mutex<VecDeque<PooledConnection>>>,
-    
+
     /// Number of active connections
     active_count: AtomicU32,
-    
+
     /// Semaphore to limit max connections
     connection_limit: Arc<Semaphore>,
-    
+
     /// Pool metrics
     metrics: PoolMetrics,
-    
+
     /// Pool configuration
     #[allow(dead_code)]
     config: PoolConfig,
@@ -175,7 +172,9 @@ impl UpstreamPool {
     /// Get connection count (idle + active)
     #[allow(dead_code)]
     fn total_connections(&self) -> u32 {
-        let idle = self.idle_connections.try_lock()
+        let idle = self
+            .idle_connections
+            .try_lock()
             .map(|idle| idle.len() as u32)
             .unwrap_or(0);
         let active = self.active_count.load(Ordering::Relaxed);
@@ -200,13 +199,13 @@ impl UpstreamPool {
 struct PoolMetrics {
     /// Total connections created
     connections_created: AtomicU64,
-    
+
     /// Total connections reused
     connections_reused: AtomicU64,
-    
+
     /// Total connections retired
     connections_retired: AtomicU64,
-    
+
     /// Total connection errors
     connection_errors: AtomicU64,
 }
@@ -253,18 +252,15 @@ impl ConnectionPool {
             pools: Arc::new(DashMap::new()),
             accepting: Arc::new(AtomicBool::new(true)),
         };
-        
+
         // Start background cleanup task
         pool.start_cleanup_task();
-        
+
         pool
     }
 
     /// Get or create a connection for the upstream
-    pub async fn get_connection(
-        &self,
-        instance: &UpstreamInstance,
-    ) -> Result<PooledConnection> {
+    pub async fn get_connection(&self, instance: &UpstreamInstance) -> Result<PooledConnection> {
         if !self.accepting.load(Ordering::Relaxed) {
             return Err(Error::UpstreamConnection(
                 "Pool is shutting down".to_string(),
@@ -275,7 +271,8 @@ impl ConnectionPool {
         let pool = self.get_or_create_pool(&key);
 
         // Try to acquire a connection slot (respects max_per_upstream limit)
-        let _permit = pool.connection_limit
+        let _permit = pool
+            .connection_limit
             .clone()
             .acquire_owned()
             .await
@@ -287,7 +284,7 @@ impl ConnectionPool {
                 conn.mark_used();
                 pool.active_count.fetch_add(1, Ordering::Relaxed);
                 pool.metrics.record_reused();
-                
+
                 trace!(
                     upstream = %key.host,
                     port = key.port,
@@ -295,7 +292,7 @@ impl ConnectionPool {
                     uses = conn.total_uses,
                     "Reusing pooled connection"
                 );
-                
+
                 return Ok(conn);
             } else {
                 pool.metrics.record_retired();
@@ -310,25 +307,25 @@ impl ConnectionPool {
         // No healthy idle connection, create a new one
         let conn = self.create_connection(instance, &key, &pool).await?;
         pool.active_count.fetch_add(1, Ordering::Relaxed);
-        
+
         Ok(conn)
     }
 
     /// Return a connection to the pool
     pub async fn return_connection(&self, mut conn: PooledConnection) {
         let key = conn.upstream_key.clone();
-        
+
         if let Some(pool) = self.pools.get(&key) {
             pool.active_count.fetch_sub(1, Ordering::Relaxed);
-            
+
             // Check if connection is still healthy and pool has space
             if conn.is_healthy(&self.config) && self.accepting.load(Ordering::Relaxed) {
                 let mut idle = pool.idle_connections.lock().await;
-                
+
                 if idle.len() < self.config.max_idle_per_upstream {
                     conn.last_used = Instant::now();
                     idle.push_back(conn);
-                    
+
                     trace!(
                         upstream = %key.host,
                         port = key.port,
@@ -362,20 +359,17 @@ impl ConnectionPool {
         pool: &UpstreamPool,
     ) -> Result<PooledConnection> {
         let addr = format!("{}:{}", instance.address, instance.port);
-        
+
         debug!(upstream = %addr, "Creating new connection");
-        
+
         // Connect with timeout
-        let stream = timeout(
-            self.config.connect_timeout,
-            TcpStream::connect(&addr),
-        )
-        .await
-        .map_err(|_| Error::UpstreamTimeout)?
-        .map_err(|e| {
-            pool.metrics.record_error();
-            Error::UpstreamConnection(format!("Failed to connect: {}", e))
-        })?;
+        let stream = timeout(self.config.connect_timeout, TcpStream::connect(&addr))
+            .await
+            .map_err(|_| Error::UpstreamTimeout)?
+            .map_err(|e| {
+                pool.metrics.record_error();
+                Error::UpstreamConnection(format!("Failed to connect: {}", e))
+            })?;
 
         // Configure TCP stream
         if let Err(e) = stream.set_nodelay(true) {
@@ -400,7 +394,7 @@ impl ConnectionPool {
         });
 
         pool.metrics.record_created();
-        
+
         info!(
             upstream = %addr,
             total_created = pool.metrics.connections_created.load(Ordering::Relaxed),
@@ -417,7 +411,7 @@ impl ConnectionPool {
         key: &UpstreamKey,
     ) -> Option<PooledConnection> {
         let mut idle = pool.idle_connections.lock().await;
-        
+
         // Try to find a healthy connection
         while let Some(conn) = idle.pop_front() {
             if conn.is_healthy(&self.config) {
@@ -431,7 +425,7 @@ impl ConnectionPool {
                 );
             }
         }
-        
+
         None
     }
 
@@ -447,20 +441,20 @@ impl ConnectionPool {
     fn start_cleanup_task(&self) {
         let pools = self.pools.clone();
         let config = self.config.clone();
-        
+
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(30));
-            
+
             loop {
                 interval.tick().await;
-                
+
                 for entry in pools.iter() {
                     let key = entry.key();
                     let pool = entry.value();
-                    
+
                     let mut idle = pool.idle_connections.lock().await;
                     let original_len = idle.len();
-                    
+
                     // Remove unhealthy connections
                     idle.retain(|conn| {
                         let healthy = conn.is_healthy(&config);
@@ -469,7 +463,7 @@ impl ConnectionPool {
                         }
                         healthy
                     });
-                    
+
                     let removed = original_len - idle.len();
                     if removed > 0 {
                         debug!(
@@ -488,10 +482,12 @@ impl ConnectionPool {
     /// Get pool statistics
     pub fn get_pool_stats(&self, key: &UpstreamKey) -> Option<PoolStats> {
         self.pools.get(key).map(|pool| {
-            let idle = pool.idle_connections.try_lock()
+            let idle = pool
+                .idle_connections
+                .try_lock()
                 .map(|idle| idle.len())
                 .unwrap_or(0);
-            
+
             PoolStats {
                 idle_connections: idle,
                 active_connections: pool.active_count.load(Ordering::Relaxed) as usize,
@@ -516,28 +512,32 @@ impl ConnectionPool {
     /// Graceful shutdown - drain all connections
     pub async fn graceful_shutdown(&self, timeout_duration: Duration) {
         info!("Starting connection pool graceful shutdown");
-        
+
         // Stop accepting new connections
         self.accepting.store(false, Ordering::SeqCst);
-        
+
         let deadline = Instant::now() + timeout_duration;
-        
+
         // Wait for active connections to finish
         while Instant::now() < deadline {
-            let total_active: u32 = self.pools
+            let total_active: u32 = self
+                .pools
                 .iter()
                 .map(|entry| entry.value().active_count.load(Ordering::Relaxed))
                 .sum();
-            
+
             if total_active == 0 {
                 info!("All connections drained gracefully");
                 break;
             }
-            
-            debug!(active_connections = total_active, "Waiting for connections to drain");
+
+            debug!(
+                active_connections = total_active,
+                "Waiting for connections to drain"
+            );
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        
+
         // Close all idle connections
         let mut total_closed = 0;
         for entry in self.pools.iter() {
@@ -545,14 +545,14 @@ impl ConnectionPool {
             total_closed += idle.len();
             idle.clear();
         }
-        
+
         if total_closed > 0 {
             info!(closed_connections = total_closed, "Closed idle connections");
         }
-        
+
         // Clear all pools
         self.pools.clear();
-        
+
         info!("Connection pool shutdown complete");
     }
 }
@@ -648,12 +648,13 @@ impl Http2Pool {
         }
 
         let io = TokioIo::new(stream);
-        let (sender, conn) = hyper::client::conn::http2::Builder::new(
-            hyper_util::rt::TokioExecutor::new(),
-        )
-        .handshake(io)
-        .await
-        .map_err(|e| Error::UpstreamConnection(format!("HTTP/2 handshake failed: {}", e)))?;
+        let (sender, conn) =
+            hyper::client::conn::http2::Builder::new(hyper_util::rt::TokioExecutor::new())
+                .handshake(io)
+                .await
+                .map_err(|e| {
+                    Error::UpstreamConnection(format!("HTTP/2 handshake failed: {}", e))
+                })?;
 
         // Spawn connection driver task
         tokio::spawn(async move {
@@ -709,7 +710,7 @@ mod tests {
     fn test_upstream_key() {
         let instance = UpstreamInstance::new("test-1", "localhost", 8080);
         let key = UpstreamKey::from_instance(&instance);
-        
+
         assert_eq!(key.host, "localhost");
         assert_eq!(key.port, 8080);
     }

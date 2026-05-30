@@ -116,7 +116,8 @@ where
 /// Parse a DER-encoded X.509 certificate and extract the subject CN
 fn extract_cn_from_der(der: &[u8]) -> Option<String> {
     let (_, cert) = X509Certificate::from_der(der).ok()?;
-    let result = cert.subject()
+    let result = cert
+        .subject()
         .iter_common_name()
         .next()
         .and_then(|cn| cn.as_str().ok())

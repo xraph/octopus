@@ -172,11 +172,10 @@ impl Compression {
             CompressionAlgorithm::Brotli => {
                 let mut output = Vec::with_capacity(input.len());
                 {
-                    let mut encoder =
-                        brotli::CompressorWriter::new(&mut output, 4096, level, 22);
-                    encoder
-                        .write_all(input)
-                        .map_err(|e| Error::Internal(format!("brotli compression failed: {}", e)))?;
+                    let mut encoder = brotli::CompressorWriter::new(&mut output, 4096, level, 22);
+                    encoder.write_all(input).map_err(|e| {
+                        Error::Internal(format!("brotli compression failed: {}", e))
+                    })?;
                     // CompressorWriter flushes on drop, but we explicitly drop to capture errors
                 }
                 output

@@ -31,9 +31,7 @@ pub mod types;
 pub mod validation;
 
 // Re-export key adapter types (avoiding conflicts with local types)
-pub use adapter::{
-    EventType, ManifestEvent, RegistryAdapter, SchemaManifestAdapter,
-};
+pub use adapter::{EventType, ManifestEvent, RegistryAdapter, SchemaManifestAdapter};
 
 pub use api::{FarpApiHandler, RegistrationRequest, RegistrationResponse};
 pub use client::{FarpClient, FarpClientConfig};
@@ -54,15 +52,14 @@ pub use validation::ManifestValidator;
 
 // Re-export v1.1.0 types from external farp crate for gateway-level configuration
 pub use farp::types::{
-    RouteDescriptor, RateLimitConfig as FarpRateLimitConfig,
-    CircuitBreakerConfig as FarpCircuitBreakerConfig, CORSConfig, CacheConfig,
-    LoadBalancingConfig, LoadBalancingStrategy, MiddlewareDeclaration,
-    TransformationConfig, APIVersioningConfig, ObservabilityConfig, TracingConfig,
-    GracefulShutdownConfig, InstanceRole, DeploymentStrategy, InstanceMetadata,
-    RouteMetadata as FarpRouteMetadata, RoutingConfig, MountStrategy,
-    WebhookConfig, WebhookEventType, CommunicationRouteType,
-    RateLimitStrategy as FarpRateLimitStrategy, RateLimitKey,
-    StickySessionConfig, VersioningStrategy, VersionDeprecationPolicy,
+    APIVersioningConfig, CORSConfig, CacheConfig, CircuitBreakerConfig as FarpCircuitBreakerConfig,
+    CommunicationRouteType, DeploymentStrategy, GracefulShutdownConfig, InstanceMetadata,
+    InstanceRole, LoadBalancingConfig, LoadBalancingStrategy, MiddlewareDeclaration, MountStrategy,
+    ObservabilityConfig, RateLimitConfig as FarpRateLimitConfig, RateLimitKey,
+    RateLimitStrategy as FarpRateLimitStrategy, RouteDescriptor,
+    RouteMetadata as FarpRouteMetadata, RoutingConfig, StickySessionConfig, TracingConfig,
+    TransformationConfig, VersionDeprecationPolicy, VersioningStrategy, WebhookConfig,
+    WebhookEventType,
 };
 
 /// Re-export commonly used types

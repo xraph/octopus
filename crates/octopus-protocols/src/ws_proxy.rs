@@ -60,7 +60,12 @@ pub async fn connect_upstream(
         connect_async_with_config(request, Some(ws_config), false).await
     })
     .await
-    .map_err(|_| format!("Upstream WebSocket connect timeout after {:?}", config.connect_timeout))?
+    .map_err(|_| {
+        format!(
+            "Upstream WebSocket connect timeout after {:?}",
+            config.connect_timeout
+        )
+    })?
     .map_err(|e| format!("Upstream WebSocket connect failed: {e}"))?;
 
     info!(upstream = %upstream_url, "Upstream WebSocket connected");
@@ -179,7 +184,13 @@ where
     }
 
     let duration = start.elapsed();
-    info!(c2u, u2c, bytes, ms = duration.as_millis() as u64, "WebSocket session closed");
+    info!(
+        c2u,
+        u2c,
+        bytes,
+        ms = duration.as_millis() as u64,
+        "WebSocket session closed"
+    );
 
     Ok(WebSocketSessionStats {
         client_to_upstream: c2u,

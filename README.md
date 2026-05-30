@@ -1,546 +1,176 @@
-# 🐙 Octopus API Gateway
+# Octopus
 
-FARP™ and Octopus Gateway™ are open-source projects maintained by XRAPH™.
-Octopus Gateway™ is an HTTP/API gateway that natively speaks FARP™.
+An API gateway written in Rust. Octopus routes HTTP traffic to upstream services and can
+discover and configure those services automatically through FARP, the Forge API Gateway
+Registration Protocol.
 
-**High-Performance, Extensible API Gateway in Rust**
-
-[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
-[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
 [![CI](https://github.com/xraph/octopus/workflows/CI/badge.svg)](https://github.com/xraph/octopus/actions)
-
-> A cloud-native API gateway with automatic service discovery (FARP), dynamic routing, multi-protocol support, and a powerful plugin system.
-
----
-
-## ✨ Features
-
-### 🚀 Core Capabilities
-
-- **🔄 Automatic Service Discovery** - FARP protocol integration for zero-config routing
-- **⚡ High Performance** - 100k+ RPS per instance, P99 latency < 10ms
-- **🔌 Extensible** - Dynamic plugin system for custom functionality
-- **🌐 Multi-Protocol** - REST, gRPC, WebSocket, SSE, GraphQL, WebTransport
-- **📊 Observability** - Prometheus metrics, OpenTelemetry tracing, structured logging
-- **🛡️ Production Ready** - Health checks, circuit breakers, graceful shutdown
-- **📝 Auto-Generated Docs** - Federated OpenAPI/AsyncAPI from services
-
-### 🔌 Protocol Support
-
-| Protocol | Status | Description |
-|----------|--------|-------------|
-| HTTP/1.1 | ✅ | Full support with connection pooling |
-| HTTP/2 | ✅ | Multiplexing, server push |
-| HTTP/3 (QUIC) | 🚧 | Experimental |
-| gRPC | ✅ | Proxying, reflection, transcoding |
-| WebSocket | ✅ | Bidirectional proxying |
-| SSE | ✅ | Server-Sent Events |
-| GraphQL | ✅ | Federation support |
-| WebTransport | 🚧 | Experimental |
-| Custom | ✅ | Via plugins |
-
-### 🎯 Service Discovery Backends
-
-- ✅ Kubernetes (native support)
-- ✅ Consul
-- ✅ etcd
-- ✅ Eureka
-- ✅ DNS SRV records
-- ✅ Static configuration
-
----
-
-## 🚀 Quick Start
-
-### Installation
-
-```bash
-# From source
-cargo install octopus-gateway
-
-# Or download binary
-curl -L https://github.com/xraph/octopus/releases/latest/download/octopus-linux-amd64 -o octopus
-chmod +x octopus
-```
-
-### Basic Usage
-
-```yaml
-# config.yaml
-server:
-  http_port: 8080
-  admin_port: 9090
-
-discovery:
-  backend: kubernetes
-  kubernetes:
-    namespace: default
-
-farp:
-  enabled: true
-  watch_interval: 5s
-```
-
-```bash
-# Run the gateway
-octopus --config config.yaml
-
-# Check health
-curl http://localhost:9090/_/health
-
-# View auto-generated OpenAPI docs
-curl http://localhost:9090/_/openapi.json
-```
-
----
-
-## 📖 Documentation
-
-- **[Architecture Guide](design/ARCHITECTURE.md)** - System design and components
-- **[FARP Integration](design/FARP_INTEGRATION.md)** - Service discovery details
-- **[Plugin System](design/PLUGIN_SYSTEM.md)** - Creating plugins
-- **[Agent Guide](docs/AGENT_GUIDE.md)** - For AI agents and contributors
-- **[API Reference](docs/API.md)** - REST API documentation
-
----
-
-## 🏗️ Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     Client Layer                             │
-│  HTTP/HTTPS │ gRPC │ WebSocket │ GraphQL │ Custom           │
-└───────────────────────────────┬─────────────────────────────┘
-                                │
-┌───────────────────────────────▼─────────────────────────────┐
-│              Octopus API Gateway                             │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  Protocol Layer: HTTP │ gRPC │ WS │ GraphQL         │  │
-│  └────────────────────────┬─────────────────────────────┘  │
-│  ┌────────────────────────▼─────────────────────────────┐  │
-│  │  Middleware: Auth │ RateLimit │ CORS │ Scripting    │  │
-│  └────────────────────────┬─────────────────────────────┘  │
-│  ┌────────────────────────▼─────────────────────────────┐  │
-│  │  Router: Trie-based matching, Load balancing        │  │
-│  └────────────────────────┬─────────────────────────────┘  │
-│  ┌────────────────────────▼─────────────────────────────┐  │
-│  │  Service Registry (FARP Client)                      │  │
-│  └────────────────────────┬─────────────────────────────┘  │
-│  ┌────────────────────────▼─────────────────────────────┐  │
-│  │  Plugin System: Dynamic loading, lifecycle mgmt      │  │
-│  └──────────────────────────────────────────────────────┘  │
-└───────────────────────────────┬─────────────────────────────┘
-                                │
-┌───────────────────────────────▼─────────────────────────────┐
-│          Discovery: K8s │ Consul │ etcd │ Eureka            │
-└───────────────────────────────┬─────────────────────────────┘
-                                │
-┌───────────────────────────────▼─────────────────────────────┐
-│                    Upstream Services                         │
-└──────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 🔌 Plugin System
-
-### Built-in Plugins
-
-- **JWT Authentication** - RS256, HS256, ES256 support
-- **Rate Limiter** - Token bucket, distributed (Redis)
-- **Redis Cache** - Response caching with TTL
-- **Kafka Producer** - Event logging
-- **Metrics Exporter** - InfluxDB, Datadog
-
-### Create a Plugin
-
-```rust
-use octopus_plugins::prelude::*;
-
-pub struct MyPlugin;
-
-#[async_trait]
-impl Plugin for MyPlugin {
-    fn metadata(&self) -> PluginMetadata {
-        PluginMetadata {
-            name: "my-plugin".to_string(),
-            version: semver::Version::new(1, 0, 0),
-            // ...
-        }
-    }
-    
-    fn middleware(&self) -> Vec<Arc<dyn Middleware>> {
-        vec![Arc::new(MyMiddleware)]
-    }
-}
-
-octopus_plugins::export_plugin!(MyPlugin);
-```
-
----
-
-## 🎯 FARP Integration
-
-**FARP (Forge API Gateway Registration Protocol)** enables automatic service discovery and route generation.
-
-### How It Works
-
-1. Services register with a `SchemaManifest` (OpenAPI, AsyncAPI, gRPC protos)
-2. Octopus watches discovery backend for manifest changes
-3. Gateway fetches schemas and generates routes dynamically
-4. Auto-generates federated API documentation
-5. Zero-downtime updates on schema changes
-
-### Example Service Manifest
-
-```json
-{
-  "version": "1.0.0",
-  "service_name": "user-service",
-  "service_version": "v1.2.3",
-  "schemas": [
-    {
-      "type": "openapi",
-      "spec_version": "3.1.0",
-      "location": {
-        "type": "http",
-        "url": "http://user-service:8080/openapi.json"
-      }
-    }
-  ],
-  "capabilities": ["rest", "websocket"],
-  "endpoints": {
-    "health": "/health",
-    "metrics": "/metrics"
-  }
-}
-```
-
-See [FARP Integration Guide](design/FARP_INTEGRATION.md) for details.
-
----
-
-## ⚙️ Configuration
-
-### Full Example
-
-```yaml
-server:
-  http_port: 8080
-  https_port: 8443
-  admin_port: 9090
-  workers: auto  # CPU cores
-
-tls:
-  enabled: true
-  cert: /etc/octopus/tls/cert.pem
-  key: /etc/octopus/tls/key.pem
-
-discovery:
-  backend: kubernetes
-  kubernetes:
-    namespace: default
-    label_selector: "app.kubernetes.io/part-of=octopus"
-
-farp:
-  enabled: true
-  watch_interval: 5s
-  schema_cache_ttl: 5m
-
-routing:
-  load_balance: round-robin
-  timeout: 30s
-  retries: 3
-  circuit_breaker:
-    failure_threshold: 5
-    timeout: 60s
-
-middleware:
-  - auth
-  - rate_limit
-  - cors
-  - compression
-
-plugins:
-  - name: jwt-auth
-    path: /plugins/jwt-auth.so
-    config:
-      secret: ${JWT_SECRET}
-
-admin:
-  enabled: true
-  address: 0.0.0.0:9090
-  auth:
-    type: basic
-    username: admin
-    password_hash: $2b$...
-
-observability:
-  metrics:
-    enabled: true
-    path: /metrics
-  tracing:
-    enabled: true
-    exporter: otlp
-    endpoint: http://jaeger:4317
-  logging:
-    level: info
-    format: json
-```
-
----
-
-## 📊 Observability
-
-### Metrics (Prometheus)
-
-```
-# Gateway metrics
-octopus_requests_total{method, status, route}
-octopus_request_duration_seconds{method, route}
-octopus_upstream_requests_total{upstream, status}
-octopus_active_connections
-octopus_circuit_breaker_state{upstream}
-
-# FARP metrics
-octopus_farp_services_total
-octopus_farp_routes_total{service, type}
-octopus_farp_schema_updates_total{service}
-
-# Plugin metrics
-octopus_plugin_loaded{plugin, version}
-```
-
-### Distributed Tracing
-
-- OpenTelemetry support
-- W3C Trace Context propagation
-- Jaeger, Zipkin, Datadog exporters
-
-### Structured Logging
-
-```json
-{
-  "timestamp": "2025-11-01T12:00:00Z",
-  "level": "info",
-  "message": "request processed",
-  "trace_id": "abc123",
-  "method": "GET",
-  "path": "/users/123",
-  "status": 200,
-  "duration_ms": 45,
-  "upstream": "user-service-v1"
-}
-```
-
----
-
-## 🚢 Deployment
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
+
+Octopus is maintained by Xraph and is part of the [FARP](https://github.com/xraph/farp)
+ecosystem. Most gateways expect you to declare every route by hand. Services that speak FARP
+instead publish their own schemas — OpenAPI, AsyncAPI, gRPC, GraphQL — and Octopus turns those
+schemas into routes as services come and go. You can also run it purely statically by listing
+upstreams and routes in a config file; the two modes work together.
+
+## Capabilities
+
+- HTTP/1.1 and HTTP/2 reverse proxy with connection pooling, configurable timeouts, and
+  WebSocket upgrades.
+- Trie-based router with wildcard path matching, method filtering, prefix stripping, and
+  per-route priorities.
+- Upstream load balancing (round-robin, weighted) with active health checks and circuit
+  breaking.
+- Automatic service discovery via FARP, with backends for mDNS, Consul, Kubernetes, and DNS.
+- A request/response middleware chain: request IDs, CORS, JWT authentication, rate limiting,
+  compression (brotli, zstd, gzip), and inline [Rhai](https://rhai.rs) scripting.
+- A plugin system for bundling custom middleware and behaviour.
+- TLS termination, including mutual TLS and hot certificate reloading.
+- Prometheus metrics, OpenTelemetry/Jaeger tracing, and structured JSON logging.
+- Layered configuration in YAML, JSON, or TOML with environment-variable substitution.
+
+## Installation
 
 ### Docker
 
-```bash
-docker run -p 8080:8080 -p 9090:9090 \
-  -v $(pwd)/config.yaml:/etc/octopus/config.yaml \
-  octopus/octopus:latest
-```
-
-### Kubernetes
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: octopus-gateway
-spec:
-  replicas: 3
-  template:
-    spec:
-      containers:
-      - name: octopus
-        image: octopus/octopus:latest
-        ports:
-        - containerPort: 8080
-          name: http
-        - containerPort: 9090
-          name: admin
-        env:
-        - name: DISCOVERY_BACKEND
-          value: kubernetes
-        resources:
-          requests:
-            memory: "512Mi"
-            cpu: "500m"
-          limits:
-            memory: "2Gi"
-            cpu: "2000m"
-```
-
-### Helm Chart
+Images are published for `linux/amd64` and `linux/arm64` on every release.
 
 ```bash
-helm repo add octopus https://octopus.xraph.com/charts
-helm install my-gateway xraph/octopus \
-  --set discovery.backend=kubernetes \
-  --set farp.enabled=true
+docker run --rm \
+  -p 8080:8080 -p 9090:9090 \
+  -v "$(pwd)/config.yaml:/etc/octopus/config.yaml" \
+  ghcr.io/xraph/octopus:latest
 ```
 
----
+### From source
 
-## 🧪 Development
-
-### Prerequisites
+Requires Rust 1.75 or newer.
 
 ```bash
-# Rust 1.75+
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# Build automation (choose one)
-make help                    # Make (pre-installed on most systems)
-cargo install just && just   # Just (modern, recommended for Rust)
-
-# Optional development tools
-make install-tools           # Install cargo-watch, nextest, audit, etc.
-```
-
-### Build & Test
-
-We provide both **Make** and **Just** for build automation. Choose your preference:
-
-```bash
-# Clone repository
 git clone https://github.com/xraph/octopus.git
 cd octopus
-
-# Using Make (traditional)
-make build          # Build debug version
-make test           # Run tests
-make release        # Build optimized release
-make dev            # Development mode with auto-reload
-
-# Using Just (modern, Rust-friendly)
-just build          # Build debug version
-just test           # Run tests
-just release        # Build optimized release
-just dev            # Development mode with auto-reload
-
-# Or use Cargo directly
-cargo build --all-features
-cargo test --all-features
-cargo bench
+make release
 ```
 
-**📖 For complete build documentation, see [BUILD.md](BUILD.md) or [QUICK_REFERENCE.md](QUICK_REFERENCE.md)**
+The binary is written to `target/release/octopus`.
 
-### Code Quality
+## Quick start
+
+Create a `config.yaml`:
+
+```yaml
+gateway:
+  listen: "0.0.0.0:8080"
+  workers: 0                 # 0 = one worker per CPU core
+
+upstreams:
+  - name: user-service
+    lb_policy: round_robin
+    instances:
+      - id: user-1
+        host: 127.0.0.1
+        port: 8081
+    health_check:
+      type: http
+      path: /health
+      interval: 10s
+
+routes:
+  - path: /api/users/*
+    methods: [GET, POST, PUT, DELETE]
+    upstream: user-service
+    strip_prefix: /api
+```
+
+Validate it, then start the gateway:
 
 ```bash
-# Using Make/Just (recommended)
-make pre-commit     # Run all checks before commit
-make lint           # Format + clippy
-make audit          # Security audit
-make fix            # Auto-fix issues
-
-# Or manually with Cargo
-cargo fmt --all              # Format
-cargo clippy --all-features  # Lint
-cargo audit                  # Security
-cargo deny check             # Dependencies
+octopus validate -c config.yaml
+octopus serve -c config.yaml
 ```
 
----
-
-## 🎯 Performance
-
-### Benchmarks
-
-- **Throughput**: 100k+ RPS per instance (8 cores)
-- **Latency**: P50: 2ms, P99: 8ms, P99.9: 15ms
-- **Memory**: < 100MB baseline, scales linearly
-- **Connection Pool**: 10k+ concurrent connections
-
-### Load Testing
+Requests matching `/api/users/*` are now proxied to `user-service` with the `/api` prefix
+removed:
 
 ```bash
-# Using wrk
-wrk -t12 -c400 -d30s http://localhost:8080/test
-
-# Using k6
-k6 run --vus 1000 --duration 30s load-test.js
+curl http://localhost:8080/api/users/123
 ```
 
----
+`octopus serve` accepts several `-c` flags or a directory. Files are merged in order, so base
+settings and environment overrides can live in separate files.
 
-## 🤝 Contributing
+## Configuration
 
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+Configuration is read from YAML, JSON, or TOML. Values support `${VAR}` and `${VAR:-default}`
+environment substitution. The main sections are:
 
-### Development Workflow
+| Section | Purpose |
+|---------|---------|
+| `gateway` | Listen address, worker count, timeouts, body limits, TLS, compression. |
+| `farp` | Schema watching and the service-discovery backends. |
+| `middleware` | The ordered request/response chain. |
+| `plugins` | Statically or dynamically loaded plugins. |
+| `upstreams` / `routes` | Static service and route definitions, used when not relying on FARP. |
+| `observability` | Metrics, tracing, and logging. |
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Write tests for your changes
-4. Ensure all tests pass (`cargo test`)
-5. Commit your changes (`git commit -m 'feat: add amazing feature'`)
-6. Push to the branch (`git push origin feature/amazing-feature`)
-7. Open a Pull Request
+[`config.example.yaml`](config.example.yaml) is a fully annotated reference covering every
+option.
 
-### Conventional Commits
+## FARP
 
+A service that speaks FARP describes itself with a manifest pointing at one or more schemas.
+Octopus watches the configured discovery backend, fetches each service's schemas, and generates
+routes from them. When a service updates or goes away, its routes change with it — so the
+gateway stays in step with the services behind it without manual edits.
+
+See [design/FARP_INTEGRATION.md](design/FARP_INTEGRATION.md) for the protocol details.
+
+## Building from source
+
+Prerequisites:
+
+- Rust 1.75+
+- `protoc` (Protocol Buffers compiler), used by the gRPC code paths
+- On Linux: `pkg-config` and `libssl-dev`
+
+Common tasks (`make help` lists them all; a `justfile` mirrors the same recipes):
+
+```bash
+make build      # debug build
+make release    # optimized build
+make test       # run the test suite
+make lint       # rustfmt + clippy
+make run        # build and run the gateway
 ```
-feat: add WebSocket support
-fix: resolve race condition in router
-docs: update FARP guide
-perf: optimize route matching
-refactor: simplify plugin loading
-test: add integration tests
-```
 
----
+## Repository layout
 
-## 📄 License
+Octopus is a Cargo workspace. The primary crates:
 
-This project is dual-licensed under:
+| Crate | Responsibility |
+|-------|----------------|
+| `octopus-cli` | The `octopus` binary. |
+| `octopus-runtime` | Server lifecycle and wiring. |
+| `octopus-router` | Request routing. |
+| `octopus-proxy` | Upstream proxying and connection pooling. |
+| `octopus-farp` | FARP client and route generation. |
+| `octopus-discovery` | Service-discovery backends. |
+| `octopus-middleware` | Built-in middleware. |
+| `octopus-auth` | Authentication. |
+| `octopus-plugins` | Plugin loading and lifecycle. |
+| `octopus-scripting` | Rhai scripting engine. |
+| `octopus-config` | Configuration loading and merging. |
+| `octopus-tls` | TLS and certificate handling. |
+| `octopus-metrics` / `octopus-health` | Metrics and health checking. |
 
-- **MIT License** - [LICENSE-MIT](LICENSE-MIT)
-- **Apache License 2.0** - [LICENSE-APACHE](LICENSE-APACHE)
+## Documentation
 
-Choose the license that best suits your needs.
+- [Architecture](design/ARCHITECTURE.md)
+- [FARP integration](design/FARP_INTEGRATION.md)
+- [Plugin system](design/PLUGIN_SYSTEM.md)
+- [Contributing](CONTRIBUTING.md)
 
----
+## License
 
-## 🙏 Acknowledgments
-
-Built with ❤️ by the XRaph.
-
-**Powered by:**
-- [Tokio](https://tokio.rs) - Async runtime
-- [Hyper](https://hyper.rs) - HTTP library
-- [Tower](https://docs.rs/tower) - Middleware framework
-- [Tonic](https://docs.rs/tonic) - gRPC implementation
-- [Forge Framework](https://github.com/xraph/forge) - Go web framework
-
-**Inspired by:**
-- Kong, Traefik, Envoy - Production API gateways
-
----
-
-## 📞 Support
-
-- **📖 Documentation**: [docs/](docs/)
-- **💬 Discussions**: [GitHub Discussions](https://github.com/xraph/octopus/discussions)
-- **🐛 Issues**: [GitHub Issues](https://github.com/xraph/octopus/issues)
-- **📧 Email**: support@octopus.xraph.com
-
----
-
-## 🔗 Links
-
-- **Website**: https://octopus.xraph.com
-- **GitHub**: https://github.com/xraph/octopus
-- **Docs**: https://octopus.xraph.com/docs
-- **Blog**: https://octopus.xraph.com/blog
-
----
-
-**Ready to build? Let's go! 🐙**
+Dual-licensed under either the MIT or Apache-2.0 license, at your option. See [LICENSE](LICENSE).

@@ -35,7 +35,7 @@ impl Default for WebSocketConfig {
     fn default() -> Self {
         Self {
             max_frame_size: 16 * 1024 * 1024,   // 16 MB
-            max_message_size: 64 * 1024 * 1024,  // 64 MB
+            max_message_size: 64 * 1024 * 1024, // 64 MB
             ping_interval: Duration::from_secs(30),
             close_timeout: Duration::from_secs(5),
             connect_timeout: Duration::from_secs(10),
@@ -45,7 +45,9 @@ impl Default for WebSocketConfig {
 
 impl WebSocketConfig {
     /// Build a `tungstenite::protocol::WebSocketConfig` for size limits
-    pub fn to_tungstenite_config(&self) -> tokio_tungstenite::tungstenite::protocol::WebSocketConfig {
+    pub fn to_tungstenite_config(
+        &self,
+    ) -> tokio_tungstenite::tungstenite::protocol::WebSocketConfig {
         tokio_tungstenite::tungstenite::protocol::WebSocketConfig {
             max_frame_size: Some(self.max_frame_size),
             max_message_size: Some(self.max_message_size),

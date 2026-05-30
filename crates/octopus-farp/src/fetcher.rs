@@ -42,12 +42,14 @@ pub struct SchemaFetcher {
 
 impl SchemaFetcher {
     /// Create a new schema fetcher with default settings
-    #[must_use] pub fn new() -> Self {
+    #[must_use]
+    pub fn new() -> Self {
         Self::with_timeout(Duration::from_secs(30))
     }
 
     /// Create a new schema fetcher with custom timeout
-    #[must_use] pub fn with_timeout(timeout: Duration) -> Self {
+    #[must_use]
+    pub fn with_timeout(timeout: Duration) -> Self {
         let http_client = reqwest::Client::builder()
             .timeout(timeout)
             .build()
@@ -60,7 +62,8 @@ impl SchemaFetcher {
     }
 
     /// Set the registry backend
-    #[must_use] pub fn with_registry_backend(mut self, backend: RegistryBackend) -> Self {
+    #[must_use]
+    pub fn with_registry_backend(mut self, backend: RegistryBackend) -> Self {
         self.registry_backend = backend;
         self
     }
@@ -227,13 +230,14 @@ impl SchemaFetcher {
         );
 
         // Use the consul crate's KV read API
-        let (kv_pair, _meta) = client.kv.read(path, None)
+        let (kv_pair, _meta) = client
+            .kv
+            .read(path, None)
             .await
             .map_err(|e| Error::Farp(format!("Consul KV read failed for '{path}': {e}")))?;
 
-        let kv = kv_pair.ok_or_else(|| {
-            Error::Farp(format!("Schema not found in Consul KV at path: {path}"))
-        })?;
+        let kv = kv_pair
+            .ok_or_else(|| Error::Farp(format!("Schema not found in Consul KV at path: {path}")))?;
 
         // Consul KV values are stored as bytes (already decoded by the consul crate)
         let value_str = String::from_utf8(kv.Value.clone().unwrap_or_default())
@@ -263,15 +267,18 @@ impl SchemaFetcher {
         // etcd_client::Client::get requires &mut self, so we clone the client
         // (etcd_client::Client is cheap to clone as it wraps an Arc internally)
         let mut client = client.clone();
-        let response = client.get(path, None)
+        let response = client
+            .get(path, None)
             .await
             .map_err(|e| Error::Farp(format!("etcd get failed for '{path}': {e}")))?;
 
-        let kv = response.kvs().first().ok_or_else(|| {
-            Error::Farp(format!("Schema not found in etcd at key: {path}"))
-        })?;
+        let kv = response
+            .kvs()
+            .first()
+            .ok_or_else(|| Error::Farp(format!("Schema not found in etcd at key: {path}")))?;
 
-        let value_str = kv.value_str()
+        let value_str = kv
+            .value_str()
             .map_err(|e| Error::Farp(format!("Invalid UTF-8 in etcd value: {e}")))?;
 
         let schema: Value = serde_json::from_str(value_str)

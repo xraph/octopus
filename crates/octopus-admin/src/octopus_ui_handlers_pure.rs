@@ -1,6 +1,9 @@
 //! Pure Rust handlers using octopus-ui (no Askama templates)
 
-use axum::{extract::State, response::{Html, IntoResponse}};
+use axum::{
+    extract::State,
+    response::{Html, IntoResponse},
+};
 use std::sync::Arc;
 
 use crate::{handlers::AppState, models::RouteInfo, ui_components};
@@ -38,7 +41,9 @@ pub async fn octopus_ui_dashboard_handler(
             "Avg Latency",
             "45.6ms",
             "-5.2ms from yesterday",
-            Some(r#"<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>"#)
+            Some(
+                r#"<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>"#
+            )
         ),
         ui_components::stats_card(
             "Health Status",
@@ -89,26 +94,36 @@ pub async fn octopus_ui_dashboard_handler(
                         .child(
                             Node::element("h3")
                                 .attr("class", "text-lg font-semibold")
-                                .child(Node::text("Routes"))
+                                .child(Node::text("Routes")),
                         )
                         .child(
                             Node::element("a")
                                 .attr("href", "/admin/octopus-ui/routes")
                                 .attr("class", "text-sm text-primary hover:underline")
-                                .child(Node::text("View all →"))
-                        )
+                                .child(Node::text("View all →")),
+                        ),
                 )
                 .child(Node::raw(&routes_table))
-                .render()
+                .render(),
         )
         .render();
 
     // Build layout with navigation
     let layout = admin_layout("Dashboard")
-        .nav_item(NavItem::new("Dashboard", "/admin/octopus-ui").icon(icons::HOME.to_string()).active(true))
-        .nav_item(NavItem::new("Routes", "/admin/octopus-ui/routes").icon(icons::ROUTES.to_string()))
-        .nav_item(NavItem::new("Health", "/admin/octopus-ui/health").icon(icons::HEALTH.to_string()))
-        .nav_item(NavItem::new("Plugins", "/admin/octopus-ui/plugins").icon(icons::PLUGINS.to_string()))
+        .nav_item(
+            NavItem::new("Dashboard", "/admin/octopus-ui")
+                .icon(icons::HOME.to_string())
+                .active(true),
+        )
+        .nav_item(
+            NavItem::new("Routes", "/admin/octopus-ui/routes").icon(icons::ROUTES.to_string()),
+        )
+        .nav_item(
+            NavItem::new("Health", "/admin/octopus-ui/health").icon(icons::HEALTH.to_string()),
+        )
+        .nav_item(
+            NavItem::new("Plugins", "/admin/octopus-ui/plugins").icon(icons::PLUGINS.to_string()),
+        )
         .content(content)
         .build();
 
@@ -126,9 +141,7 @@ pub async fn octopus_ui_dashboard_handler(
 }
 
 /// Routes page using pure Rust
-pub async fn octopus_ui_routes_handler(
-    State(_state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn octopus_ui_routes_handler(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
     let routes = vec![
         RouteInfo {
             id: "route1".to_string(),
@@ -155,13 +168,16 @@ pub async fn octopus_ui_routes_handler(
     ];
 
     let routes_table = ui_components::routes_table(&routes);
-    
+
     let routes_grid = routes
         .iter()
         .map(ui_components::route_card)
         .collect::<Vec<_>>()
         .join("\n");
-    let routes_grid = format!(r#"<div class="grid gap-4 md:grid-cols-2">{}</div>"#, routes_grid);
+    let routes_grid = format!(
+        r#"<div class="grid gap-4 md:grid-cols-2">{}</div>"#,
+        routes_grid
+    );
 
     let content = VStack::new()
         .gap("6")
@@ -171,10 +187,10 @@ pub async fn octopus_ui_routes_handler(
                 .child(
                     Node::element("h3")
                         .attr("class", "text-lg font-semibold")
-                        .child(Node::text("Table View"))
+                        .child(Node::text("Table View")),
                 )
                 .child(Node::raw(&routes_table))
-                .render()
+                .render(),
         )
         .child(
             VStack::new()
@@ -182,18 +198,26 @@ pub async fn octopus_ui_routes_handler(
                 .child(
                     Node::element("h3")
                         .attr("class", "text-lg font-semibold")
-                        .child(Node::text("Grid View"))
+                        .child(Node::text("Grid View")),
                 )
                 .child(Node::raw(&routes_grid))
-                .render()
+                .render(),
         )
         .render();
 
     let layout = admin_layout("Routes")
         .nav_item(NavItem::new("Dashboard", "/admin/octopus-ui").icon(icons::HOME.to_string()))
-        .nav_item(NavItem::new("Routes", "/admin/octopus-ui/routes").icon(icons::ROUTES.to_string()).active(true))
-        .nav_item(NavItem::new("Health", "/admin/octopus-ui/health").icon(icons::HEALTH.to_string()))
-        .nav_item(NavItem::new("Plugins", "/admin/octopus-ui/plugins").icon(icons::PLUGINS.to_string()))
+        .nav_item(
+            NavItem::new("Routes", "/admin/octopus-ui/routes")
+                .icon(icons::ROUTES.to_string())
+                .active(true),
+        )
+        .nav_item(
+            NavItem::new("Health", "/admin/octopus-ui/health").icon(icons::HEALTH.to_string()),
+        )
+        .nav_item(
+            NavItem::new("Plugins", "/admin/octopus-ui/plugins").icon(icons::PLUGINS.to_string()),
+        )
         .content(content)
         .build();
 
@@ -210,9 +234,7 @@ pub async fn octopus_ui_routes_handler(
 }
 
 /// Health page using pure Rust
-pub async fn octopus_ui_health_handler(
-    State(_state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn octopus_ui_health_handler(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
     let health_checks_html = r#"<p class="text-muted-foreground">Health checks will be displayed here once configured.</p>"#.to_string();
     let health_checks_grid = format!(
         r#"<div class="grid gap-4 md:grid-cols-2">{}</div>"#,
@@ -231,13 +253,13 @@ pub async fn octopus_ui_health_handler(
                         .child(
                             Node::element("div")
                                 .attr("class", "text-sm text-muted-foreground")
-                                .child(Node::text("24h Uptime"))
+                                .child(Node::text("24h Uptime")),
                         )
                         .child(
                             Node::element("div")
                                 .attr("class", "text-2xl font-bold")
-                                .child(Node::text("99.9%"))
-                        )
+                                .child(Node::text("99.9%")),
+                        ),
                 )
                 .child(
                     Node::element("div")
@@ -245,13 +267,13 @@ pub async fn octopus_ui_health_handler(
                         .child(
                             Node::element("div")
                                 .attr("class", "text-sm text-muted-foreground")
-                                .child(Node::text("7d Uptime"))
+                                .child(Node::text("7d Uptime")),
                         )
                         .child(
                             Node::element("div")
                                 .attr("class", "text-2xl font-bold")
-                                .child(Node::text("99.8%"))
-                        )
+                                .child(Node::text("99.8%")),
+                        ),
                 )
                 .child(
                     Node::element("div")
@@ -259,24 +281,32 @@ pub async fn octopus_ui_health_handler(
                         .child(
                             Node::element("div")
                                 .attr("class", "text-sm text-muted-foreground")
-                                .child(Node::text("30d Uptime"))
+                                .child(Node::text("30d Uptime")),
                         )
                         .child(
                             Node::element("div")
                                 .attr("class", "text-2xl font-bold")
-                                .child(Node::text("99.7%"))
-                        )
+                                .child(Node::text("99.7%")),
+                        ),
                 )
-                .render()
+                .render(),
         )
         .child(Node::raw(&health_checks_grid))
         .render();
 
     let layout = admin_layout("Health Checks")
         .nav_item(NavItem::new("Dashboard", "/admin/octopus-ui").icon(icons::HOME.to_string()))
-        .nav_item(NavItem::new("Routes", "/admin/octopus-ui/routes").icon(icons::ROUTES.to_string()))
-        .nav_item(NavItem::new("Health", "/admin/octopus-ui/health").icon(icons::HEALTH.to_string()).active(true))
-        .nav_item(NavItem::new("Plugins", "/admin/octopus-ui/plugins").icon(icons::PLUGINS.to_string()))
+        .nav_item(
+            NavItem::new("Routes", "/admin/octopus-ui/routes").icon(icons::ROUTES.to_string()),
+        )
+        .nav_item(
+            NavItem::new("Health", "/admin/octopus-ui/health")
+                .icon(icons::HEALTH.to_string())
+                .active(true),
+        )
+        .nav_item(
+            NavItem::new("Plugins", "/admin/octopus-ui/plugins").icon(icons::PLUGINS.to_string()),
+        )
         .content(content)
         .build();
 
@@ -293,9 +323,7 @@ pub async fn octopus_ui_health_handler(
 }
 
 /// Plugins page using pure Rust
-pub async fn octopus_ui_plugins_handler(
-    State(_state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn octopus_ui_plugins_handler(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
     let plugins_html = r#"<p class="text-muted-foreground">Plugins will be displayed here once the plugin system is configured.</p>"#.to_string();
     let plugins_grid = format!(
         r#"<div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">{}</div>"#,
@@ -309,9 +337,17 @@ pub async fn octopus_ui_plugins_handler(
 
     let layout = admin_layout("Plugins")
         .nav_item(NavItem::new("Dashboard", "/admin/octopus-ui").icon(icons::HOME.to_string()))
-        .nav_item(NavItem::new("Routes", "/admin/octopus-ui/routes").icon(icons::ROUTES.to_string()))
-        .nav_item(NavItem::new("Health", "/admin/octopus-ui/health").icon(icons::HEALTH.to_string()))
-        .nav_item(NavItem::new("Plugins", "/admin/octopus-ui/plugins").icon(icons::PLUGINS.to_string()).active(true))
+        .nav_item(
+            NavItem::new("Routes", "/admin/octopus-ui/routes").icon(icons::ROUTES.to_string()),
+        )
+        .nav_item(
+            NavItem::new("Health", "/admin/octopus-ui/health").icon(icons::HEALTH.to_string()),
+        )
+        .nav_item(
+            NavItem::new("Plugins", "/admin/octopus-ui/plugins")
+                .icon(icons::PLUGINS.to_string())
+                .active(true),
+        )
         .content(content)
         .build();
 
@@ -326,5 +362,3 @@ pub async fn octopus_ui_plugins_handler(
 
     Html(page)
 }
-
-

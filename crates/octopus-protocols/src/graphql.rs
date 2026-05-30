@@ -99,7 +99,8 @@ impl Default for GraphQLHandler {
 
 impl GraphQLHandler {
     /// Create a new GraphQL handler
-    #[must_use] pub fn new(endpoint: &str) -> Self {
+    #[must_use]
+    pub fn new(endpoint: &str) -> Self {
         Self {
             endpoint: endpoint.to_string(),
             enable_playground: true,
@@ -110,7 +111,8 @@ impl GraphQLHandler {
     }
 
     /// Create GraphQL handler with custom configuration
-    #[must_use] pub const fn with_config(
+    #[must_use]
+    pub const fn with_config(
         endpoint: String,
         enable_playground: bool,
         services: HashMap<String, String>,
@@ -182,7 +184,8 @@ impl GraphQLHandler {
     }
 
     /// Build GraphQL Playground HTML
-    #[must_use] pub fn playground_html() -> String {
+    #[must_use]
+    pub fn playground_html() -> String {
         r#"
 <!DOCTYPE html>
 <html lang="en">
@@ -219,7 +222,8 @@ impl GraphQLHandler {
     }
 
     /// Build error response
-    #[must_use] pub fn error_response(message: &str) -> GraphQLResponse {
+    #[must_use]
+    pub fn error_response(message: &str) -> GraphQLResponse {
         GraphQLResponse {
             data: None,
             errors: Some(vec![GraphQLError {
@@ -251,9 +255,7 @@ impl ProtocolHandler for GraphQLHandler {
                 .status(StatusCode::OK)
                 .header(header::CONTENT_TYPE, "text/html")
                 .body(Full::new(Bytes::from(html)))
-                .map_err(|e| {
-                    Error::Internal(format!("Failed to build playground response: {e}"))
-                });
+                .map_err(|e| Error::Internal(format!("Failed to build playground response: {e}")));
         }
 
         // Parse GraphQL request
@@ -268,17 +270,18 @@ impl ProtocolHandler for GraphQLHandler {
         // Check for introspection query
         if (gql_req.query.trim().starts_with("query IntrospectionQuery")
             || gql_req.query.contains("__schema"))
-            && !self.enable_introspection {
-                let error_response = Self::error_response("Introspection is disabled");
-                let json = serde_json::to_string(&error_response)
-                    .map_err(|e| Error::Internal(format!("Failed to serialize response: {e}")))?;
+            && !self.enable_introspection
+        {
+            let error_response = Self::error_response("Introspection is disabled");
+            let json = serde_json::to_string(&error_response)
+                .map_err(|e| Error::Internal(format!("Failed to serialize response: {e}")))?;
 
-                return Response::builder()
-                    .status(StatusCode::OK)
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .body(Full::new(Bytes::from(json)))
-                    .map_err(|e| Error::Internal(format!("Failed to build response: {e}")));
-            }
+            return Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Full::new(Bytes::from(json)))
+                .map_err(|e| Error::Internal(format!("Failed to build response: {e}")));
+        }
 
         // In a real implementation, this would:
         // 1. Parse and validate the GraphQL query

@@ -47,7 +47,8 @@ impl Default for FarpClient {
 
 impl FarpClient {
     /// Create a new FARP client
-    #[must_use] pub fn new(config: FarpClientConfig) -> Self {
+    #[must_use]
+    pub fn new(config: FarpClientConfig) -> Self {
         let client = Client::builder(TokioExecutor::new()).build_http();
         Self { client, config }
     }

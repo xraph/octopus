@@ -101,10 +101,7 @@ mod tests {
 
     #[test]
     fn test_grid() {
-        let grid = Grid::new()
-            .cols(3)
-            .gap("4")
-            .child(Node::text("Item 1"));
+        let grid = Grid::new().cols(3).gap("4").child(Node::text("Item 1"));
 
         let html = grid.render_to_string();
         assert!(html.contains("grid"));

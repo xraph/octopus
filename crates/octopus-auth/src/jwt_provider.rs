@@ -67,7 +67,12 @@ impl JwtProvider {
                 Algorithm::ES256 | Algorithm::ES384 => {
                     DecodingKey::from_ec_pem(public_key.as_bytes())?
                 }
-                _ => return Err(anyhow::anyhow!("Public key not supported for {:?}", algorithm)),
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "Public key not supported for {:?}",
+                        algorithm
+                    ))
+                }
             }
         } else if let Some(ref key_file) = config.public_key_file {
             let key_data = std::fs::read_to_string(key_file)?;
@@ -78,10 +83,18 @@ impl JwtProvider {
                 Algorithm::ES256 | Algorithm::ES384 => {
                     DecodingKey::from_ec_pem(key_data.as_bytes())?
                 }
-                _ => return Err(anyhow::anyhow!("Public key file not supported for {:?}", algorithm)),
+                _ => {
+                    return Err(anyhow::anyhow!(
+                        "Public key file not supported for {:?}",
+                        algorithm
+                    ))
+                }
             }
         } else {
-            return Err(anyhow::anyhow!("JWT provider '{}' requires secret, public_key, or public_key_file", name));
+            return Err(anyhow::anyhow!(
+                "JWT provider '{}' requires secret, public_key, or public_key_file",
+                name
+            ));
         };
 
         let mut validation = Validation::new(algorithm);

@@ -69,10 +69,7 @@ impl Router {
         let method = route.method.clone();
 
         // Get or create trie for this method
-        let mut trie = self
-            .tries
-            .entry(method.clone())
-            .or_default();
+        let mut trie = self.tries.entry(method.clone()).or_default();
 
         // Insert route into trie
         trie.insert(route)?;

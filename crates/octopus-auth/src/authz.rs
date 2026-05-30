@@ -100,8 +100,8 @@ impl AuthzEvaluator {
 
         // 3. Evaluate custom route-level rule
         if let Some(ref rule) = route_ctx.custom_rule {
-            let decision = self
-                .evaluate_rhai_rule_sync(rule, principal, request_method, request_path)?;
+            let decision =
+                self.evaluate_rhai_rule_sync(rule, principal, request_method, request_path)?;
             if let AuthzDecision::Deny(_) = decision {
                 return Ok(decision);
             }
@@ -135,14 +135,12 @@ impl AuthzEvaluator {
                         )?
                     }
                 }
-                AuthzEngine::Rhai => {
-                    self.evaluate_rhai_rule_sync(
-                        &global_rule.rule,
-                        principal,
-                        request_method,
-                        request_path,
-                    )?
-                }
+                AuthzEngine::Rhai => self.evaluate_rhai_rule_sync(
+                    &global_rule.rule,
+                    principal,
+                    request_method,
+                    request_path,
+                )?,
             };
 
             match (&global_rule.action, &decision) {
@@ -233,7 +231,10 @@ impl AuthzEvaluator {
             "#
         );
 
-        match self.rhai_engine.eval_with_scope::<rhai::Dynamic>(&mut scope, &wrapped_rule) {
+        match self
+            .rhai_engine
+            .eval_with_scope::<rhai::Dynamic>(&mut scope, &wrapped_rule)
+        {
             Ok(result) => {
                 let allowed = result.as_bool().unwrap_or(false);
                 if allowed {

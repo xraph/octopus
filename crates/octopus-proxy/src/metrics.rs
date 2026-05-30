@@ -11,16 +11,16 @@ use tracing::debug;
 pub struct ProxyMetrics {
     /// Underlying metrics collector
     collector: Arc<MetricsCollector>,
-    
+
     /// Connection pool metrics
     pool_metrics: Arc<PoolMetrics>,
-    
+
     /// Circuit breaker metrics
     circuit_breaker_metrics: Arc<CircuitBreakerMetrics>,
-    
+
     /// Retry metrics
     retry_metrics: Arc<RetryMetrics>,
-    
+
     /// TLS metrics
     tls_metrics: Arc<TlsMetrics>,
 }
@@ -63,12 +63,7 @@ impl ProxyMetrics {
     }
 
     /// Record a proxy request
-    pub fn record_request(
-        &self,
-        route: &str,
-        duration: Duration,
-        outcome: RequestOutcome,
-    ) {
+    pub fn record_request(&self, route: &str, duration: Duration, outcome: RequestOutcome) {
         self.collector.record_request(route, duration, outcome);
     }
 
@@ -94,19 +89,19 @@ impl std::fmt::Debug for ProxyMetrics {
 pub struct PoolMetrics {
     /// Total connections created
     pub connections_created: AtomicU64,
-    
+
     /// Total connections reused
     pub connections_reused: AtomicU64,
-    
+
     /// Total connections retired
     pub connections_retired: AtomicU64,
-    
+
     /// Connection acquisition failures
     pub acquisition_failures: AtomicU64,
-    
+
     /// Total time spent acquiring connections (microseconds)
     pub acquisition_time_us: AtomicU64,
-    
+
     /// Number of acquisition attempts
     pub acquisition_attempts: AtomicU64,
 }
@@ -155,7 +150,7 @@ impl PoolMetrics {
     pub fn avg_acquisition_time_us(&self) -> f64 {
         let total = self.acquisition_time_us.load(Ordering::Relaxed);
         let attempts = self.acquisition_attempts.load(Ordering::Relaxed);
-        
+
         if attempts > 0 {
             total as f64 / attempts as f64
         } else {
@@ -168,7 +163,7 @@ impl PoolMetrics {
         let created = self.connections_created.load(Ordering::Relaxed);
         let reused = self.connections_reused.load(Ordering::Relaxed);
         let total = created + reused;
-        
+
         if total > 0 {
             reused as f64 / total as f64
         } else {
@@ -188,13 +183,13 @@ impl Default for PoolMetrics {
 pub struct CircuitBreakerMetrics {
     /// Number of times circuit opened
     pub circuit_opens: AtomicU64,
-    
+
     /// Number of times circuit closed
     pub circuit_closes: AtomicU64,
-    
+
     /// Number of requests rejected by circuit breaker
     pub requests_rejected: AtomicU64,
-    
+
     /// Number of requests allowed in half-open state
     pub half_open_attempts: AtomicU64,
 }
@@ -244,13 +239,13 @@ impl Default for CircuitBreakerMetrics {
 pub struct RetryMetrics {
     /// Total number of retries attempted
     pub retries_attempted: AtomicU64,
-    
+
     /// Number of successful retries
     pub retries_succeeded: AtomicU64,
-    
+
     /// Number of failed retries (exhausted)
     pub retries_exhausted: AtomicU64,
-    
+
     /// Total backoff time (milliseconds)
     pub total_backoff_ms: AtomicU64,
 }
@@ -291,7 +286,7 @@ impl RetryMetrics {
     pub fn success_rate(&self) -> f64 {
         let attempted = self.retries_attempted.load(Ordering::Relaxed);
         let succeeded = self.retries_succeeded.load(Ordering::Relaxed);
-        
+
         if attempted > 0 {
             succeeded as f64 / attempted as f64
         } else {
@@ -303,7 +298,7 @@ impl RetryMetrics {
     pub fn avg_backoff_ms(&self) -> f64 {
         let total = self.total_backoff_ms.load(Ordering::Relaxed);
         let attempted = self.retries_attempted.load(Ordering::Relaxed);
-        
+
         if attempted > 0 {
             total as f64 / attempted as f64
         } else {
@@ -323,16 +318,16 @@ impl Default for RetryMetrics {
 pub struct TlsMetrics {
     /// Total TLS handshakes attempted
     pub handshakes_attempted: AtomicU64,
-    
+
     /// Successful TLS handshakes
     pub handshakes_succeeded: AtomicU64,
-    
+
     /// Failed TLS handshakes
     pub handshakes_failed: AtomicU64,
-    
+
     /// Certificate verification failures
     pub cert_verification_failures: AtomicU64,
-    
+
     /// Total handshake time (microseconds)
     pub handshake_time_us: AtomicU64,
 }
@@ -368,14 +363,15 @@ impl TlsMetrics {
 
     /// Record certificate verification failure
     pub fn record_cert_verification_failure(&self) {
-        self.cert_verification_failures.fetch_add(1, Ordering::Relaxed);
+        self.cert_verification_failures
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     /// Get handshake success rate
     pub fn success_rate(&self) -> f64 {
         let attempted = self.handshakes_attempted.load(Ordering::Relaxed);
         let succeeded = self.handshakes_succeeded.load(Ordering::Relaxed);
-        
+
         if attempted > 0 {
             succeeded as f64 / attempted as f64
         } else {
@@ -387,7 +383,7 @@ impl TlsMetrics {
     pub fn avg_handshake_time_us(&self) -> f64 {
         let total = self.handshake_time_us.load(Ordering::Relaxed);
         let succeeded = self.handshakes_succeeded.load(Ordering::Relaxed);
-        
+
         if succeeded > 0 {
             total as f64 / succeeded as f64
         } else {
@@ -438,7 +434,8 @@ impl RequestTracker {
     pub fn complete_success(self) {
         let duration = self.start_time.elapsed();
         if let Some(route) = self.route {
-            self.metrics.record_request(&route, duration, RequestOutcome::Success);
+            self.metrics
+                .record_request(&route, duration, RequestOutcome::Success);
         }
     }
 
@@ -446,7 +443,8 @@ impl RequestTracker {
     pub fn complete_error(self) {
         let duration = self.start_time.elapsed();
         if let Some(route) = self.route {
-            self.metrics.record_request(&route, duration, RequestOutcome::Error);
+            self.metrics
+                .record_request(&route, duration, RequestOutcome::Error);
         }
     }
 
@@ -454,7 +452,8 @@ impl RequestTracker {
     pub fn complete_timeout(self) {
         let duration = self.start_time.elapsed();
         if let Some(route) = self.route {
-            self.metrics.record_request(&route, duration, RequestOutcome::Timeout);
+            self.metrics
+                .record_request(&route, duration, RequestOutcome::Timeout);
         }
     }
 
@@ -471,11 +470,11 @@ mod tests {
     #[test]
     fn test_pool_metrics() {
         let metrics = PoolMetrics::new();
-        
+
         metrics.record_created();
         metrics.record_reused();
         metrics.record_reused();
-        
+
         assert_eq!(metrics.connections_created.load(Ordering::Relaxed), 1);
         assert_eq!(metrics.connections_reused.load(Ordering::Relaxed), 2);
         assert_eq!(metrics.reuse_rate(), 2.0 / 3.0);
@@ -484,11 +483,11 @@ mod tests {
     #[test]
     fn test_circuit_breaker_metrics() {
         let metrics = CircuitBreakerMetrics::new();
-        
+
         metrics.record_circuit_open();
         metrics.record_request_rejected();
         metrics.record_circuit_close();
-        
+
         assert_eq!(metrics.circuit_opens.load(Ordering::Relaxed), 1);
         assert_eq!(metrics.circuit_closes.load(Ordering::Relaxed), 1);
         assert_eq!(metrics.requests_rejected.load(Ordering::Relaxed), 1);
@@ -497,11 +496,11 @@ mod tests {
     #[test]
     fn test_retry_metrics() {
         let metrics = RetryMetrics::new();
-        
+
         metrics.record_retry_attempt();
         metrics.record_retry_attempt();
         metrics.record_retry_success();
-        
+
         assert_eq!(metrics.retries_attempted.load(Ordering::Relaxed), 2);
         assert_eq!(metrics.retries_succeeded.load(Ordering::Relaxed), 1);
         assert_eq!(metrics.success_rate(), 0.5);
@@ -510,12 +509,12 @@ mod tests {
     #[test]
     fn test_tls_metrics() {
         let metrics = TlsMetrics::new();
-        
+
         metrics.record_handshake_attempt();
         metrics.record_handshake_success(Duration::from_millis(10));
         metrics.record_handshake_attempt();
         metrics.record_handshake_failure();
-        
+
         assert_eq!(metrics.handshakes_attempted.load(Ordering::Relaxed), 2);
         assert_eq!(metrics.handshakes_succeeded.load(Ordering::Relaxed), 1);
         assert_eq!(metrics.handshakes_failed.load(Ordering::Relaxed), 1);
@@ -526,11 +525,11 @@ mod tests {
     fn test_request_tracker() {
         let collector = Arc::new(MetricsCollector::new());
         let metrics = ProxyMetrics::new(collector.clone());
-        
+
         let tracker = metrics.start_request().with_route("/test".to_string());
         std::thread::sleep(Duration::from_millis(10));
         tracker.complete_success();
-        
+
         assert!(collector.total_requests() > 0);
     }
 }

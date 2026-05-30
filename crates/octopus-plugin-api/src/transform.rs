@@ -33,8 +33,7 @@ pub trait TransformPlugin: Plugin {
 }
 
 /// Transform configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TransformConfig {
     /// Headers to add
     #[serde(default)]
@@ -64,7 +63,6 @@ pub struct TransformConfig {
     #[serde(default)]
     pub remove_query_params: Vec<String>,
 }
-
 
 impl TransformConfig {
     /// Create a new empty config

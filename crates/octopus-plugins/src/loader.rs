@@ -76,14 +76,11 @@ impl PluginLoader {
 
         // 2. Validate ABI version.
         let abi_version: u32 = unsafe {
-            let func: Symbol<'_, unsafe extern "C" fn() -> u32> =
-                library.get(b"octopus_plugin_abi_version").map_err(|e| {
-                    Error::Plugin {
-                        plugin: path.display().to_string(),
-                        message: format!(
-                            "Library does not export 'octopus_plugin_abi_version': {e}"
-                        ),
-                    }
+            let func: Symbol<'_, unsafe extern "C" fn() -> u32> = library
+                .get(b"octopus_plugin_abi_version")
+                .map_err(|e| Error::Plugin {
+                    plugin: path.display().to_string(),
+                    message: format!("Library does not export 'octopus_plugin_abi_version': {e}"),
                 })?;
             func()
         };
@@ -99,12 +96,11 @@ impl PluginLoader {
 
         // 3. Read plugin name (for logging).
         let plugin_name: String = unsafe {
-            let func: Symbol<'_, unsafe extern "C" fn() -> *const c_char> =
-                library.get(b"octopus_plugin_name").map_err(|e| {
-                    Error::Plugin {
-                        plugin: path.display().to_string(),
-                        message: format!("Library does not export 'octopus_plugin_name': {e}"),
-                    }
+            let func: Symbol<'_, unsafe extern "C" fn() -> *const c_char> = library
+                .get(b"octopus_plugin_name")
+                .map_err(|e| Error::Plugin {
+                    plugin: path.display().to_string(),
+                    message: format!("Library does not export 'octopus_plugin_name': {e}"),
                 })?;
 
             let ptr = func();
@@ -114,21 +110,16 @@ impl PluginLoader {
                     message: "octopus_plugin_name returned null".to_string(),
                 });
             }
-            CStr::from_ptr(ptr)
-                .to_string_lossy()
-                .into_owned()
+            CStr::from_ptr(ptr).to_string_lossy().into_owned()
         };
 
         // 4. Read plugin version (for logging).
         let plugin_version: String = unsafe {
-            let func: Symbol<'_, unsafe extern "C" fn() -> *const c_char> =
-                library.get(b"octopus_plugin_version").map_err(|e| {
-                    Error::Plugin {
-                        plugin: plugin_name.clone(),
-                        message: format!(
-                            "Library does not export 'octopus_plugin_version': {e}"
-                        ),
-                    }
+            let func: Symbol<'_, unsafe extern "C" fn() -> *const c_char> = library
+                .get(b"octopus_plugin_version")
+                .map_err(|e| Error::Plugin {
+                    plugin: plugin_name.clone(),
+                    message: format!("Library does not export 'octopus_plugin_version': {e}"),
                 })?;
 
             let ptr = func();
@@ -138,23 +129,18 @@ impl PluginLoader {
                     message: "octopus_plugin_version returned null".to_string(),
                 });
             }
-            CStr::from_ptr(ptr)
-                .to_string_lossy()
-                .into_owned()
+            CStr::from_ptr(ptr).to_string_lossy().into_owned()
         };
 
         // 5. Create the plugin instance.
         // SAFETY: `octopus_create_plugin` must return a valid, heap-allocated
         // `Box<dyn Plugin>` pointer (via `Box::into_raw`).
         let plugin: Box<dyn Plugin> = unsafe {
-            let func: Symbol<'_, unsafe extern "C" fn() -> *mut dyn Plugin> =
-                library.get(b"octopus_create_plugin").map_err(|e| {
-                    Error::Plugin {
-                        plugin: plugin_name.clone(),
-                        message: format!(
-                            "Library does not export 'octopus_create_plugin': {e}"
-                        ),
-                    }
+            let func: Symbol<'_, unsafe extern "C" fn() -> *mut dyn Plugin> = library
+                .get(b"octopus_create_plugin")
+                .map_err(|e| Error::Plugin {
+                    plugin: plugin_name.clone(),
+                    message: format!("Library does not export 'octopus_create_plugin': {e}"),
                 })?;
 
             let raw = func();
@@ -293,7 +279,10 @@ mod tests {
 
     #[test]
     fn test_loader_with_search_paths() {
-        let paths = vec![PathBuf::from("/usr/lib/plugins"), PathBuf::from("/opt/plugins")];
+        let paths = vec![
+            PathBuf::from("/usr/lib/plugins"),
+            PathBuf::from("/opt/plugins"),
+        ];
         let loader = PluginLoader::with_search_paths(paths.clone());
         assert_eq!(loader.search_paths(), &paths);
     }

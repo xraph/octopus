@@ -14,10 +14,10 @@
 pub mod consul;
 #[cfg(feature = "dns")]
 pub mod dns;
-#[cfg(feature = "kubernetes")]
-pub mod kubernetes;
 #[cfg(feature = "etcd")]
 pub mod etcd;
+#[cfg(feature = "kubernetes")]
+pub mod kubernetes;
 #[cfg(feature = "mdns")]
 pub mod mdns;
 pub mod provider;

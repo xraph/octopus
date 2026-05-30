@@ -81,7 +81,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("     make dev           # Auto-reload development");
     println!("     make run           # Run once");
     println!("     just dev           # With Just\n");
-    
+
     println!("  3. Try the mDNS example:");
     println!("     Terminal 1: make example-mdns");
     println!("     Terminal 2: make dev");

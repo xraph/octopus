@@ -119,7 +119,10 @@ impl fmt::Debug for Retry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Retry")
             .field("max_attempts", &self.config.max_attempts)
-            .field("retryable_status_codes", &self.config.retryable_status_codes)
+            .field(
+                "retryable_status_codes",
+                &self.config.retryable_status_codes,
+            )
             .finish()
     }
 }
@@ -276,8 +279,7 @@ mod tests {
         };
         let retry = Retry::with_config(config);
 
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(retry), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(retry), Arc::new(handler)]);
 
         let next = Next::new(stack);
         let req = Request::builder()
@@ -291,10 +293,7 @@ mod tests {
         // The handler was called 3 times (2 failures + 1 success)
         assert_eq!(counter.load(Ordering::SeqCst), 3);
         // Retry header should be present
-        assert_eq!(
-            response.headers().get("X-Retry-Attempts").unwrap(),
-            "2"
-        );
+        assert_eq!(response.headers().get("X-Retry-Attempts").unwrap(), "2");
     }
 
     #[tokio::test]
@@ -314,8 +313,7 @@ mod tests {
         };
         let retry = Retry::with_config(config);
 
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(retry), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(retry), Arc::new(handler)]);
 
         let next = Next::new(stack);
         let req = Request::builder()
@@ -347,8 +345,7 @@ mod tests {
         };
         let retry = Retry::with_config(config);
 
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(retry), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(retry), Arc::new(handler)]);
 
         let next = Next::new(stack);
         // POST is not in the default retryable methods list
@@ -369,8 +366,7 @@ mod tests {
         let retry = Retry::new();
         let handler = AlwaysOkHandler;
 
-        let stack: Arc<[Arc<dyn Middleware>]> =
-            Arc::new([Arc::new(retry), Arc::new(handler)]);
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(retry), Arc::new(handler)]);
 
         let next = Next::new(stack);
         let req = Request::builder()

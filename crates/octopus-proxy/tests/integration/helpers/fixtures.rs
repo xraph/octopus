@@ -1,9 +1,9 @@
 //! Test fixtures and builders
 
-use octopus_core::upstream::UpstreamInstance;
-use http::{Request, Method, Uri};
-use http_body_util::Full;
 use bytes::Bytes;
+use http::{Method, Request, Uri};
+use http_body_util::Full;
+use octopus_core::upstream::UpstreamInstance;
 use std::collections::HashMap;
 
 /// Test fixture factory
@@ -73,9 +73,7 @@ impl RequestBuilder {
     }
 
     pub fn build(self) -> Request<Full<Bytes>> {
-        let mut req = Request::builder()
-            .method(self.method)
-            .uri(self.uri);
+        let mut req = Request::builder().method(self.method).uri(self.uri);
 
         for (k, v) in self.headers {
             req = req.header(k, v);
@@ -179,7 +177,10 @@ mod tests {
 
         assert_eq!(req.method(), Method::POST);
         assert_eq!(req.uri().path(), "/api/test");
-        assert_eq!(req.headers().get("content-type").unwrap(), "application/json");
+        assert_eq!(
+            req.headers().get("content-type").unwrap(),
+            "application/json"
+        );
     }
 
     #[test]

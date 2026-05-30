@@ -183,7 +183,10 @@ impl Waf {
                 r"(?i)(;\s*(drop|delete|insert|update|alter)\b)",
             ),
             ("sqli-comment-injection", r"(?i)(--\s*$|/\*[\s\S]*?\*/)"),
-            ("sqli-exec-declare", r"(?i)(\bexec\b|\bexecute\b|\bdeclare\b)"),
+            (
+                "sqli-exec-declare",
+                r"(?i)(\bexec\b|\bexecute\b|\bdeclare\b)",
+            ),
             (
                 "sqli-quote-or-and",
                 r"(?i)('|\%27)(\s|\+)*(or|and)(\s|\+)*('|\%27)?",
@@ -208,18 +211,12 @@ impl Waf {
                 "sqli-group-by-injection",
                 r"(?i)(\bgroup\s+by\b.+\bhaving\b)",
             ),
-            (
-                "sqli-order-by-injection",
-                r"(?i)(\border\s+by\b\s+\d+)",
-            ),
+            ("sqli-order-by-injection", r"(?i)(\border\s+by\b\s+\d+)"),
             (
                 "sqli-stacked-queries",
                 r"(?i)(;\s*(select|union|insert|update|delete|drop|alter|create)\b)",
             ),
-            (
-                "sqli-boolean-based",
-                r"(?i)(\band\b\s+\d+\s*[=<>]\s*\d+)",
-            ),
+            ("sqli-boolean-based", r"(?i)(\band\b\s+\d+\s*[=<>]\s*\d+)"),
             (
                 "sqli-extractvalue",
                 r"(?i)(extractvalue\s*\(|updatexml\s*\()",
@@ -230,14 +227,8 @@ impl Waf {
             ),
             ("sqli-ascii-function", r"(?i)(ascii\s*\(|ord\s*\()"),
             ("sqli-if-function", r"(?i)(\bif\s*\(\s*\d)"),
-            (
-                "sqli-case-when",
-                r"(?i)(\bcase\s+when\b.*\bthen\b)",
-            ),
-            (
-                "sqli-convert-cast",
-                r"(?i)(\bconvert\s*\(|\bcast\s*\()",
-            ),
+            ("sqli-case-when", r"(?i)(\bcase\s+when\b.*\bthen\b)"),
+            ("sqli-convert-cast", r"(?i)(\bconvert\s*\(|\bcast\s*\()"),
             (
                 "sqli-pg-sleep",
                 r"(?i)(pg_sleep\s*\(|dbms_pipe\.receive_message)",
@@ -376,10 +367,9 @@ impl Waf {
     /// Recursively inspect JSON values
     fn check_json_value(&self, value: &serde_json::Value) -> Option<String> {
         match value {
-            serde_json::Value::String(s) => {
-                self.check_payload(s, &WafTarget::Body)
-                    .map(|r| r.to_string())
-            }
+            serde_json::Value::String(s) => self
+                .check_payload(s, &WafTarget::Body)
+                .map(|r| r.to_string()),
             serde_json::Value::Object(map) => {
                 for (_k, v) in map {
                     if let Some(rule) = self.check_json_value(v) {
@@ -460,10 +450,7 @@ impl Middleware for Waf {
         }
 
         // Check query string
-        if matches!(
-            self.config.inspect,
-            WafTarget::All | WafTarget::QueryString
-        ) {
+        if matches!(self.config.inspect, WafTarget::All | WafTarget::QueryString) {
             if let Some(rule_name) = self.check_query_string(req.uri()) {
                 warn!(
                     rule = %rule_name,

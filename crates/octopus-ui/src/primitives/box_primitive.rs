@@ -105,9 +105,7 @@ mod tests {
 
     #[test]
     fn test_box_with_class() {
-        let b = Box::new()
-            .class("container")
-            .child(Node::text("Content"));
+        let b = Box::new().class("container").child(Node::text("Content"));
         assert_eq!(
             b.render_to_string(),
             "<div class=\"container\">Content</div>"
@@ -116,9 +114,7 @@ mod tests {
 
     #[test]
     fn test_box_custom_tag() {
-        let b = Box::new()
-            .tag("section")
-            .child(Node::text("Content"));
+        let b = Box::new().tag("section").child(Node::text("Content"));
         assert_eq!(b.render_to_string(), "<section>Content</section>");
     }
 }

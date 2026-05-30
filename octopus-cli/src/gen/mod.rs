@@ -5,9 +5,9 @@
 //! - Octopus Schema (`.octopus.json`) — intermediate representation for client codegen
 //! - TypeScript client SDK with namespace-chained API and TanStack Query hooks
 
+pub mod client_gen;
 pub mod config_gen;
 pub mod schema_gen;
-pub mod client_gen;
 pub mod scope;
 pub mod types;
 
@@ -23,8 +23,8 @@ pub async fn run_gen(gen_config_path: &Path) -> Result<()> {
     let content = std::fs::read_to_string(gen_config_path)
         .with_context(|| format!("Failed to read gen config: {}", gen_config_path.display()))?;
 
-    let gen_config: GenConfig = serde_yaml::from_str(&content)
-        .with_context(|| "Failed to parse octopus-gen.yaml")?;
+    let gen_config: GenConfig =
+        serde_yaml::from_str(&content).with_context(|| "Failed to parse octopus-gen.yaml")?;
 
     // Create output directory
     std::fs::create_dir_all(&gen_config.output_dir)

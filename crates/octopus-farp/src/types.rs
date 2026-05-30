@@ -42,7 +42,8 @@ pub enum SchemaType {
 
 impl SchemaType {
     /// Returns the string representation of the schema type
-    #[must_use] pub const fn as_str(&self) -> &'static str {
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
         match self {
             Self::OpenAPI => "openapi",
             Self::AsyncAPI => "asyncapi",
@@ -75,7 +76,8 @@ pub enum LocationType {
 
 impl LocationType {
     /// Returns the string representation of the location type
-    #[must_use] pub const fn as_str(&self) -> &'static str {
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
         match self {
             Self::HTTP => "http",
             Self::Registry => "registry",
@@ -139,7 +141,8 @@ impl SchemaLocation {
     }
 
     /// Create an inline location
-    #[must_use] pub const fn inline() -> Self {
+    #[must_use]
+    pub const fn inline() -> Self {
         Self {
             location_type: LocationType::Inline,
             url: None,
@@ -222,7 +225,8 @@ impl SchemaDescriptor {
     }
 
     /// Set inline schema
-    #[must_use] pub fn with_inline_schema(mut self, schema: serde_json::Value) -> Self {
+    #[must_use]
+    pub fn with_inline_schema(mut self, schema: serde_json::Value) -> Self {
         self.inline_schema = Some(schema);
         self
     }
@@ -303,7 +307,8 @@ pub enum Capability {
 
 impl Capability {
     /// Returns the string representation of the capability
-    #[must_use] pub const fn as_str(&self) -> &'static str {
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
         match self {
             Self::REST => "rest",
             Self::GRPC => "grpc",

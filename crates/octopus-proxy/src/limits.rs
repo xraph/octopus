@@ -40,9 +40,9 @@ pub struct ProxyLimits {
 impl Default for ProxyLimits {
     fn default() -> Self {
         Self {
-            max_request_body_size: 10 * 1024 * 1024,    // 10MB
-            max_response_body_size: 100 * 1024 * 1024,  // 100MB
-            max_header_size: 8 * 1024,                   // 8KB
+            max_request_body_size: 10 * 1024 * 1024,   // 10MB
+            max_response_body_size: 100 * 1024 * 1024, // 100MB
+            max_header_size: 8 * 1024,                 // 8KB
             max_uri_length: 8192,
             max_headers_count: 100,
             max_connections_per_upstream: 128,
@@ -206,15 +206,13 @@ where
                     let new_consumed = self.consumed + size;
 
                     if new_consumed > self.limit {
-                        return std::task::Poll::Ready(Some(Err(Box::new(
-                            std::io::Error::new(
-                                std::io::ErrorKind::InvalidData,
-                                format!(
-                                    "Body size limit exceeded: {} bytes (max: {})",
-                                    new_consumed, self.limit
-                                ),
+                        return std::task::Poll::Ready(Some(Err(Box::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!(
+                                "Body size limit exceeded: {} bytes (max: {})",
+                                new_consumed, self.limit
                             ),
-                        ))));
+                        )))));
                     }
 
                     self.consumed = new_consumed;
@@ -222,12 +220,9 @@ where
 
                 std::task::Poll::Ready(Some(Ok(frame)))
             }
-            std::task::Poll::Ready(Some(Err(e))) => {
-                std::task::Poll::Ready(Some(Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    e.to_string(),
-                )))))
-            }
+            std::task::Poll::Ready(Some(Err(e))) => std::task::Poll::Ready(Some(Err(Box::new(
+                std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
+            )))),
             std::task::Poll::Ready(None) => std::task::Poll::Ready(None),
             std::task::Poll::Pending => std::task::Poll::Pending,
         }

@@ -9,7 +9,9 @@ use axum::{
 };
 use std::sync::Arc;
 
-use crate::models::{PluginStatsCard, RouteInfo, HealthCheckInfo, PluginInfo, DashboardStats, ActivityLogEntry};
+use crate::models::{
+    ActivityLogEntry, DashboardStats, HealthCheckInfo, PluginInfo, PluginStatsCard, RouteInfo,
+};
 
 /// Shared application state holding references to all real gateway data sources
 #[derive(Clone)]
@@ -236,7 +238,10 @@ pub struct LegacyPluginsTemplate {
 pub async fn overview_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let total_requests = state.metrics.as_ref().map_or(0, |m| m.total_requests());
     let active_routes = state.router.as_ref().map_or(0, |r| r.total_route_count());
-    let avg_latency_ms = state.metrics.as_ref().map_or(0.0, |m| m.global_avg_latency_ms());
+    let avg_latency_ms = state
+        .metrics
+        .as_ref()
+        .map_or(0.0, |m| m.global_avg_latency_ms());
 
     let health_status = if let Some(ref ht) = state.health_tracker {
         let snapshots = ht.get_all_snapshots();
@@ -244,7 +249,11 @@ pub async fn overview_handler(State(state): State<Arc<AppState>>) -> impl IntoRe
             "healthy".to_string()
         } else {
             let any_unhealthy = snapshots.iter().any(|(_, s)| s.error_rate > 0.5);
-            if any_unhealthy { "degraded".to_string() } else { "healthy".to_string() }
+            if any_unhealthy {
+                "degraded".to_string()
+            } else {
+                "healthy".to_string()
+            }
         }
     } else {
         "unknown".to_string()
@@ -285,14 +294,21 @@ pub async fn health_handler(State(state): State<Arc<AppState>>) -> impl IntoResp
     } else {
         let critical = health_checks.iter().any(|h| h.status == "critical");
         let warning = health_checks.iter().any(|h| h.status == "warning");
-        if critical { "critical".to_string() }
-        else if warning { "warning".to_string() }
-        else { "healthy".to_string() }
+        if critical {
+            "critical".to_string()
+        } else if warning {
+            "warning".to_string()
+        } else {
+            "healthy".to_string()
+        }
     };
 
     let uptime_secs = state.start_time.elapsed().as_secs();
     let uptime_pct = if uptime_secs > 0 {
-        let error_rate = state.metrics.as_ref().map_or(0.0, |m| m.global_error_rate());
+        let error_rate = state
+            .metrics
+            .as_ref()
+            .map_or(0.0, |m| m.global_error_rate());
         (1.0 - error_rate) * 100.0
     } else {
         100.0
@@ -384,7 +400,11 @@ pub async fn api_activity_handler(State(state): State<Arc<AppState>>) -> impl In
             .into_iter()
             .map(|e| ActivityLogEntry {
                 timestamp: e.formatted_time(),
-                level: if e.is_error() { "error".to_string() } else { "info".to_string() },
+                level: if e.is_error() {
+                    "error".to_string()
+                } else {
+                    "info".to_string()
+                },
                 message: format!("{} {} → {}", e.method, e.path, e.status),
                 details: Some(format!("{:.1}ms via {}", e.latency_ms, e.upstream)),
                 source: Some("proxy".to_string()),
@@ -440,7 +460,11 @@ pub(crate) fn build_dashboard_stats(state: &AppState) -> DashboardStats {
             "healthy".to_string()
         } else {
             let any_critical = snapshots.iter().any(|(_, s)| s.error_rate > 0.5);
-            if any_critical { "degraded".to_string() } else { "healthy".to_string() }
+            if any_critical {
+                "degraded".to_string()
+            } else {
+                "healthy".to_string()
+            }
         }
     } else {
         "unknown".to_string()
@@ -477,7 +501,9 @@ pub(crate) fn build_dashboard_stats(state: &AppState) -> DashboardStats {
 
 /// Build route list from router + metrics
 pub(crate) fn build_routes_from_state(state: &AppState) -> Vec<RouteInfo> {
-    let Some(ref router) = state.router else { return vec![] };
+    let Some(ref router) = state.router else {
+        return vec![];
+    };
 
     router
         .get_all_routes()
@@ -487,26 +513,29 @@ pub(crate) fn build_routes_from_state(state: &AppState) -> Vec<RouteInfo> {
             let route_key = format!("{} {}", route.method.as_str(), route.path);
 
             // Look up per-route metrics
-            let (request_count, error_count, avg_latency_ms) =
-                if let Some(ref m) = state.metrics {
-                    if let Some(stats) = m.route_stats(&route_key) {
-                        (
-                            stats.request_count.load(std::sync::atomic::Ordering::Relaxed),
-                            stats.error_count.load(std::sync::atomic::Ordering::Relaxed),
-                            stats.avg_latency_ms(),
-                        )
-                    } else if let Some(stats) = m.route_stats(&route.path) {
-                        (
-                            stats.request_count.load(std::sync::atomic::Ordering::Relaxed),
-                            stats.error_count.load(std::sync::atomic::Ordering::Relaxed),
-                            stats.avg_latency_ms(),
-                        )
-                    } else {
-                        (0, 0, 0.0)
-                    }
+            let (request_count, error_count, avg_latency_ms) = if let Some(ref m) = state.metrics {
+                if let Some(stats) = m.route_stats(&route_key) {
+                    (
+                        stats
+                            .request_count
+                            .load(std::sync::atomic::Ordering::Relaxed),
+                        stats.error_count.load(std::sync::atomic::Ordering::Relaxed),
+                        stats.avg_latency_ms(),
+                    )
+                } else if let Some(stats) = m.route_stats(&route.path) {
+                    (
+                        stats
+                            .request_count
+                            .load(std::sync::atomic::Ordering::Relaxed),
+                        stats.error_count.load(std::sync::atomic::Ordering::Relaxed),
+                        stats.avg_latency_ms(),
+                    )
                 } else {
                     (0, 0, 0.0)
-                };
+                }
+            } else {
+                (0, 0, 0.0)
+            };
 
             // Look up health from health tracker using upstream name
             let is_healthy = state
@@ -574,7 +603,12 @@ pub(crate) fn build_health_from_state(state: &AppState) -> Vec<HealthCheckInfo> 
             for inst in &cluster.instances {
                 checks.push(HealthCheckInfo {
                     name: format!("{}/{}", cluster.name, inst.id),
-                    status: if inst.is_healthy() { "passing" } else { "critical" }.to_string(),
+                    status: if inst.is_healthy() {
+                        "passing"
+                    } else {
+                        "critical"
+                    }
+                    .to_string(),
                     response_time_ms: 0,
                     message: if !inst.is_healthy() {
                         Some("Instance marked unhealthy".to_string())
@@ -595,7 +629,9 @@ pub(crate) fn build_health_from_state(state: &AppState) -> Vec<HealthCheckInfo> 
 
 /// Build plugin list from plugin manager (runtime)
 pub(crate) fn build_plugins_from_state(state: &AppState) -> Vec<PluginInfo> {
-    let Some(ref pm) = state.plugin_manager else { return vec![] };
+    let Some(ref pm) = state.plugin_manager else {
+        return vec![];
+    };
 
     pm.list()
         .into_iter()

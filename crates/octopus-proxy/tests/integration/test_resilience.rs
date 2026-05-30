@@ -1,9 +1,9 @@
 //! Resilience features integration tests
 
 use super::*;
-use octopus_proxy::{HttpProxy, ProxyConfig, HttpClient};
-use octopus_health::circuit_breaker::CircuitState;
 use http::StatusCode;
+use octopus_health::circuit_breaker::CircuitState;
+use octopus_proxy::{HttpClient, HttpProxy, ProxyConfig};
 use std::time::Duration;
 
 #[tokio::test]
@@ -29,12 +29,15 @@ async fn test_retry_on_transient_failure() {
     // Test that proxy_resilient method works with retry enabled
     let req = TestFixtures::request().build();
     let result = proxy.proxy_resilient(req, &upstream).await;
-    
+
     // Should succeed with retry enabled
     assert!(result.is_ok(), "Request should succeed with retry enabled");
-    
+
     let stats = mock.stats().await;
-    assert!(stats.requests_received >= 1, "Should have made at least one request");
+    assert!(
+        stats.requests_received >= 1,
+        "Should have made at least one request"
+    );
 }
 
 #[tokio::test]
@@ -61,8 +64,11 @@ async fn test_circuit_breaker_opens_on_failures() {
     // Make a successful request to verify circuit breaker is working
     let req = TestFixtures::request().build();
     let result = proxy.proxy_resilient(req, &upstream).await;
-    
-    assert!(result.is_ok(), "Request should succeed with circuit breaker enabled");
+
+    assert!(
+        result.is_ok(),
+        "Request should succeed with circuit breaker enabled"
+    );
 
     // Circuit breaker should start in closed state
     let cb_state = proxy.circuit_breaker().get_state(&upstream.id);
@@ -71,12 +77,12 @@ async fn test_circuit_breaker_opens_on_failures() {
         CircuitState::Closed,
         "Circuit breaker should start in closed state"
     );
-    
+
     // Record some successes to keep it closed
     for _ in 0..5 {
         proxy.circuit_breaker().record_success(&upstream.id);
     }
-    
+
     let cb_state = proxy.circuit_breaker().get_state(&upstream.id);
     assert_eq!(
         cb_state,
@@ -113,13 +119,15 @@ async fn test_circuit_breaker_prevents_requests_when_open() {
     let req = TestFixtures::request().build();
     let result = proxy.proxy_resilient(req, &upstream).await;
 
-    assert!(result.is_err(), "Request should fail when circuit breaker is open");
+    assert!(
+        result.is_err(),
+        "Request should fail when circuit breaker is open"
+    );
 
     // Verify no request reached the upstream
     let final_stats = mock.stats().await;
     assert_eq!(
-        initial_stats.requests_received, 
-        final_stats.requests_received,
+        initial_stats.requests_received, final_stats.requests_received,
         "No requests should reach upstream when circuit breaker is open"
     );
 }
@@ -175,12 +183,13 @@ async fn test_connect_timeout() {
 
     // Connection should fail (either timeout or connection refused)
     assert!(result.is_err(), "Connection should fail");
-    
+
     // Should fail relatively quickly (within 2 seconds)
     // Note: Connection refused is faster than timeout
     assert!(
         elapsed < Duration::from_secs(2),
-        "Should fail within reasonable time, took: {:?}", elapsed
+        "Should fail within reasonable time, took: {:?}",
+        elapsed
     );
 }
 
@@ -254,8 +263,7 @@ async fn test_circuit_breaker_half_open_state() {
     // Circuit breaker should allow test requests in half-open state
     let state = proxy.circuit_breaker().get_state(&upstream.id);
     assert!(
-        state == CircuitState::Open ||
-        state == CircuitState::HalfOpen,
+        state == CircuitState::Open || state == CircuitState::HalfOpen,
         "Circuit breaker should be open or half-open"
     );
 }
@@ -287,7 +295,7 @@ async fn test_retry_with_exponential_backoff() {
     let elapsed = start.elapsed();
 
     let stats = mock.stats().await;
-    
+
     // If retries happened, there should be multiple requests
     // and some time should have elapsed for backoff
     if stats.requests_received > 1 {

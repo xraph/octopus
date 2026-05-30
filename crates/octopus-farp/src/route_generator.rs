@@ -26,8 +26,7 @@ pub struct GeneratedRoute {
 }
 
 /// Route metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RouteMetadata {
     /// Operation ID (if available)
     pub operation_id: Option<String>,
@@ -45,10 +44,10 @@ pub struct RouteMetadata {
     pub rate_limit: Option<u32>,
 }
 
-
 impl RouteGenerator {
     /// Create a new route generator
-    #[must_use] pub const fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self
     }
 
@@ -79,7 +78,9 @@ impl RouteGenerator {
                         summary: None,
                         tags: Vec::new(),
                         requires_auth: !rd.public,
-                        rate_limit: rd.rate_limit.as_ref()
+                        rate_limit: rd
+                            .rate_limit
+                            .as_ref()
                             .and_then(|rl| rl.requests_per_second.map(|r| r as u32)),
                     };
                     GeneratedRoute {
@@ -226,7 +227,8 @@ impl RouteGenerator {
     }
 
     /// Apply prefix to all routes
-    #[must_use] pub fn apply_prefix(routes: Vec<GeneratedRoute>, prefix: &str) -> Vec<GeneratedRoute> {
+    #[must_use]
+    pub fn apply_prefix(routes: Vec<GeneratedRoute>, prefix: &str) -> Vec<GeneratedRoute> {
         routes
             .into_iter()
             .map(|mut route| {
@@ -237,7 +239,8 @@ impl RouteGenerator {
     }
 
     /// Filter routes by tags
-    #[must_use] pub fn filter_by_tags(routes: Vec<GeneratedRoute>, tags: &[String]) -> Vec<GeneratedRoute> {
+    #[must_use]
+    pub fn filter_by_tags(routes: Vec<GeneratedRoute>, tags: &[String]) -> Vec<GeneratedRoute> {
         routes
             .into_iter()
             .filter(|route| route.metadata.tags.iter().any(|t| tags.contains(t)))
@@ -331,12 +334,7 @@ mod tests {
 
         let route_table = vec![
             test_route_descriptor("/users", vec!["GET", "POST"], Some("listUsers"), true),
-            test_route_descriptor(
-                "/users/{id}",
-                vec!["GET", "DELETE"],
-                Some("getUser"),
-                false,
-            ),
+            test_route_descriptor("/users/{id}", vec!["GET", "DELETE"], Some("getUser"), false),
         ];
 
         let routes = generator.generate_from_route_table(&route_table, "user-svc");

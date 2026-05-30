@@ -302,7 +302,10 @@ mod tests {
         assert_eq!(route.auth_provider, Some("internal-jwt".to_string()));
         assert!(!route.skip_auth);
         assert_eq!(route.require_roles, vec!["admin".to_string()]);
-        assert_eq!(route.require_scopes, vec!["read".to_string(), "write".to_string()]);
+        assert_eq!(
+            route.require_scopes,
+            vec!["read".to_string(), "write".to_string()]
+        );
         assert_eq!(route.authz_rule, Some("has_role(\"admin\")".to_string()));
     }
 

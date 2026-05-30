@@ -4,8 +4,8 @@
 //! that can be embedded in Askama templates.
 
 use crate::models::{HealthCheckInfo, PluginInfo, RouteInfo};
-use octopus_ui::components::{Badge, Button, ButtonGroup};
 use octopus_ui::components::card::*;
+use octopus_ui::components::{Badge, Button, ButtonGroup};
 use octopus_ui::core::{if_node, map, Classes, Node, Render, Size, Variant};
 use octopus_ui::helpers::htmx::Htmx;
 use octopus_ui::primitives::{Grid, HStack, VStack};
@@ -76,11 +76,7 @@ pub fn stats_card(title: &str, value: &str, description: &str, icon: Option<&str
         .child(
             CardHeader::new()
                 .class("flex flex-row items-center justify-between space-y-0 pb-2")
-                .child(
-                    CardTitle::new(title)
-                        .class("text-sm font-medium")
-                        .render(),
-                )
+                .child(CardTitle::new(title).class("text-sm font-medium").render())
                 .child(if_node(
                     icon.is_some(),
                     Node::element("div")
@@ -126,9 +122,11 @@ pub fn route_card(route: &RouteInfo) -> String {
                                 .class("text-base font-mono")
                                 .render(),
                         )
-                        .child(Node::raw(&health_status_badge(
-                            if route.is_healthy { "passing" } else { "failing" },
-                        )))
+                        .child(Node::raw(&health_status_badge(if route.is_healthy {
+                            "passing"
+                        } else {
+                            "failing"
+                        })))
                         .render(),
                 )
                 .child(CardDescription::new(&route.upstream).render())
@@ -165,9 +163,9 @@ pub fn route_card(route: &RouteInfo) -> String {
                                         .child(Node::text("Avg Latency")),
                                 )
                                 .child(
-                                    Node::element("div")
-                                        .attr("class", "font-medium")
-                                        .child(Node::text(&format!("{:.1}ms", route.avg_latency_ms))),
+                                    Node::element("div").attr("class", "font-medium").child(
+                                        Node::text(&format!("{:.1}ms", route.avg_latency_ms)),
+                                    ),
                                 )
                                 .render(),
                         )
@@ -223,11 +221,7 @@ pub fn health_check_card(check: &HealthCheckInfo) -> String {
                         .render(),
                 )
                 .child(
-                    CardDescription::new(&format!(
-                        "Last checked: {}",
-                        check.last_check
-                    ))
-                    .render(),
+                    CardDescription::new(&format!("Last checked: {}", check.last_check)).render(),
                 )
                 .render(),
         )
@@ -256,20 +250,22 @@ pub fn health_check_card(check: &HealthCheckInfo) -> String {
                                         .child(
                                             Node::element("span")
                                                 .attr("class", "font-medium")
-                                                .child(Node::text(&format!("{}ms", check.response_time_ms))),
+                                                .child(Node::text(&format!(
+                                                    "{}ms",
+                                                    check.response_time_ms
+                                                ))),
                                         ),
                                 )
                                 .child(if_node(
                                     check.consecutive_failures > 0,
-                                    Node::element("div")
-                                        .child(
-                                            Node::element("span")
-                                                .attr("class", "text-destructive")
-                                                .child(Node::text(&format!(
-                                                    "{} consecutive failures",
-                                                    check.consecutive_failures
-                                                ))),
-                                        ),
+                                    Node::element("div").child(
+                                        Node::element("span")
+                                            .attr("class", "text-destructive")
+                                            .child(Node::text(&format!(
+                                                "{} consecutive failures",
+                                                check.consecutive_failures
+                                            ))),
+                                    ),
                                 ))
                                 .render(),
                         )
@@ -303,7 +299,11 @@ pub fn plugin_card(plugin: &PluginInfo) -> String {
                                 .render(),
                         )
                         .child(Node::raw(&status_badge(
-                            if plugin.enabled { "Enabled" } else { "Disabled" },
+                            if plugin.enabled {
+                                "Enabled"
+                            } else {
+                                "Disabled"
+                            },
                             if plugin.enabled {
                                 Variant::Default
                             } else {
@@ -377,7 +377,10 @@ pub fn plugin_card(plugin: &PluginInfo) -> String {
 pub fn nav_item(name: &str, path: &str, active: bool, icon: Option<&str>) -> String {
     let classes = Classes::new()
         .add("nav-link", true)
-        .add("flex items-center gap-3 rounded-lg px-3 py-2 transition-all", true)
+        .add(
+            "flex items-center gap-3 rounded-lg px-3 py-2 transition-all",
+            true,
+        )
         .add("bg-muted text-primary", active)
         .add("text-muted-foreground hover:text-primary", !active)
         .build();
@@ -385,10 +388,7 @@ pub fn nav_item(name: &str, path: &str, active: bool, icon: Option<&str>) -> Str
     Node::element("a")
         .attr("href", path)
         .attr("class", &classes)
-        .child(if_node(
-            icon.is_some(),
-            Node::raw(icon.unwrap_or("")),
-        ))
+        .child(if_node(icon.is_some(), Node::raw(icon.unwrap_or(""))))
         .child(Node::text(name))
         .render_to_string()
 }
@@ -452,30 +452,30 @@ pub fn route_table_row(route: &RouteInfo, index: usize) -> String {
         .child(
             Node::element("td")
                 .attr("class", "px-4 py-3")
-                .child(Node::raw(&health_status_badge(
-                    if route.is_healthy { "passing" } else { "failing" },
-                ))),
+                .child(Node::raw(&health_status_badge(if route.is_healthy {
+                    "passing"
+                } else {
+                    "failing"
+                }))),
         )
         .child(
-            Node::element("td")
-                .attr("class", "px-4 py-3")
-                .child(
-                    ButtonGroup::new()
-                        .gap("1")
-                        .child(
-                            Button::with_text("View")
-                                .variant(Variant::Ghost)
-                                .size(Size::SM)
-                                .render(),
-                        )
-                        .child(
-                            Button::with_text("Edit")
-                                .variant(Variant::Ghost)
-                                .size(Size::SM)
-                                .render(),
-                        )
-                        .render(),
-                ),
+            Node::element("td").attr("class", "px-4 py-3").child(
+                ButtonGroup::new()
+                    .gap("1")
+                    .child(
+                        Button::with_text("View")
+                            .variant(Variant::Ghost)
+                            .size(Size::SM)
+                            .render(),
+                    )
+                    .child(
+                        Button::with_text("Edit")
+                            .variant(Variant::Ghost)
+                            .size(Size::SM)
+                            .render(),
+                    )
+                    .render(),
+            ),
         )
         .render_to_string()
 }
@@ -488,51 +488,49 @@ pub fn routes_table(routes: &[RouteInfo]) -> String {
             Node::element("table")
                 .attr("class", "w-full")
                 .child(
-                    Node::element("thead")
-                        .child(
-                            Node::element("tr")
-                                .attr("class", "border-b bg-muted/50")
-                                .child(
-                                    Node::element("th")
-                                        .attr("class", "px-4 py-3 text-left text-sm font-medium")
-                                        .child(Node::text("Method")),
-                                )
-                                .child(
-                                    Node::element("th")
-                                        .attr("class", "px-4 py-3 text-left text-sm font-medium")
-                                        .child(Node::text("Path")),
-                                )
-                                .child(
-                                    Node::element("th")
-                                        .attr("class", "px-4 py-3 text-left text-sm font-medium")
-                                        .child(Node::text("Upstream")),
-                                )
-                                .child(
-                                    Node::element("th")
-                                        .attr("class", "px-4 py-3 text-right text-sm font-medium")
-                                        .child(Node::text("Requests")),
-                                )
-                                .child(
-                                    Node::element("th")
-                                        .attr("class", "px-4 py-3 text-right text-sm font-medium")
-                                        .child(Node::text("Latency")),
-                                )
-                                .child(
-                                    Node::element("th")
-                                        .attr("class", "px-4 py-3 text-left text-sm font-medium")
-                                        .child(Node::text("Status")),
-                                )
-                                .child(
-                                    Node::element("th")
-                                        .attr("class", "px-4 py-3 text-left text-sm font-medium")
-                                        .child(Node::text("Actions")),
-                                ),
-                        ),
+                    Node::element("thead").child(
+                        Node::element("tr")
+                            .attr("class", "border-b bg-muted/50")
+                            .child(
+                                Node::element("th")
+                                    .attr("class", "px-4 py-3 text-left text-sm font-medium")
+                                    .child(Node::text("Method")),
+                            )
+                            .child(
+                                Node::element("th")
+                                    .attr("class", "px-4 py-3 text-left text-sm font-medium")
+                                    .child(Node::text("Path")),
+                            )
+                            .child(
+                                Node::element("th")
+                                    .attr("class", "px-4 py-3 text-left text-sm font-medium")
+                                    .child(Node::text("Upstream")),
+                            )
+                            .child(
+                                Node::element("th")
+                                    .attr("class", "px-4 py-3 text-right text-sm font-medium")
+                                    .child(Node::text("Requests")),
+                            )
+                            .child(
+                                Node::element("th")
+                                    .attr("class", "px-4 py-3 text-right text-sm font-medium")
+                                    .child(Node::text("Latency")),
+                            )
+                            .child(
+                                Node::element("th")
+                                    .attr("class", "px-4 py-3 text-left text-sm font-medium")
+                                    .child(Node::text("Status")),
+                            )
+                            .child(
+                                Node::element("th")
+                                    .attr("class", "px-4 py-3 text-left text-sm font-medium")
+                                    .child(Node::text("Actions")),
+                            ),
+                    ),
                 )
                 .child(
-                    Node::element("tbody").child(map(routes, |route| {
-                        Node::raw(&route_table_row(route, 0))
-                    })),
+                    Node::element("tbody")
+                        .child(map(routes, |route| Node::raw(&route_table_row(route, 0)))),
                 ),
         )
         .render_to_string()

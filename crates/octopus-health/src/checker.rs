@@ -184,10 +184,7 @@ impl HealthCheck for HttpHealthCheck {
         let uri: Uri = match url.parse() {
             Ok(u) => u,
             Err(e) => {
-                return HealthCheckResult::unhealthy(
-                    start.elapsed(),
-                    format!("Invalid URL: {e}"),
-                );
+                return HealthCheckResult::unhealthy(start.elapsed(), format!("Invalid URL: {e}"));
             }
         };
 
@@ -371,12 +368,11 @@ impl HealthCheck for GrpcHealthCheck {
             stream.set_nodelay(true)?;
 
             let io = hyper_util::rt::TokioIo::new(stream);
-            let (mut sender, conn) = hyper::client::conn::http2::Builder::new(
-                hyper_util::rt::TokioExecutor::new(),
-            )
-            .handshake(io)
-            .await
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::ConnectionRefused, e))?;
+            let (mut sender, conn) =
+                hyper::client::conn::http2::Builder::new(hyper_util::rt::TokioExecutor::new())
+                    .handshake(io)
+                    .await
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::ConnectionRefused, e))?;
 
             tokio::spawn(async move {
                 let _ = conn.await;

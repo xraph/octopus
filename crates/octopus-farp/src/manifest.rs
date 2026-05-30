@@ -107,7 +107,8 @@ impl SchemaManifest {
     }
 
     /// Add a schema descriptor (builder pattern)
-    #[must_use] pub fn with_schema(mut self, schema: SchemaDescriptor) -> Self {
+    #[must_use]
+    pub fn with_schema(mut self, schema: SchemaDescriptor) -> Self {
         self.schemas.push(schema);
         self
     }
@@ -127,7 +128,8 @@ impl SchemaManifest {
     }
 
     /// Set endpoints
-    #[must_use] pub fn with_endpoints(mut self, endpoints: SchemaEndpoints) -> Self {
+    #[must_use]
+    pub fn with_endpoints(mut self, endpoints: SchemaEndpoints) -> Self {
         self.endpoints = endpoints;
         self
     }
@@ -168,7 +170,7 @@ impl SchemaManifest {
             hasher.update(url.as_bytes());
             format!("{:x}", hasher.finalize())
         };
-        
+
         let schema = SchemaDescriptor::new(
             SchemaType::OpenAPI,
             "3.1.0",
@@ -188,7 +190,7 @@ impl SchemaManifest {
             hasher.update(url.as_bytes());
             format!("{:x}", hasher.finalize())
         };
-        
+
         let schema = SchemaDescriptor::new(
             SchemaType::AsyncAPI,
             "3.0.0",
@@ -275,17 +277,20 @@ impl SchemaManifest {
     }
 
     /// Get a schema descriptor by type
-    #[must_use] pub fn get_schema(&self, schema_type: SchemaType) -> Option<&SchemaDescriptor> {
+    #[must_use]
+    pub fn get_schema(&self, schema_type: SchemaType) -> Option<&SchemaDescriptor> {
         self.schemas.iter().find(|s| s.schema_type == schema_type)
     }
 
     /// Check if the manifest has a specific capability
-    #[must_use] pub fn has_capability(&self, capability: &str) -> bool {
+    #[must_use]
+    pub fn has_capability(&self, capability: &str) -> bool {
         self.capabilities.iter().any(|c| c == capability)
     }
 
     /// Clone the manifest
-    #[must_use] pub fn deep_clone(&self) -> Self {
+    #[must_use]
+    pub fn deep_clone(&self) -> Self {
         self.clone()
     }
 
@@ -413,7 +418,8 @@ pub struct SchemaChangeDiff {
 
 impl ManifestDiff {
     /// Check if there are any changes
-    #[must_use] pub fn has_changes(&self) -> bool {
+    #[must_use]
+    pub fn has_changes(&self) -> bool {
         !self.schemas_added.is_empty()
             || !self.schemas_removed.is_empty()
             || !self.schemas_changed.is_empty()
@@ -424,7 +430,8 @@ impl ManifestDiff {
 }
 
 /// Compare two manifests and return the differences
-#[must_use] pub fn diff_manifests(old: &SchemaManifest, new: &SchemaManifest) -> ManifestDiff {
+#[must_use]
+pub fn diff_manifests(old: &SchemaManifest, new: &SchemaManifest) -> ManifestDiff {
     let mut diff = ManifestDiff {
         schemas_added: Vec::new(),
         schemas_removed: Vec::new(),

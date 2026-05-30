@@ -79,9 +79,7 @@ async fn fetch_spec_http(url: &str) -> Result<Value> {
     let client: Client<HttpConnector, Full<Bytes>> =
         Client::builder(TokioExecutor::new()).build_http();
 
-    let uri: hyper::Uri = url
-        .parse()
-        .with_context(|| format!("Invalid URL: {url}"))?;
+    let uri: hyper::Uri = url.parse().with_context(|| format!("Invalid URL: {url}"))?;
 
     let req = hyper::Request::builder()
         .uri(uri)
@@ -106,8 +104,7 @@ async fn fetch_spec_http(url: &str) -> Result<Value> {
         .context("Failed to read response body")?
         .to_bytes();
 
-    let spec: Value =
-        serde_json::from_slice(&body).context("Failed to parse spec as JSON")?;
+    let spec: Value = serde_json::from_slice(&body).context("Failed to parse spec as JSON")?;
 
     Ok(spec)
 }
@@ -183,7 +180,11 @@ fn extract_openapi_routes(
             let tags: Vec<String> = operation
                 .get("tags")
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default();
 
             let requires_auth = operation.get("security").is_some();
@@ -208,8 +209,7 @@ fn extract_openapi_routes(
             );
 
             // Extract parameters
-            let (path_params, query_params) =
-                extract_parameters(spec, operation, path);
+            let (path_params, query_params) = extract_parameters(spec, operation, path);
 
             // Extract request body type
             let request_body = extract_request_body_type(operation);
@@ -260,10 +260,7 @@ fn extract_parameters(
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .to_string();
-        let location = param
-            .get("in")
-            .and_then(|v| v.as_str())
-            .unwrap_or_default();
+        let location = param.get("in").and_then(|v| v.as_str()).unwrap_or_default();
         let required = param
             .get("required")
             .and_then(|v| v.as_bool())
@@ -334,11 +331,9 @@ fn extract_response_type(operation: &Value) -> Option<String> {
         .get("200")
         .or_else(|| responses.get("201"))
         .or_else(|| {
-            responses.as_object().and_then(|obj| {
-                obj.iter()
-                    .find(|(k, _)| k.starts_with('2'))
-                    .map(|(_, v)| v)
-            })
+            responses
+                .as_object()
+                .and_then(|obj| obj.iter().find(|(k, _)| k.starts_with('2')).map(|(_, v)| v))
         })?;
 
     response
@@ -367,11 +362,7 @@ fn extract_response_type(operation: &Value) -> Option<String> {
 /// Convert a $ref path to a type name
 /// "#/components/schemas/User" → "User"
 fn ref_to_type_name(ref_path: &str) -> String {
-    ref_path
-        .rsplit('/')
-        .next()
-        .unwrap_or(ref_path)
-        .to_string()
+    ref_path.rsplit('/').next().unwrap_or(ref_path).to_string()
 }
 
 /// Resolve a JSON $ref if present
@@ -441,16 +432,10 @@ fn extract_asyncapi_v2_routes(
         };
 
         // Extract subscribe messages (client receives)
-        let receive_messages = extract_v2_operation_messages(
-            spec,
-            definition.get("subscribe"),
-        );
+        let receive_messages = extract_v2_operation_messages(spec, definition.get("subscribe"));
 
         // Extract publish messages (client sends)
-        let send_messages = extract_v2_operation_messages(
-            spec,
-            definition.get("publish"),
-        );
+        let send_messages = extract_v2_operation_messages(spec, definition.get("publish"));
 
         // Extract WebSocket bindings
         let ws_bindings = extract_ws_bindings(spec, definition);
@@ -472,13 +457,8 @@ fn extract_asyncapi_v2_routes(
             skip_auth: false,
         });
 
-        let scope_name = scope::resolve_scope(
-            &service.name,
-            &path,
-            "SUBSCRIBE",
-            None,
-            &service.scopes,
-        );
+        let scope_name =
+            scope::resolve_scope(&service.name, &path, "SUBSCRIBE", None, &service.scopes);
 
         // Build union type names for request/response
         let send_type = build_union_type_name(channel_name, "Send", &send_messages);
@@ -593,20 +573,17 @@ fn extract_asyncapi_v3_routes(
             _ => format!("/ws{channel_name}"),
         };
 
-        let send_messages = channel_sends
-            .remove(channel_name)
-            .unwrap_or_default();
-        let receive_messages = channel_receives
-            .remove(channel_name)
-            .unwrap_or_default();
+        let send_messages = channel_sends.remove(channel_name).unwrap_or_default();
+        let receive_messages = channel_receives.remove(channel_name).unwrap_or_default();
 
         // Also extract inline messages from the channel itself if operations didn't provide them
-        let (send_messages, receive_messages) = if send_messages.is_empty() && receive_messages.is_empty() {
-            let inline_msgs = extract_v3_channel_inline_messages(spec, definition);
-            (Vec::new(), inline_msgs)
-        } else {
-            (send_messages, receive_messages)
-        };
+        let (send_messages, receive_messages) =
+            if send_messages.is_empty() && receive_messages.is_empty() {
+                let inline_msgs = extract_v3_channel_inline_messages(spec, definition);
+                (Vec::new(), inline_msgs)
+            } else {
+                (send_messages, receive_messages)
+            };
 
         let ws_bindings = extract_ws_bindings(spec, definition);
 
@@ -620,13 +597,8 @@ fn extract_asyncapi_v3_routes(
             skip_auth: false,
         });
 
-        let scope_name = scope::resolve_scope(
-            &service.name,
-            &path,
-            "SUBSCRIBE",
-            None,
-            &service.scopes,
-        );
+        let scope_name =
+            scope::resolve_scope(&service.name, &path, "SUBSCRIBE", None, &service.scopes);
 
         let send_type = build_union_type_name(channel_name, "Send", &send_messages);
         let receive_type = build_union_type_name(channel_name, "Receive", &receive_messages);
@@ -699,7 +671,9 @@ fn detect_channel_protocol(definition: &Value) -> ProtocolKind {
     if let Some(tags) = definition.get("tags").and_then(|t| t.as_array()) {
         for tag in tags {
             if let Some(name) = tag.get("name").and_then(|n| n.as_str()) {
-                if name.to_lowercase().contains("sse") || name.to_lowercase().contains("event-stream") {
+                if name.to_lowercase().contains("sse")
+                    || name.to_lowercase().contains("event-stream")
+                {
                     return ProtocolKind::Sse;
                 }
             }
@@ -740,10 +714,7 @@ fn extract_v2_operation_messages(
 }
 
 /// Extract messages from an AsyncAPI 3.x operation
-fn extract_v3_operation_messages(
-    spec: &Value,
-    operation: &Value,
-) -> Vec<ChannelMessageInfo> {
+fn extract_v3_operation_messages(spec: &Value, operation: &Value) -> Vec<ChannelMessageInfo> {
     let mut messages = Vec::new();
 
     // v3 operations have `messages` array
@@ -776,10 +747,7 @@ fn extract_v3_operation_messages(
 }
 
 /// Extract inline messages from a v3 channel definition
-fn extract_v3_channel_inline_messages(
-    spec: &Value,
-    channel: &Value,
-) -> Vec<ChannelMessageInfo> {
+fn extract_v3_channel_inline_messages(spec: &Value, channel: &Value) -> Vec<ChannelMessageInfo> {
     let mut messages = Vec::new();
 
     if let Some(msgs) = channel.get("messages").and_then(|m| m.as_object()) {
@@ -831,23 +799,21 @@ fn extract_single_message(spec: &Value, message: &Value) -> Option<ChannelMessag
         .map(String::from);
 
     // Extract payload type
-    let payload_type = resolved
-        .get("payload")
-        .and_then(|p| {
-            // Direct $ref to a schema
-            if let Some(r) = p.get("$ref").and_then(|r| r.as_str()) {
-                return Some(ref_to_type_name(r));
-            }
-            // Inline schema with a title
-            if let Some(title) = p.get("title").and_then(|t| t.as_str()) {
-                return Some(title.to_string());
-            }
-            // Inline schema — use message name as type name
-            if p.get("type").is_some() || p.get("properties").is_some() {
-                return Some(pascal_case_simple(&name));
-            }
-            None
-        });
+    let payload_type = resolved.get("payload").and_then(|p| {
+        // Direct $ref to a schema
+        if let Some(r) = p.get("$ref").and_then(|r| r.as_str()) {
+            return Some(ref_to_type_name(r));
+        }
+        // Inline schema with a title
+        if let Some(title) = p.get("title").and_then(|t| t.as_str()) {
+            return Some(title.to_string());
+        }
+        // Inline schema — use message name as type name
+        if p.get("type").is_some() || p.get("properties").is_some() {
+            return Some(pascal_case_simple(&name));
+        }
+        None
+    });
 
     let headers_type = resolved
         .get("headers")
@@ -871,7 +837,11 @@ fn extract_ws_bindings(_spec: &Value, definition: &Value) -> Option<WsChannelBin
     let mut headers = Vec::new();
 
     // Query params from bindings
-    if let Some(query) = ws_binding.get("query").and_then(|q| q.get("properties")).and_then(|p| p.as_object()) {
+    if let Some(query) = ws_binding
+        .get("query")
+        .and_then(|q| q.get("properties"))
+        .and_then(|p| p.as_object())
+    {
         for (name, schema) in query {
             let param_type = schema
                 .get("type")
@@ -888,19 +858,29 @@ fn extract_ws_bindings(_spec: &Value, definition: &Value) -> Option<WsChannelBin
                 name: name.clone(),
                 param_type,
                 required,
-                description: schema.get("description").and_then(|d| d.as_str()).map(String::from),
+                description: schema
+                    .get("description")
+                    .and_then(|d| d.as_str())
+                    .map(String::from),
             });
         }
     }
 
     // Headers from bindings
-    if let Some(hdrs) = ws_binding.get("headers").and_then(|h| h.get("properties")).and_then(|p| p.as_object()) {
+    if let Some(hdrs) = ws_binding
+        .get("headers")
+        .and_then(|h| h.get("properties"))
+        .and_then(|p| p.as_object())
+    {
         for (name, schema) in hdrs {
             headers.push(ParamInfo {
                 name: name.clone(),
                 param_type: "string".to_string(),
                 required: false,
-                description: schema.get("description").and_then(|d| d.as_str()).map(String::from),
+                description: schema
+                    .get("description")
+                    .and_then(|d| d.as_str())
+                    .map(String::from),
             });
         }
     }
@@ -1127,8 +1107,7 @@ fn write_output_file(path_without_ext: &str, format: &str, content: &Value) -> R
         ),
     };
 
-    std::fs::write(&path, &serialized)
-        .with_context(|| format!("Failed to write {path}"))?;
+    std::fs::write(&path, &serialized).with_context(|| format!("Failed to write {path}"))?;
 
     info!(path = %path, "Written config fragment");
     Ok(())

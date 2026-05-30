@@ -153,7 +153,7 @@ impl HttpProxy {
     ) -> Result<Response<Incoming>> {
         // Build upstream URI
         let upstream_uri = self.build_upstream_uri(&req, upstream)?;
-        
+
         debug!(
             method = %req.method(),
             uri = %upstream_uri,
@@ -178,7 +178,7 @@ impl HttpProxy {
     }
 
     /// Proxy a request and collect body (for backward compatibility)
-    /// 
+    ///
     /// Note: This buffers the entire response body in memory.
     /// Use `proxy()` for zero-copy streaming whenever possible.
     #[instrument(skip(self, req), fields(upstream = %upstream.id))]
@@ -188,7 +188,7 @@ impl HttpProxy {
         upstream: &UpstreamInstance,
     ) -> Result<Response<Full<Bytes>>> {
         use http_body_util::BodyExt;
-        
+
         // Get streaming response
         let response = self.proxy(req, upstream).await?;
 
@@ -288,8 +288,7 @@ impl HttpProxy {
                         .await
                         .map_err(|e| Error::UpstreamConnection(e.to_string()))?
                         .to_bytes();
-                    let buffered_resp =
-                        Response::from_parts(resp_parts, Full::new(resp_bytes));
+                    let buffered_resp = Response::from_parts(resp_parts, Full::new(resp_bytes));
 
                     // Check if retryable
                     let is_retryable = self.config.enable_retry
@@ -313,10 +312,7 @@ impl HttpProxy {
                     }
 
                     // Success or non-retryable status
-                    debug!(
-                        status = status.as_u16(),
-                        "Received response from upstream"
-                    );
+                    debug!(status = status.as_u16(), "Received response from upstream");
 
                     if self.config.enable_circuit_breaker {
                         self.circuit_breaker.record_success(&upstream.id);
@@ -408,7 +404,7 @@ impl HttpProxy {
                 http::HeaderName::from_static("x-forwarded-proto"),
                 http::HeaderValue::from_static("http"),
             );
-            
+
             // TODO: Add X-Forwarded-For when client IP is available
             // TODO: Add X-Forwarded-Host
         }
@@ -504,7 +500,6 @@ impl HttpProxy {
         &self.retry_policy
     }
 }
-
 
 impl std::fmt::Debug for HttpProxy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

@@ -17,13 +17,13 @@ const TRACE_CONTEXT_VERSION: &str = "00";
 pub struct TraceContext {
     /// Trace ID (32 hex characters)
     pub trace_id: String,
-    
+
     /// Parent span ID (16 hex characters)
     pub parent_span_id: String,
-    
+
     /// Trace flags (2 hex characters)
     pub trace_flags: String,
-    
+
     /// Trace state (optional)
     pub trace_state: Option<String>,
 }
@@ -53,7 +53,7 @@ impl TraceContext {
     pub fn from_headers(headers: &HeaderMap) -> Option<Self> {
         let traceparent = headers.get(TRACEPARENT_HEADER)?;
         let traceparent_str = traceparent.to_str().ok()?;
-        
+
         Self::parse_traceparent(traceparent_str).map(|mut ctx| {
             // Also extract tracestate if present
             if let Some(tracestate) = headers.get(TRACESTATE_HEADER) {
@@ -70,9 +70,12 @@ impl TraceContext {
     /// Example: 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01
     fn parse_traceparent(value: &str) -> Option<Self> {
         let parts: Vec<&str> = value.split('-').collect();
-        
+
         if parts.len() != 4 {
-            warn!("Invalid traceparent format: expected 4 parts, got {}", parts.len());
+            warn!(
+                "Invalid traceparent format: expected 4 parts, got {}",
+                parts.len()
+            );
             return None;
         }
 
@@ -133,7 +136,7 @@ impl TraceContext {
     /// Inject trace context into HTTP headers
     pub fn inject_into_headers(&self, headers: &mut HeaderMap) {
         let traceparent = self.to_traceparent();
-        
+
         if let Ok(value) = HeaderValue::from_str(&traceparent) {
             headers.insert(TRACEPARENT_HEADER, value);
             debug!(trace_id = %self.trace_id, "Injected traceparent header");
@@ -238,7 +241,7 @@ mod tests {
     fn test_parse_valid_traceparent() {
         let traceparent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
         let context = TraceContext::parse_traceparent(traceparent).unwrap();
-        
+
         assert_eq!(context.trace_id, "0af7651916cd43dd8448eb211c80319c");
         assert_eq!(context.parent_span_id, "b7ad6b7169203331");
         assert_eq!(context.trace_flags, "01");
@@ -249,10 +252,13 @@ mod tests {
     fn test_parse_invalid_traceparent() {
         // Wrong number of parts
         assert!(TraceContext::parse_traceparent("00-abc-def").is_none());
-        
+
         // Invalid version
-        assert!(TraceContext::parse_traceparent("99-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01").is_none());
-        
+        assert!(TraceContext::parse_traceparent(
+            "99-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+        )
+        .is_none());
+
         // Invalid trace_id length
         assert!(TraceContext::parse_traceparent("00-abc-b7ad6b7169203331-01").is_none());
     }
@@ -263,9 +269,9 @@ mod tests {
             "0af7651916cd43dd8448eb211c80319c".to_string(),
             "b7ad6b7169203331".to_string(),
         );
-        
+
         let child = parent.create_child();
-        
+
         assert_eq!(child.trace_id, parent.trace_id);
         assert_ne!(child.parent_span_id, parent.parent_span_id);
         assert_eq!(child.trace_flags, parent.trace_flags);
@@ -277,7 +283,7 @@ mod tests {
             "0af7651916cd43dd8448eb211c80319c".to_string(),
             "b7ad6b7169203331".to_string(),
         );
-        
+
         let traceparent = context.to_traceparent();
         assert_eq!(
             traceparent,
@@ -289,9 +295,9 @@ mod tests {
     fn test_inject_and_extract() {
         let context = TraceContext::new_root();
         let mut headers = HeaderMap::new();
-        
+
         context.inject_into_headers(&mut headers);
-        
+
         let extracted = TraceContext::from_headers(&headers).unwrap();
         assert_eq!(extracted.trace_id, context.trace_id);
         assert_eq!(extracted.parent_span_id, context.parent_span_id);
@@ -303,7 +309,7 @@ mod tests {
             .uri("http://example.com")
             .body(())
             .unwrap();
-        
+
         let context = extract_or_create_trace_context(&req);
         assert!(!context.trace_id.is_empty());
         assert!(!context.parent_span_id.is_empty());
@@ -312,10 +318,10 @@ mod tests {
     #[test]
     fn test_sampled_flag() {
         let mut context = TraceContext::new_root();
-        
+
         context.set_sampled(true);
         assert!(context.is_sampled());
-        
+
         context.set_sampled(false);
         assert!(!context.is_sampled());
     }
@@ -324,14 +330,14 @@ mod tests {
     fn test_generate_ids() {
         let trace_id1 = generate_trace_id();
         let trace_id2 = generate_trace_id();
-        
+
         assert_eq!(trace_id1.len(), 32);
         assert_eq!(trace_id2.len(), 32);
         assert_ne!(trace_id1, trace_id2);
-        
+
         let span_id1 = generate_span_id();
         let span_id2 = generate_span_id();
-        
+
         assert_eq!(span_id1.len(), 16);
         assert_eq!(span_id2.len(), 16);
         assert_ne!(span_id1, span_id2);

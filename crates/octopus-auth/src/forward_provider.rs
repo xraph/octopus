@@ -17,9 +17,7 @@ pub struct ForwardAuthProvider {
 impl ForwardAuthProvider {
     /// Create from config
     pub fn from_config(name: &str, config: &ForwardAuthProviderConfig) -> anyhow::Result<Self> {
-        let client = reqwest::Client::builder()
-            .timeout(config.timeout)
-            .build()?;
+        let client = reqwest::Client::builder().timeout(config.timeout).build()?;
 
         Ok(Self {
             name: name.to_string(),

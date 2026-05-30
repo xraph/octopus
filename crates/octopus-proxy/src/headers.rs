@@ -12,32 +12,31 @@ use tracing::debug;
 
 /// Header names
 pub mod header_names {
-    
 
     /// Standard Forwarded header (RFC 7239)
     pub const FORWARDED: &str = "forwarded";
-    
+
     /// Via header (RFC 7230)
     pub const VIA: &str = "via";
-    
+
     /// X-Forwarded-For header
     pub const X_FORWARDED_FOR: &str = "x-forwarded-for";
-    
+
     /// X-Forwarded-Host header
     pub const X_FORWARDED_HOST: &str = "x-forwarded-host";
-    
+
     /// X-Forwarded-Proto header
     pub const X_FORWARDED_PROTO: &str = "x-forwarded-proto";
-    
+
     /// X-Real-IP header
     pub const X_REAL_IP: &str = "x-real-ip";
-    
+
     /// X-Request-ID header
     pub const X_REQUEST_ID: &str = "x-request-id";
-    
+
     /// Server header
     pub const SERVER: &str = "server";
-    
+
     /// Host header
     pub const HOST: &str = "host";
 }
@@ -47,28 +46,28 @@ pub mod header_names {
 pub struct HeaderConfig {
     /// Add Forwarded header (RFC 7239)
     pub add_forwarded: bool,
-    
+
     /// Add Via header
     pub add_via: bool,
-    
+
     /// Add X-Forwarded-* headers
     pub add_x_forwarded: bool,
-    
+
     /// Preserve client Host header
     pub preserve_host: bool,
-    
+
     /// Add X-Request-ID if not present
     pub add_request_id: bool,
-    
+
     /// Server identifier for Via header
     pub server_id: String,
-    
+
     /// Remove hop-by-hop headers
     pub remove_hop_by_hop: bool,
-    
+
     /// Custom headers to add to upstream requests
     pub custom_upstream_headers: Vec<(String, String)>,
-    
+
     /// Custom headers to add to client responses
     pub custom_response_headers: Vec<(String, String)>,
 }
@@ -110,7 +109,7 @@ impl HeaderProcessor {
         // Get request version before borrowing headers
         let version = req.version();
         let req_uri = req.uri().clone();
-        
+
         let headers = req.headers_mut();
 
         // Remove hop-by-hop headers
@@ -145,9 +144,10 @@ impl HeaderProcessor {
 
         // Add custom upstream headers
         for (name, value) in &self.config.custom_upstream_headers {
-            if let (Ok(header_name), Ok(header_value)) =
-                (HeaderName::from_bytes(name.as_bytes()), HeaderValue::from_str(value))
-            {
+            if let (Ok(header_name), Ok(header_value)) = (
+                HeaderName::from_bytes(name.as_bytes()),
+                HeaderValue::from_str(value),
+            ) {
                 headers.insert(header_name, header_value);
             }
         }
@@ -173,9 +173,10 @@ impl HeaderProcessor {
 
         // Add custom response headers
         for (name, value) in &self.config.custom_response_headers {
-            if let (Ok(header_name), Ok(header_value)) =
-                (HeaderName::from_bytes(name.as_bytes()), HeaderValue::from_str(value))
-            {
+            if let (Ok(header_name), Ok(header_value)) = (
+                HeaderName::from_bytes(name.as_bytes()),
+                HeaderValue::from_str(value),
+            ) {
                 headers.insert(header_name, header_value);
             }
         }
@@ -201,11 +202,7 @@ impl HeaderProcessor {
         let connection_headers: Vec<String> = headers
             .get("connection")
             .and_then(|v| v.to_str().ok())
-            .map(|s| {
-                s.split(',')
-                    .map(|name| name.trim().to_string())
-                    .collect()
-            })
+            .map(|s| s.split(',').map(|name| name.trim().to_string()).collect())
             .unwrap_or_default();
 
         // Remove standard hop-by-hop headers
@@ -241,16 +238,19 @@ impl HeaderProcessor {
 
         if !parts.is_empty() {
             let forwarded_value = parts.join(";");
-            
+
             // Get existing value before modifying
-            let existing = headers.get(header_names::FORWARDED).and_then(|v| v.to_str().ok()).map(|s| s.to_string());
-            
+            let existing = headers
+                .get(header_names::FORWARDED)
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+
             let final_value = if let Some(existing_str) = existing {
                 format!("{}, {}", existing_str, forwarded_value)
             } else {
                 forwarded_value
             };
-            
+
             if let Ok(value) = HeaderValue::from_str(&final_value) {
                 headers.insert(HeaderName::from_static(header_names::FORWARDED), value);
             }
@@ -258,23 +258,34 @@ impl HeaderProcessor {
     }
 
     /// Add X-Forwarded-* headers
-    fn add_x_forwarded_headers(&self, headers: &mut HeaderMap, client_ip: Option<IpAddr>, uri: &Uri) {
+    fn add_x_forwarded_headers(
+        &self,
+        headers: &mut HeaderMap,
+        client_ip: Option<IpAddr>,
+        uri: &Uri,
+    ) {
         // X-Forwarded-For
         if let Some(ip) = client_ip {
             let ip_str = ip.to_string();
-            
+
             // Get existing value before modifying
-            let existing = headers.get(header_names::X_FORWARDED_FOR).and_then(|v| v.to_str().ok()).map(|s| s.to_string());
+            let existing = headers
+                .get(header_names::X_FORWARDED_FOR)
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
             let has_real_ip = headers.contains_key(header_names::X_REAL_IP);
-            
+
             let final_value = if let Some(existing_str) = existing {
                 format!("{}, {}", existing_str, ip_str)
             } else {
                 ip_str.clone()
             };
-            
+
             if let Ok(value) = HeaderValue::from_str(&final_value) {
-                headers.insert(HeaderName::from_static(header_names::X_FORWARDED_FOR), value);
+                headers.insert(
+                    HeaderName::from_static(header_names::X_FORWARDED_FOR),
+                    value,
+                );
             }
 
             // Also set X-Real-IP if not present
@@ -289,7 +300,10 @@ impl HeaderProcessor {
         if let Some(host) = uri.host() {
             if !headers.contains_key(header_names::X_FORWARDED_HOST) {
                 if let Ok(value) = HeaderValue::from_str(host) {
-                    headers.insert(HeaderName::from_static(header_names::X_FORWARDED_HOST), value);
+                    headers.insert(
+                        HeaderName::from_static(header_names::X_FORWARDED_HOST),
+                        value,
+                    );
                 }
             }
         }
@@ -298,7 +312,10 @@ impl HeaderProcessor {
         let proto = uri.scheme_str().unwrap_or("http");
         if !headers.contains_key(header_names::X_FORWARDED_PROTO) {
             if let Ok(value) = HeaderValue::from_str(proto) {
-                headers.insert(HeaderName::from_static(header_names::X_FORWARDED_PROTO), value);
+                headers.insert(
+                    HeaderName::from_static(header_names::X_FORWARDED_PROTO),
+                    value,
+                );
             }
         }
     }
@@ -422,7 +439,7 @@ mod tests {
 
         let forwarded = headers.get("forwarded").unwrap();
         let forwarded_str = forwarded.to_str().unwrap();
-        
+
         assert!(forwarded_str.contains("for=192.168.1.1"));
         assert!(forwarded_str.contains("host=example.com"));
         assert!(forwarded_str.contains("proto=http"));
@@ -482,7 +499,7 @@ mod tests {
 
         let mut headers = HeaderMap::new();
         headers.insert("via", HeaderValue::from_static("1.1 proxy1"));
-        
+
         processor.add_via_header(&mut headers, http::Version::HTTP_11);
 
         let via = headers.get("via").unwrap();

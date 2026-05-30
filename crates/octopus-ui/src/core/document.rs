@@ -58,11 +58,7 @@ impl Document {
 
     /// Add script
     pub fn script(self, src: &str) -> Self {
-        self.head(
-            Node::element("script")
-                .attr("src", src)
-                .attr("defer", ""),
-        )
+        self.head(Node::element("script").attr("src", src).attr("defer", ""))
     }
 
     /// Add inline script
@@ -141,5 +137,3 @@ mod tests {
         assert!(doc.contains("Hello"));
     }
 }
-
-

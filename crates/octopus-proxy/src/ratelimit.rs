@@ -2,10 +2,10 @@
 //!
 //! Provides both in-memory and distributed (Redis-ready) rate limiting.
 
+use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use parking_lot::RwLock;
 use tracing::{debug, warn};
 
 /// Rate limit configuration
@@ -13,13 +13,13 @@ use tracing::{debug, warn};
 pub struct RateLimitConfig {
     /// Requests per window
     pub requests_per_window: u32,
-    
+
     /// Time window duration
     pub window_duration: Duration,
-    
+
     /// Burst size (max tokens that can accumulate)
     pub burst_size: u32,
-    
+
     /// Key prefix for distributed rate limiting
     pub key_prefix: String,
 }
@@ -104,13 +104,13 @@ impl RateLimitResult {
 struct TokenBucket {
     /// Number of available tokens
     tokens: f64,
-    
+
     /// Maximum number of tokens (burst size)
     capacity: f64,
-    
+
     /// Rate at which tokens are replenished (tokens per second)
     refill_rate: f64,
-    
+
     /// Last update time
     last_update: Instant,
 }
@@ -129,7 +129,7 @@ impl TokenBucket {
     /// Try to consume a token
     fn try_consume(&mut self, tokens: u32) -> bool {
         self.refill();
-        
+
         let tokens_f64 = tokens as f64;
         if self.tokens >= tokens_f64 {
             self.tokens -= tokens_f64;
@@ -153,7 +153,7 @@ impl TokenBucket {
     fn refill(&mut self) {
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_update).as_secs_f64();
-        
+
         if elapsed > 0.0 {
             let new_tokens = elapsed * self.refill_rate;
             self.tokens = (self.tokens + new_tokens).min(self.capacity);
@@ -170,12 +170,12 @@ impl TokenBucket {
     /// Get time until next token is available
     fn time_until_available(&mut self, needed_tokens: u32) -> Duration {
         self.refill();
-        
+
         let deficit = (needed_tokens as f64) - self.tokens;
         if deficit <= 0.0 {
             return Duration::from_secs(0);
         }
-        
+
         let seconds = deficit / self.refill_rate;
         Duration::from_secs_f64(seconds)
     }
@@ -204,14 +204,14 @@ impl InMemoryRateLimiter {
     /// Check rate limit with custom token cost
     pub fn check_tokens(&self, key: &str, tokens: u32) -> RateLimitResult {
         let full_key = format!("{}:{}", self.config.key_prefix, key);
-        
+
         // Fast path: read lock first to check if bucket exists
         {
             let buckets = self.buckets.read();
             if let Some(_bucket) = buckets.get(&full_key) {
                 // Need to drop read lock before getting write lock
                 drop(buckets);
-                
+
                 // Now get write lock to modify
                 let mut buckets = self.buckets.write();
                 if let Some(bucket) = buckets.get_mut(&full_key) {
@@ -223,11 +223,11 @@ impl InMemoryRateLimiter {
         // Slow path: create new bucket
         let mut buckets = self.buckets.write();
         let bucket = buckets.entry(full_key).or_insert_with(|| {
-            let refill_rate = self.config.requests_per_window as f64 
-                / self.config.window_duration.as_secs_f64();
+            let refill_rate =
+                self.config.requests_per_window as f64 / self.config.window_duration.as_secs_f64();
             TokenBucket::new(self.config.burst_size, refill_rate)
         });
-        
+
         self.check_bucket(bucket, tokens)
     }
 
@@ -249,7 +249,7 @@ impl InMemoryRateLimiter {
     pub fn get_state(&self, key: &str) -> Option<(u32, Duration)> {
         let full_key = format!("{}:{}", self.config.key_prefix, key);
         let mut buckets = self.buckets.write();
-        
+
         buckets.get_mut(&full_key).map(|bucket| {
             let remaining = bucket.remaining();
             let reset_after = self.config.window_duration;
@@ -277,7 +277,7 @@ impl InMemoryRateLimiter {
     pub fn cleanup_expired(&self) {
         let mut buckets = self.buckets.write();
         let now = Instant::now();
-        
+
         buckets.retain(|_, bucket| {
             // Remove buckets that haven't been used in 2x window duration
             now.duration_since(bucket.last_update) < (self.config.window_duration * 2)
@@ -298,10 +298,10 @@ impl std::fmt::Debug for InMemoryRateLimiter {
 pub trait RateLimiter: Send + Sync {
     /// Check rate limit for a key
     fn check(&self, key: &str) -> RateLimitResult;
-    
+
     /// Check rate limit with custom token cost
     fn check_tokens(&self, key: &str, tokens: u32) -> RateLimitResult;
-    
+
     /// Clear all rate limit state
     fn clear(&self);
 }
@@ -359,25 +359,25 @@ mod tests {
     #[test]
     fn test_token_bucket() {
         let mut bucket = TokenBucket::new(10, 10.0); // 10 tokens, refill 10/sec
-        
+
         assert!(bucket.try_consume(5));
         assert_eq!(bucket.remaining(), 5);
-        
+
         assert!(bucket.try_consume(5));
         assert_eq!(bucket.remaining(), 0);
-        
+
         assert!(!bucket.try_consume(1)); // Should fail
     }
 
     #[test]
     fn test_token_refill() {
         let mut bucket = TokenBucket::new(10, 10.0);
-        
+
         bucket.try_consume(10);
         assert_eq!(bucket.remaining(), 0);
-        
+
         thread::sleep(Duration::from_millis(100)); // Wait 0.1s
-        
+
         // Should have ~1 token refilled
         assert!(bucket.remaining() >= 1);
     }
@@ -386,20 +386,22 @@ mod tests {
     async fn test_rate_limiter_basic() {
         // Use a very long window so refill rate is negligible during test
         // Set burst_size = requests_per_window to avoid extra tokens
-        let config = RateLimitConfig::new(10, Duration::from_secs(3600))
-            .with_burst_size(10);
+        let config = RateLimitConfig::new(10, Duration::from_secs(3600)).with_burst_size(10);
         let limiter = InMemoryRateLimiter::new(config);
-        
+
         // Consume all tokens quickly to minimize refill
         let results: Vec<_> = (0..11).map(|_| limiter.check("test-key")).collect();
-        
+
         // First 10 should succeed
         for i in 0..10 {
             assert!(results[i].is_allowed(), "Request {} should be allowed", i);
         }
-        
+
         // 11th request should be rate limited
-        assert!(!results[10].is_allowed(), "Request 11 should be rate limited");
+        assert!(
+            !results[10].is_allowed(),
+            "Request 11 should be rate limited"
+        );
     }
 
     #[test]
@@ -411,13 +413,13 @@ mod tests {
             key_prefix: "test".to_string(),
         };
         let limiter = InMemoryRateLimiter::new(config);
-        
+
         // Can consume up to burst size
         for _ in 0..15 {
             let result = limiter.check("test-key");
             assert!(result.is_allowed());
         }
-        
+
         // Next request should fail
         let result = limiter.check("test-key");
         assert!(!result.is_allowed());
@@ -427,43 +429,55 @@ mod tests {
     async fn test_rate_limiter_multiple_keys() {
         // Use a very long window so refill rate is negligible during test
         // Set burst_size = requests_per_window to avoid extra tokens
-        let config = RateLimitConfig::new(5, Duration::from_secs(3600))
-            .with_burst_size(5);
+        let config = RateLimitConfig::new(5, Duration::from_secs(3600)).with_burst_size(5);
         let limiter = InMemoryRateLimiter::new(config);
-        
+
         // Consume all tokens quickly for both keys
         let key1_results: Vec<_> = (0..6).map(|_| limiter.check("key1")).collect();
         let key2_results: Vec<_> = (0..6).map(|_| limiter.check("key2")).collect();
-        
+
         // First 5 should succeed for each key
         for i in 0..5 {
-            assert!(key1_results[i].is_allowed(), "key1 request {} should be allowed", i);
-            assert!(key2_results[i].is_allowed(), "key2 request {} should be allowed", i);
+            assert!(
+                key1_results[i].is_allowed(),
+                "key1 request {} should be allowed",
+                i
+            );
+            assert!(
+                key2_results[i].is_allowed(),
+                "key2 request {} should be allowed",
+                i
+            );
         }
-        
+
         // 6th request should be limited for both
-        assert!(!key1_results[5].is_allowed(), "key1 request 6 should be rate limited");
-        assert!(!key2_results[5].is_allowed(), "key2 request 6 should be rate limited");
+        assert!(
+            !key1_results[5].is_allowed(),
+            "key1 request 6 should be rate limited"
+        );
+        assert!(
+            !key2_results[5].is_allowed(),
+            "key2 request 6 should be rate limited"
+        );
     }
 
     #[tokio::test]
     async fn test_rate_limiter_clear() {
         // Use a very long window so refill rate is negligible during test
         // Set burst_size = requests_per_window to avoid extra tokens
-        let config = RateLimitConfig::new(2, Duration::from_secs(3600))
-            .with_burst_size(2);
+        let config = RateLimitConfig::new(2, Duration::from_secs(3600)).with_burst_size(2);
         let limiter = InMemoryRateLimiter::new(config);
-        
+
         // Consume all tokens quickly
         let results: Vec<_> = (0..3).map(|_| limiter.check("test-key")).collect();
-        
+
         // First 2 should succeed
         assert!(results[0].is_allowed());
         assert!(results[1].is_allowed());
-        
+
         // 3rd should be limited
         assert!(!results[2].is_allowed());
-        
+
         // Clear and try again
         limiter.clear();
         assert!(limiter.check("test-key").is_allowed());
@@ -474,8 +488,11 @@ mod tests {
         assert_eq!(RateLimitKeyBuilder::by_ip("192.168.1.1"), "ip:192.168.1.1");
         assert_eq!(RateLimitKeyBuilder::by_user("user123"), "user:user123");
         assert_eq!(RateLimitKeyBuilder::by_api_key("abc123"), "apikey:abc123");
-        assert_eq!(RateLimitKeyBuilder::by_path("/api/users"), "path:/api/users");
-        
+        assert_eq!(
+            RateLimitKeyBuilder::by_path("/api/users"),
+            "path:/api/users"
+        );
+
         let composite = RateLimitKeyBuilder::composite(&["ip", "192.168.1.1", "path", "/api"]);
         assert_eq!(composite, "ip:192.168.1.1:path:/api");
     }
@@ -486,15 +503,15 @@ mod tests {
             remaining: 5,
             reset_after: Duration::from_secs(60),
         };
-        
+
         assert!(allowed.is_allowed());
         assert_eq!(allowed.remaining(), Some(5));
         assert_eq!(allowed.retry_after(), None);
-        
+
         let limited = RateLimitResult::Limited {
             retry_after: Duration::from_secs(10),
         };
-        
+
         assert!(!limited.is_allowed());
         assert_eq!(limited.remaining(), None);
         assert_eq!(limited.retry_after(), Some(Duration::from_secs(10)));
@@ -503,9 +520,9 @@ mod tests {
     #[test]
     fn test_token_bucket_time_until_available() {
         let mut bucket = TokenBucket::new(10, 10.0); // 10 tokens/sec
-        
+
         bucket.try_consume(10);
-        
+
         let wait_time = bucket.time_until_available(1);
         assert!(wait_time.as_secs_f64() > 0.0 && wait_time.as_secs_f64() <= 0.2);
     }

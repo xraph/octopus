@@ -93,7 +93,10 @@ impl Bulkhead {
     /// If `max_queue` is 0, this will return `BulkheadError::Full` immediately
     /// when the target is at capacity. Otherwise, it will wait up to `config.timeout`
     /// for a slot to become available.
-    pub async fn acquire(&self, target_id: &str) -> std::result::Result<BulkheadPermit, BulkheadError> {
+    pub async fn acquire(
+        &self,
+        target_id: &str,
+    ) -> std::result::Result<BulkheadPermit, BulkheadError> {
         if !self.config.enabled {
             // When disabled, create an unbounded semaphore so we never block
             let sem = Arc::new(Semaphore::new(Semaphore::MAX_PERMITS));
@@ -229,9 +232,7 @@ mod tests {
         let p1 = bulkhead.acquire("svc-a").await.unwrap();
         let bh = bulkhead.clone();
 
-        let handle = tokio::spawn(async move {
-            bh.acquire("svc-a").await
-        });
+        let handle = tokio::spawn(async move { bh.acquire("svc-a").await });
 
         // Small delay then release
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -280,13 +281,14 @@ mod tests {
         let mut handles = Vec::new();
         for _ in 0..10 {
             let bh = bulkhead.clone();
-            handles.push(tokio::spawn(async move {
-                bh.acquire("svc-a").await
-            }));
+            handles.push(tokio::spawn(async move { bh.acquire("svc-a").await }));
         }
 
         let results: Vec<_> = futures::future::join_all(handles).await;
-        let successes = results.iter().filter(|r| r.as_ref().unwrap().is_ok()).count();
+        let successes = results
+            .iter()
+            .filter(|r| r.as_ref().unwrap().is_ok())
+            .count();
         assert_eq!(successes, 10);
     }
 

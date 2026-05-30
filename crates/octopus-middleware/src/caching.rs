@@ -134,9 +134,7 @@ impl CacheStore for InMemoryCacheStore {
         }
 
         self.items.insert(key.to_string(), resp);
-        self.insertion_order
-            .lock()
-            .push_back(key.to_string());
+        self.insertion_order.lock().push_back(key.to_string());
     }
 
     async fn delete(&self, key: &str) {
@@ -289,10 +287,8 @@ impl Middleware for Caching {
         // Check if request explicitly bypasses cache
         if Self::request_bypasses_cache(&req) {
             let mut resp = next.run(req).await?;
-            resp.headers_mut().insert(
-                "X-Cache",
-                http::header::HeaderValue::from_static("BYPASS"),
-            );
+            resp.headers_mut()
+                .insert("X-Cache", http::header::HeaderValue::from_static("BYPASS"));
             return Ok(resp);
         }
 
@@ -308,10 +304,8 @@ impl Middleware for Caching {
             let mut resp = builder
                 .body(Full::new(cached.body))
                 .expect("Failed to build cached response");
-            resp.headers_mut().insert(
-                "X-Cache",
-                http::header::HeaderValue::from_static("HIT"),
-            );
+            resp.headers_mut()
+                .insert("X-Cache", http::header::HeaderValue::from_static("HIT"));
             return Ok(resp);
         }
 
@@ -349,10 +343,8 @@ impl Middleware for Caching {
                 let mut resp = builder
                     .body(Full::new(body_bytes))
                     .expect("Failed to build response");
-                resp.headers_mut().insert(
-                    "X-Cache",
-                    http::header::HeaderValue::from_static("MISS"),
-                );
+                resp.headers_mut()
+                    .insert("X-Cache", http::header::HeaderValue::from_static("MISS"));
                 return Ok(resp);
             }
         }

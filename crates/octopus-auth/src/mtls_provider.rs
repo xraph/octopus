@@ -63,9 +63,9 @@ impl AuthProviderInstance for MtlsProvider {
                     attributes: HashMap::new(),
                 }))
             }
-            None if self.require_client_cert => {
-                Ok(AuthResult::Failed("Client certificate required".to_string()))
-            }
+            None if self.require_client_cert => Ok(AuthResult::Failed(
+                "Client certificate required".to_string(),
+            )),
             None => Ok(AuthResult::Unauthenticated),
         }
     }

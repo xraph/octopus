@@ -102,8 +102,7 @@ impl OidcProvider {
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(refresh_interval).await;
-                if let Err(e) =
-                    refresh_keys(&client, &issuer_url, &keys, &issuer, &jwks_uri).await
+                if let Err(e) = refresh_keys(&client, &issuer_url, &keys, &issuer, &jwks_uri).await
                 {
                     warn!(provider = %provider_name, error = %e, "JWKS refresh failed; keeping last known good keys");
                 }
@@ -299,15 +298,14 @@ fn validate_with_keys(
         }
     }
 
-    Ok(AuthResult::Failed("Token validation failed with all keys".to_string()))
+    Ok(AuthResult::Failed(
+        "Token validation failed with all keys".to_string(),
+    ))
 }
 
 fn parse_jwk(jwk: &JwkKey) -> Option<(String, DecodingKey, Algorithm)> {
     let kid = jwk.kid.clone().unwrap_or_else(|| "default".to_string());
-    let alg = jwk
-        .alg
-        .as_deref()
-        .unwrap_or("RS256");
+    let alg = jwk.alg.as_deref().unwrap_or("RS256");
 
     let algorithm = match alg {
         "RS256" => Algorithm::RS256,

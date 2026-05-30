@@ -80,8 +80,7 @@ pub async fn api_analytics_handler(
                 let count = m
                     .route_stats(&format!("{} {}", method, route.path))
                     .map_or(0, |s| {
-                        s.request_count
-                            .load(std::sync::atomic::Ordering::Relaxed)
+                        s.request_count.load(std::sync::atomic::Ordering::Relaxed)
                     });
                 *traffic_by_method.entry(method).or_insert(0u64) += count;
             }
@@ -91,22 +90,10 @@ pub async fn api_analytics_handler(
             timeframe: timeframe.to_string(),
             request_volume: vec![],
             latency_percentiles: LatencyPercentiles {
-                p50: snapshot
-                    .routes
-                    .first()
-                    .map_or(0.0, |r| r.p50_latency_ms),
-                p90: snapshot
-                    .routes
-                    .first()
-                    .map_or(0.0, |r| r.avg_latency_ms),
-                p95: snapshot
-                    .routes
-                    .first()
-                    .map_or(0.0, |r| r.p95_latency_ms),
-                p99: snapshot
-                    .routes
-                    .first()
-                    .map_or(0.0, |r| r.p99_latency_ms),
+                p50: snapshot.routes.first().map_or(0.0, |r| r.p50_latency_ms),
+                p90: snapshot.routes.first().map_or(0.0, |r| r.avg_latency_ms),
+                p95: snapshot.routes.first().map_or(0.0, |r| r.p95_latency_ms),
+                p99: snapshot.routes.first().map_or(0.0, |r| r.p99_latency_ms),
             },
             error_breakdown: HashMap::new(),
             top_routes,
@@ -136,9 +123,7 @@ pub async fn api_analytics_handler(
 
 /// Get real-time metrics for dashboard
 /// GET /admin/api/metrics/realtime
-pub async fn api_realtime_metrics_handler(
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn api_realtime_metrics_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let stats = crate::handlers::build_dashboard_stats(&state);
     Json(stats)
 }
@@ -181,10 +166,7 @@ pub async fn api_timeseries_handler(
 pub async fn api_performance_metrics_handler(
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let active_connections = state
-        .metrics
-        .as_ref()
-        .map_or(0, |m| m.active_connections());
+    let active_connections = state.metrics.as_ref().map_or(0, |m| m.active_connections());
     let (cpu_usage, memory_usage, memory_total, memory_available) = get_system_metrics();
 
     let metrics = PerformanceMetrics {
@@ -243,7 +225,9 @@ pub async fn api_route_create_handler(
         Err(_) => {
             return (
                 StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error": format!("Invalid HTTP method: {}", config.method)})),
+                Json(
+                    serde_json::json!({"error": format!("Invalid HTTP method: {}", config.method)}),
+                ),
             );
         }
     };
@@ -270,7 +254,12 @@ pub async fn api_route_create_handler(
         );
     }
 
-    tracing::info!("Created route: {} {} -> {}", config.method, config.path, config.upstream);
+    tracing::info!(
+        "Created route: {} {} -> {}",
+        config.method,
+        config.path,
+        config.upstream
+    );
 
     let info = RouteInfo {
         id: uuid::Uuid::new_v4().to_string(),
@@ -284,7 +273,10 @@ pub async fn api_route_create_handler(
         last_accessed: None,
     };
 
-    (StatusCode::CREATED, Json(serde_json::to_value(info).unwrap()))
+    (
+        StatusCode::CREATED,
+        Json(serde_json::to_value(info).unwrap()),
+    )
 }
 
 /// Update existing route (remove old, add new)
@@ -311,7 +303,9 @@ pub async fn api_route_update_handler(
     let method: http::Method = match config.method.parse() {
         Ok(m) => m,
         Err(_) => {
-            return Json(serde_json::json!({"error": format!("Invalid HTTP method: {}", config.method)}));
+            return Json(
+                serde_json::json!({"error": format!("Invalid HTTP method: {}", config.method)}),
+            );
         }
     };
 
@@ -331,7 +325,13 @@ pub async fn api_route_update_handler(
         return Json(serde_json::json!({"error": format!("Failed to update route: {}", e)}));
     }
 
-    tracing::info!("Updated route {}: {} {} -> {}", id, config.method, config.path, config.upstream);
+    tracing::info!(
+        "Updated route {}: {} {} -> {}",
+        id,
+        config.method,
+        config.path,
+        config.upstream
+    );
 
     let info = RouteInfo {
         id,
@@ -403,7 +403,10 @@ pub async fn api_plugin_toggle_handler(
     if let Some(ref pm) = state.plugin_manager {
         // Check if plugin is currently started
         if let Some(entry) = pm.get(&id) {
-            let is_started = matches!(*entry.state.read(), octopus_plugin_runtime::RegistryPluginState::Started);
+            let is_started = matches!(
+                *entry.state.read(),
+                octopus_plugin_runtime::RegistryPluginState::Started
+            );
             if is_started {
                 if let Err(e) = pm.stop(&id).await {
                     return Json(serde_json::json!({"success": false, "error": format!("{}", e)}));
@@ -498,9 +501,7 @@ pub async fn api_logs_handler(
 
 /// Get security events
 /// GET /admin/api/security/events
-pub async fn api_security_events_handler(
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn api_security_events_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let mut events = Vec::new();
     let now = Utc::now();
 
@@ -628,9 +629,7 @@ pub async fn api_system_info_handler(State(state): State<Arc<AppState>>) -> impl
     let uptime_seconds = state
         .metrics
         .as_ref()
-        .map_or(state.start_time.elapsed().as_secs(), |m| {
-            m.uptime_seconds()
-        });
+        .map_or(state.start_time.elapsed().as_secs(), |m| m.uptime_seconds());
 
     let (_, _, total_memory, _) = get_system_metrics();
 
@@ -661,9 +660,7 @@ pub async fn api_system_info_handler(State(state): State<Arc<AppState>>) -> impl
 
 /// List all upstream clusters with per-instance health data
 /// GET /admin/api/upstreams
-pub async fn api_upstreams_list_handler(
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn api_upstreams_list_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let mut clusters = Vec::new();
 
     if let Some(ref router) = state.router {
@@ -673,16 +670,15 @@ pub async fn api_upstreams_list_handler(
                 .iter()
                 .map(|inst| {
                     let instance_id = format!("{}/{}", cluster.name, inst.id);
-                    let (avg_latency_ms, error_rate) =
-                        if let Some(ref ht) = state.health_tracker {
-                            if let Some(snap) = ht.get_snapshot(&instance_id) {
-                                (snap.avg_latency.as_secs_f64() * 1000.0, snap.error_rate)
-                            } else {
-                                (0.0, 0.0)
-                            }
+                    let (avg_latency_ms, error_rate) = if let Some(ref ht) = state.health_tracker {
+                        if let Some(snap) = ht.get_snapshot(&instance_id) {
+                            (snap.avg_latency.as_secs_f64() * 1000.0, snap.error_rate)
                         } else {
                             (0.0, 0.0)
-                        };
+                        }
+                    } else {
+                        (0.0, 0.0)
+                    };
 
                     UpstreamInstanceInfo {
                         id: inst.id.clone(),
@@ -715,9 +711,7 @@ pub async fn api_upstreams_list_handler(
 
 /// List discovered services (upstream-based + FARP)
 /// GET /admin/api/services
-pub async fn api_services_list_handler(
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn api_services_list_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let mut services = Vec::new();
 
     // Upstream-based services
@@ -782,9 +776,7 @@ pub async fn api_services_list_handler(
 
 /// Get circuit breaker states
 /// GET /admin/api/circuits
-pub async fn api_circuits_list_handler(
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn api_circuits_list_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let mut circuits = Vec::new();
 
     if let Some(ref cb) = state.circuit_breaker {
@@ -809,9 +801,7 @@ pub async fn api_circuits_list_handler(
 
 /// Get structured health check data
 /// GET /admin/api/health/checks
-pub async fn api_health_checks_handler(
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn api_health_checks_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let checks = crate::handlers::build_health_from_state(&state);
     Json(checks)
 }
@@ -844,9 +834,7 @@ pub async fn api_openapi_handler(State(state): State<Arc<AppState>>) -> impl Int
 
 /// List all registered FARP services
 /// GET /admin/api/farp/services
-pub async fn api_farp_services_handler(
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn api_farp_services_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     if let Some(ref registry) = state.farp_registry {
         let service_names = registry.list_services();
         let mut services = Vec::new();
@@ -912,9 +900,7 @@ pub async fn api_farp_federated_openapi_handler(
 
 /// List configured auth providers
 /// GET /admin/api/auth/providers
-pub async fn api_auth_providers_handler(
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn api_auth_providers_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let providers = if let Some(ref config) = state.config {
         config
             .auth_providers
@@ -943,9 +929,7 @@ pub async fn api_auth_providers_handler(
 
 /// Get global auth configuration
 /// GET /admin/api/auth/config
-pub async fn api_auth_config_handler(
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn api_auth_config_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     if let Some(ref config) = state.config {
         Json(serde_json::json!({
             "default_provider": config.auth.default_provider,
@@ -973,9 +957,7 @@ pub async fn api_auth_config_handler(
 
 /// List configured gRPC services
 /// GET /admin/api/grpc/services
-pub async fn api_grpc_services_handler(
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+pub async fn api_grpc_services_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     if let Some(ref config) = state.config {
         let services: Vec<serde_json::Value> = config
             .grpc

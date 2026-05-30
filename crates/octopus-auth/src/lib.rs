@@ -35,7 +35,9 @@ pub mod token;
 // Re-exports: new provider system
 pub use authz::{AuthzEvaluator, RouteAuthzContext};
 pub use opa::{AuthzContext, AuthzDecision, OpaClient};
-pub use registry::{AuthProviderInstance, AuthProviderRegistry, AuthRequest, AuthResult, Principal};
+pub use registry::{
+    AuthProviderInstance, AuthProviderRegistry, AuthRequest, AuthResult, Principal,
+};
 
 // Re-exports: legacy
 pub use provider::{AuthProvider, User, UserStore};

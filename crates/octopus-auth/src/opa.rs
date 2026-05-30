@@ -88,9 +88,7 @@ pub struct OpaClient {
 impl OpaClient {
     /// Create from config
     pub fn from_config(config: &OpaConfig) -> anyhow::Result<Self> {
-        let client = reqwest::Client::builder()
-            .timeout(config.timeout)
-            .build()?;
+        let client = reqwest::Client::builder().timeout(config.timeout).build()?;
 
         Ok(Self {
             endpoint: config.endpoint.clone(),
@@ -130,9 +128,7 @@ impl OpaClient {
         }
 
         // Query OPA
-        let input = OpaInput {
-            input: ctx.clone(),
-        };
+        let input = OpaInput { input: ctx.clone() };
 
         let result = match self.client.post(&self.endpoint).json(&input).send().await {
             Ok(response) => {

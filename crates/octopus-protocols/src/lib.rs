@@ -22,10 +22,8 @@ pub mod ws_proxy;
 pub use graphql::{GraphQLHandler, GraphQLRequest, GraphQLResponse};
 pub use grpc::GrpcHandler;
 pub use handler::{ProtocolHandler, ProtocolType};
-pub use sse::{is_sse_request, format_event, format_data, format_comment};
-pub use websocket::{
-    build_upgrade_response, is_websocket_upgrade, WebSocketConfig,
-};
+pub use sse::{format_comment, format_data, format_event, is_sse_request};
+pub use websocket::{build_upgrade_response, is_websocket_upgrade, WebSocketConfig};
 pub use ws_proxy::{
     build_forwarded_headers, connect_upstream, proxy_websocket_connected, WebSocketSessionStats,
 };
@@ -36,7 +34,9 @@ pub mod prelude {
     pub use crate::grpc::GrpcHandler;
     pub use crate::handler::{ProtocolHandler, ProtocolType};
     pub use crate::http::HttpHandler;
-    pub use crate::sse::{is_sse_request, format_event, format_data, format_comment};
-    pub use crate::websocket::{is_websocket_upgrade, build_upgrade_response, WebSocketConfig};
-    pub use crate::ws_proxy::{connect_upstream, proxy_websocket_connected, build_forwarded_headers};
+    pub use crate::sse::{format_comment, format_data, format_event, is_sse_request};
+    pub use crate::websocket::{build_upgrade_response, is_websocket_upgrade, WebSocketConfig};
+    pub use crate::ws_proxy::{
+        build_forwarded_headers, connect_upstream, proxy_websocket_connected,
+    };
 }

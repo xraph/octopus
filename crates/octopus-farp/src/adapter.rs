@@ -122,11 +122,7 @@ impl RegistryAdapter {
     }
 
     /// Publish a schema to the registry
-    pub async fn publish_schema(
-        &self,
-        path: &str,
-        schema: &serde_json::Value,
-    ) -> FarpResult<()> {
+    pub async fn publish_schema(&self, path: &str, schema: &serde_json::Value) -> FarpResult<()> {
         self.registry.publish_schema(path, schema).await
     }
 
@@ -168,15 +164,14 @@ mod tests {
     #[test]
     fn test_manifest_adapter() {
         use farp::manifest::new_manifest;
-        
+
         let manifest = new_manifest("test-service", "1.0.0", "instance-1");
         let adapter = SchemaManifestAdapter::new(manifest.clone());
-        
+
         assert_eq!(adapter.service_name(), "test-service");
         assert_eq!(adapter.service_version(), "1.0.0");
-        
+
         let inner: ExternalSchemaManifest = adapter.into();
         assert_eq!(inner.service_name, "test-service");
     }
 }
-

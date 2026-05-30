@@ -26,12 +26,14 @@ pub fn generate_client(
     generate_fetcher(output_dir, opts)?;
 
     // Check if any service has channels (WS/SSE)
-    let has_ws_channels = schema.services.values().any(|s| {
-        s.channels.values().any(|c| c.protocol == "websocket")
-    });
-    let has_sse_channels = schema.services.values().any(|s| {
-        s.channels.values().any(|c| c.protocol == "sse")
-    });
+    let has_ws_channels = schema
+        .services
+        .values()
+        .any(|s| s.channels.values().any(|c| c.protocol == "websocket"));
+    let has_sse_channels = schema
+        .services
+        .values()
+        .any(|s| s.channels.values().any(|c| c.protocol == "sse"));
 
     // Generate WS/SSE runtimes if needed
     if has_ws_channels {
@@ -471,7 +473,10 @@ fn json_schema_to_typescript(
     schema: &serde_json::Value,
     _all_types: &HashMap<String, serde_json::Value>,
 ) -> String {
-    let schema_type = schema.get("type").and_then(|t| t.as_str()).unwrap_or("object");
+    let schema_type = schema
+        .get("type")
+        .and_then(|t| t.as_str())
+        .unwrap_or("object");
 
     // Handle oneOf (union types from channel messages)
     if let Some(one_of) = schema.get("oneOf").and_then(|o| o.as_array()) {
@@ -496,7 +501,11 @@ fn json_schema_to_typescript(
                 let required: Vec<String> = schema
                     .get("required")
                     .and_then(|r| r.as_array())
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
                     .unwrap_or_default();
 
                 let sorted_props: BTreeMap<_, _> = props.iter().collect();
@@ -505,9 +514,7 @@ fn json_schema_to_typescript(
                     let is_required = required.contains(prop_name);
                     let ts_type = schema_to_ts_type(prop_schema);
                     let optional = if is_required { "" } else { "?" };
-                    let description = prop_schema
-                        .get("description")
-                        .and_then(|d| d.as_str());
+                    let description = prop_schema.get("description").and_then(|d| d.as_str());
 
                     if let Some(desc) = description {
                         lines.push(format!("  /** {desc} */"));
@@ -558,7 +565,10 @@ fn schema_to_ts_type(schema: &serde_json::Value) -> String {
         return ref_path.rsplit('/').next().unwrap_or("unknown").to_string();
     }
 
-    let schema_type = schema.get("type").and_then(|t| t.as_str()).unwrap_or("unknown");
+    let schema_type = schema
+        .get("type")
+        .and_then(|t| t.as_str())
+        .unwrap_or("unknown");
 
     match schema_type {
         "string" => {
@@ -674,7 +684,9 @@ fn build_channel_namespace_tree(
             parts[..parts.len() - 1].join(".")
         };
 
-        tree.entry(ns_key).or_default().push((scope.clone(), channel.clone()));
+        tree.entry(ns_key)
+            .or_default()
+            .push((scope.clone(), channel.clone()));
     }
 
     tree
@@ -838,7 +850,11 @@ fn write_namespace_object(
         // Check if this namespace has operations (is a leaf)
         let has_ops = tree.leaves.contains_key(child.as_str());
         // Check if this namespace has sub-namespaces
-        let sub_children = tree.children.get(child.as_str()).cloned().unwrap_or_default();
+        let sub_children = tree
+            .children
+            .get(child.as_str())
+            .cloned()
+            .unwrap_or_default();
         let has_children = !sub_children.is_empty();
 
         if has_ops && !has_children {
@@ -853,12 +869,24 @@ fn write_namespace_object(
                 "{indent}{last_part}: {{\n{indent}  ...create{factory}(serviceConfig),\n",
                 factory = pascal_case(&module_name),
             ));
-            write_namespace_object(ts, tree, &sub_children, &format!("{indent}  "), service_name);
+            write_namespace_object(
+                ts,
+                tree,
+                &sub_children,
+                &format!("{indent}  "),
+                service_name,
+            );
             ts.push_str(&format!("{indent}}},\n"));
         } else {
             // Pure namespace — only children
             ts.push_str(&format!("{indent}{last_part}: {{\n"));
-            write_namespace_object(ts, tree, &sub_children, &format!("{indent}  "), service_name);
+            write_namespace_object(
+                ts,
+                tree,
+                &sub_children,
+                &format!("{indent}  "),
+                service_name,
+            );
             ts.push_str(&format!("{indent}}},\n"));
         }
     }
@@ -895,7 +923,9 @@ fn generate_operations_file(
     ts.push_str("import type * as Types from '../../types';\n\n");
 
     // Generate factory function
-    ts.push_str(&format!("export function {factory_name}(config: ClientConfig) {{\n"));
+    ts.push_str(&format!(
+        "export function {factory_name}(config: ClientConfig) {{\n"
+    ));
     ts.push_str("  return {\n");
 
     let prefix = format!("{service_name}.");
@@ -910,8 +940,7 @@ fn generate_operations_file(
         let verb = relative.rsplit('.').next().unwrap_or(relative);
 
         // Build param types
-        let (path_type, query_type, body_type, response_type) =
-            build_operation_types(op);
+        let (path_type, query_type, body_type, response_type) = build_operation_types(op);
 
         // Generate JSDoc
         if let Some(ref summary) = op.summary {
@@ -1077,7 +1106,9 @@ fn build_sse_event_map_type(messages: &[OctopusMessageDef]) -> String {
 }
 
 fn to_camel_case(s: &str) -> String {
-    let parts: Vec<&str> = s.split(|c: char| c == '_' || c == '-' || c == '.').collect();
+    let parts: Vec<&str> = s
+        .split(|c: char| c == '_' || c == '-' || c == '.')
+        .collect();
     let mut result = String::new();
     for (i, part) in parts.iter().enumerate() {
         if i == 0 {
@@ -1157,8 +1188,7 @@ fn build_operation_types(op: &OctopusOperation) -> (String, String, String, Stri
 
 fn has_required_params(op: &OctopusOperation) -> bool {
     if let Some(ref params) = op.params {
-        params.path.values().any(|p| p.required)
-            || params.query.values().any(|p| p.required)
+        params.path.values().any(|p| p.required) || params.query.values().any(|p| p.required)
     } else {
         false
     }
@@ -1182,18 +1212,24 @@ fn generate_main_index(
 ) -> Result<()> {
     let mut ts = String::from("// Auto-generated by octopus gen — do not edit\n\n");
     ts.push_str("import type { ClientConfig } from './core/types';\n");
-    ts.push_str("export type { ClientConfig, AuthConfig, RequestConfig, ApiError } from './core/types';\n");
+    ts.push_str(
+        "export type { ClientConfig, AuthConfig, RequestConfig, ApiError } from './core/types';\n",
+    );
     ts.push_str("export * as Types from './types';\n");
 
     // Export WS/SSE types if generated
-    let has_ws = schema.services.values().any(|s| {
-        s.channels.values().any(|c| c.protocol == "websocket")
-    });
-    let has_sse = schema.services.values().any(|s| {
-        s.channels.values().any(|c| c.protocol == "sse")
-    });
+    let has_ws = schema
+        .services
+        .values()
+        .any(|s| s.channels.values().any(|c| c.protocol == "websocket"));
+    let has_sse = schema
+        .services
+        .values()
+        .any(|s| s.channels.values().any(|c| c.protocol == "sse"));
     if has_ws {
-        ts.push_str("export { TypedWebSocket, WebSocketState, createWebSocket } from './core/ws';\n");
+        ts.push_str(
+            "export { TypedWebSocket, WebSocketState, createWebSocket } from './core/ws';\n",
+        );
         ts.push_str("export type { WebSocketClientConfig, ReconnectConfig, WebSocketEventMap } from './core/ws';\n");
     }
     if has_sse {
@@ -1248,8 +1284,8 @@ fn generate_tanstack_hooks(
         "@tanstack/react-query"
     };
 
-    let has_sse_channels = !service.channels.is_empty()
-        && service.channels.values().any(|c| c.protocol == "sse");
+    let has_sse_channels =
+        !service.channels.is_empty() && service.channels.values().any(|c| c.protocol == "sse");
 
     ts.push_str(&format!(
         "import {{ useQuery, useMutation, type UseQueryOptions, type UseMutationOptions }} from '{query_pkg}';\n"
@@ -1392,7 +1428,9 @@ fn generate_tanstack_hooks(
         ts.push_str("      source.close();\n");
         ts.push_str("      setIsConnected(false);\n");
         ts.push_str("    };\n");
-        ts.push_str("  }, [config.baseURL, options?.lastEventId, options?.enabled, options?.method]);\n\n");
+        ts.push_str(
+            "  }, [config.baseURL, options?.lastEventId, options?.enabled, options?.method]);\n\n",
+        );
         ts.push_str("  return { data, lastEventId, isConnected };\n");
         ts.push_str("}\n\n");
     }
@@ -2325,6 +2363,5 @@ fn pascal_case(s: &str) -> String {
 }
 
 fn write_ts_file(path: &str, content: &str) -> Result<()> {
-    std::fs::write(path, content)
-        .with_context(|| format!("Failed to write {path}"))
+    std::fs::write(path, content).with_context(|| format!("Failed to write {path}"))
 }

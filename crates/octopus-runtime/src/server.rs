@@ -287,10 +287,7 @@ impl Server {
         let mut config_reload_rx: Option<tokio::sync::mpsc::Receiver<Config>> =
             if let Some(ref paths) = self.config_paths {
                 if !paths.is_empty() {
-                    let watcher = ConfigWatcher::new(
-                        paths.clone(),
-                        Duration::from_secs(5),
-                    );
+                    let watcher = ConfigWatcher::new(paths.clone(), Duration::from_secs(5));
                     tracing::info!(
                         paths = ?paths,
                         "Config hot-reload enabled (polling every 5s)"
@@ -727,12 +724,14 @@ impl ServerBuilder {
                     Arc::clone(&router),
                     discovery_config,
                     config.farp.watch_interval,
-                ).await;
+                )
+                .await;
             }
 
-            Some(Arc::new(FarpApiHandler::with_federation(
-                registry, federation,
-            ).with_router(Arc::clone(&router))))
+            Some(Arc::new(
+                FarpApiHandler::with_federation(registry, federation)
+                    .with_router(Arc::clone(&router)),
+            ))
         } else {
             if !config.farp.enabled {
                 tracing::info!("FARP disabled in configuration");
@@ -866,7 +865,9 @@ impl ServerBuilder {
                                 watcher.add_provider(Arc::new(discovery));
                                 enabled_backends += 1;
                             }
-                            Err(e) => tracing::error!(error = %e, "Failed to initialize DNS discovery"),
+                            Err(e) => {
+                                tracing::error!(error = %e, "Failed to initialize DNS discovery")
+                            }
                         }
                     }
 
@@ -889,7 +890,11 @@ impl ServerBuilder {
 
                         let consul_config = ConsulConfig {
                             address: config.address.clone(),
-                            datacenter: if config.datacenter.is_empty() { None } else { Some(config.datacenter.clone()) },
+                            datacenter: if config.datacenter.is_empty() {
+                                None
+                            } else {
+                                Some(config.datacenter.clone())
+                            },
                             token: config.token.clone(),
                             watch_interval: config.watch_interval,
                         };
@@ -902,7 +907,9 @@ impl ServerBuilder {
                     #[cfg(not(feature = "consul"))]
                     {
                         let _ = config;
-                        tracing::warn!("Consul discovery configured but 'consul' feature not enabled");
+                        tracing::warn!(
+                            "Consul discovery configured but 'consul' feature not enabled"
+                        );
                     }
                 }
                 DiscoveryBackendConfig::Kubernetes { enabled, config } if *enabled => {
@@ -916,7 +923,11 @@ impl ServerBuilder {
                         );
 
                         let k8s_config = K8sConfig {
-                            namespace: if config.namespace.is_empty() { None } else { Some(config.namespace.clone()) },
+                            namespace: if config.namespace.is_empty() {
+                                None
+                            } else {
+                                Some(config.namespace.clone())
+                            },
                             label_selector: config.label_selector.clone(),
                         };
 
@@ -925,14 +936,18 @@ impl ServerBuilder {
                                 watcher.add_provider(Arc::new(discovery));
                                 enabled_backends += 1;
                             }
-                            Err(e) => tracing::error!(error = %e, "Failed to initialize Kubernetes discovery"),
+                            Err(e) => {
+                                tracing::error!(error = %e, "Failed to initialize Kubernetes discovery")
+                            }
                         }
                     }
 
                     #[cfg(not(feature = "kubernetes"))]
                     {
                         let _ = config;
-                        tracing::warn!("Kubernetes discovery configured but 'kubernetes' feature not enabled");
+                        tracing::warn!(
+                            "Kubernetes discovery configured but 'kubernetes' feature not enabled"
+                        );
                     }
                 }
                 _ => {

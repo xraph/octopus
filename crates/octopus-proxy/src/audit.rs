@@ -58,43 +58,43 @@ pub enum AuditEventType {
 pub struct AuditEvent {
     /// Event ID (UUID)
     pub event_id: String,
-    
+
     /// Event type
     pub event_type: AuditEventType,
-    
+
     /// Timestamp
     pub timestamp: SystemTime,
-    
+
     /// Client IP address
     pub client_ip: Option<IpAddr>,
-    
+
     /// Request ID (for correlation)
     pub request_id: Option<String>,
-    
+
     /// HTTP method
     pub method: Option<String>,
-    
+
     /// Request URI
     pub uri: Option<String>,
-    
+
     /// HTTP status code
     pub status_code: Option<u16>,
-    
+
     /// Upstream instance ID
     pub upstream_id: Option<String>,
-    
+
     /// User ID (if authenticated)
     pub user_id: Option<String>,
-    
+
     /// Session ID
     pub session_id: Option<String>,
-    
+
     /// Duration (for completed requests)
     pub duration: Option<Duration>,
-    
+
     /// Error message (if applicable)
     pub error: Option<String>,
-    
+
     /// Additional context
     pub context: serde_json::Value,
 }
@@ -219,13 +219,13 @@ impl AuditEvent {
 pub struct AuditLogger {
     /// Whether audit logging is enabled
     enabled: bool,
-    
+
     /// Whether to log to structured logging (tracing)
     log_to_tracing: bool,
-    
+
     /// Whether to log to a file
     log_to_file: bool,
-    
+
     /// File path for audit log
     file_path: Option<String>,
 }
@@ -311,14 +311,11 @@ impl AuditLogger {
         use std::fs::OpenOptions;
         use std::io::Write;
 
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)?;
+        let mut file = OpenOptions::new().create(true).append(true).open(path)?;
 
         let event_json = serde_json::to_string(event)?;
         writeln!(file, "{}", event_json)?;
-        
+
         Ok(())
     }
 
@@ -445,16 +442,15 @@ impl AuditLogger {
 
     /// Log circuit breaker opened
     pub fn log_circuit_breaker_opened(&self, upstream_id: String) {
-        let event = AuditEvent::new(AuditEventType::CircuitBreakerOpened)
-            .with_upstream_id(upstream_id);
+        let event =
+            AuditEvent::new(AuditEventType::CircuitBreakerOpened).with_upstream_id(upstream_id);
 
         self.log(&event);
     }
 
     /// Log security violation
     pub fn log_security_violation(&self, violation: String, client_ip: Option<IpAddr>) {
-        let mut event =
-            AuditEvent::new(AuditEventType::SecurityViolation).with_error(violation);
+        let mut event = AuditEvent::new(AuditEventType::SecurityViolation).with_error(violation);
 
         if let Some(ip) = client_ip {
             event = event.with_client_ip(ip);
@@ -510,9 +506,7 @@ mod tests {
 
     #[test]
     fn test_audit_logger_creation() {
-        let logger = AuditLogger::new()
-            .with_enabled(true)
-            .with_tracing(true);
+        let logger = AuditLogger::new().with_enabled(true).with_tracing(true);
 
         assert!(logger.enabled);
         assert!(logger.log_to_tracing);
@@ -522,7 +516,7 @@ mod tests {
     fn test_audit_logger_disabled() {
         let logger = AuditLogger::new().with_enabled(false);
         let event = AuditEvent::new(AuditEventType::RequestReceived);
-        
+
         // Should not panic when disabled
         logger.log(&event);
     }

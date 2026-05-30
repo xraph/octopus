@@ -172,17 +172,12 @@ mod tests {
             .attr("class", "container")
             .child(Node::text("Hello"));
 
-        assert_eq!(
-            node.render(),
-            "<div class=\"container\">Hello</div>"
-        );
+        assert_eq!(node.render(), "<div class=\"container\">Hello</div>");
     }
 
     #[test]
     fn test_self_closing_element() {
-        let node = Node::element("img")
-            .attr("src", "image.jpg")
-            .self_closing();
+        let node = Node::element("img").attr("src", "image.jpg").self_closing();
 
         assert_eq!(node.render(), "<img src=\"image.jpg\" />");
     }

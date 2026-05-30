@@ -240,7 +240,9 @@ impl Render for Button {
 
         let classes = cva.classes_with(&selections, &self.class);
 
-        let mut node = Node::element("button").attr("class", classes).attr("type", &self.button_type);
+        let mut node = Node::element("button")
+            .attr("class", classes)
+            .attr("type", &self.button_type);
 
         if self.disabled || self.loading {
             node = node.attr("disabled", "");

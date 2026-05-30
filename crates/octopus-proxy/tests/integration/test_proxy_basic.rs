@@ -1,9 +1,9 @@
 //! Basic proxy functionality integration tests
 
 use super::*;
-use octopus_proxy::{HttpProxy, ProxyConfig, HttpClient};
-use http::{Method, StatusCode};
 use bytes::Bytes;
+use http::{Method, StatusCode};
+use octopus_proxy::{HttpClient, HttpProxy, ProxyConfig};
 
 #[tokio::test]
 async fn test_simple_request_forwarding() {
@@ -123,11 +123,9 @@ async fn test_concurrent_requests() {
     for i in 0..10 {
         let proxy_clone = proxy.clone();
         let upstream_clone = upstream.clone();
-        
+
         let handle = tokio::spawn(async move {
-            let req = TestFixtures::request()
-                .uri(format!("/test/{}", i))
-                .build();
+            let req = TestFixtures::request().uri(format!("/test/{}", i)).build();
             proxy_clone.proxy(req, &upstream_clone).await
         });
         handles.push(handle);
@@ -168,7 +166,7 @@ async fn test_connection_reuse() {
 
     let stats = mock.stats().await;
     assert_eq!(stats.requests_received, 5);
-    
+
     // Verify connection reuse (should have fewer total connections than requests)
     assert!(stats.total_connections <= 5);
 }
@@ -212,7 +210,13 @@ async fn test_different_http_methods() {
         .port(addr.port())
         .build();
 
-    let methods = vec![Method::GET, Method::POST, Method::PUT, Method::DELETE, Method::PATCH];
+    let methods = vec![
+        Method::GET,
+        Method::POST,
+        Method::PUT,
+        Method::DELETE,
+        Method::PATCH,
+    ];
 
     for method in methods {
         let req = TestFixtures::request()
@@ -221,7 +225,12 @@ async fn test_different_http_methods() {
             .build();
 
         let response = proxy.proxy(req, &upstream).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK, "Failed for method: {:?}", method);
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "Failed for method: {:?}",
+            method
+        );
     }
 
     let stats = mock.stats().await;
@@ -262,13 +271,15 @@ async fn test_route_specific_responses() {
     mock.add_route(
         "/api/users".to_string(),
         MockResponse::new(StatusCode::OK, Bytes::from(r#"{"users": []}"#))
-            .with_header("Content-Type".to_string(), "application/json".to_string())
-    ).await;
+            .with_header("Content-Type".to_string(), "application/json".to_string()),
+    )
+    .await;
 
     mock.add_route(
         "/api/health".to_string(),
-        MockResponse::new(StatusCode::OK, Bytes::from("healthy"))
-    ).await;
+        MockResponse::new(StatusCode::OK, Bytes::from("healthy")),
+    )
+    .await;
 
     let proxy = HttpProxy::new(HttpClient::new(), ProxyConfig::default());
     let upstream = TestFixtures::upstream()

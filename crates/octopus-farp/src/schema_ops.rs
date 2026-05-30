@@ -16,8 +16,11 @@ use tracing::{debug, info, warn};
 /// Check if a path is a standard introspection endpoint that should be filtered
 /// from federated specs by default.
 pub fn is_introspection_path(path: &str) -> bool {
-    path == "/" || path == "/_/info" || path == "/health"
-        || path.starts_with("/docs") || path.starts_with("/openapi")
+    path == "/"
+        || path == "/_/info"
+        || path == "/health"
+        || path.starts_with("/docs")
+        || path.starts_with("/openapi")
         || path.starts_with("/asyncapi")
         || path.starts_with("/_farp/")
 }
@@ -110,10 +113,7 @@ pub async fn fetch_manifest_schemas(
 }
 
 /// Collect all schemas from registered services and trigger federation.
-pub fn trigger_federation(
-    registry: &SchemaRegistry,
-    federation: &SchemaFederation,
-) -> Result<()> {
+pub fn trigger_federation(registry: &SchemaRegistry, federation: &SchemaFederation) -> Result<()> {
     debug!("Triggering schema federation");
 
     let service_names = registry.list_services();

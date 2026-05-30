@@ -111,7 +111,9 @@ impl CVABuilder {
             .map(|(k, v)| {
                 (
                     k.to_string(),
-                    v.into_iter().map(std::string::ToString::to_string).collect(),
+                    v.into_iter()
+                        .map(std::string::ToString::to_string)
+                        .collect(),
                 )
             })
             .collect();

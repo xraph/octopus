@@ -154,7 +154,8 @@ pub struct ServiceInfo {
 
 impl FarpApiHandler {
     /// Create a new FARP API handler
-    #[must_use] pub fn new(registry: Arc<SchemaRegistry>) -> Self {
+    #[must_use]
+    pub fn new(registry: Arc<SchemaRegistry>) -> Self {
         Self {
             registry,
             route_generator: Arc::new(RouteGenerator::new()),
@@ -166,7 +167,8 @@ impl FarpApiHandler {
     }
 
     /// Create a new FARP API handler with custom federation
-    #[must_use] pub fn with_federation(
+    #[must_use]
+    pub fn with_federation(
         registry: Arc<SchemaRegistry>,
         federation: Arc<SchemaFederation>,
     ) -> Self {
@@ -181,7 +183,8 @@ impl FarpApiHandler {
     }
 
     /// Set the router for supplementing the federated spec with registered routes
-    #[must_use] pub fn with_router(mut self, router: Arc<Router>) -> Self {
+    #[must_use]
+    pub fn with_router(mut self, router: Arc<Router>) -> Self {
         self.router = Some(router);
         self
     }
@@ -339,7 +342,11 @@ impl FarpApiHandler {
 
             // Check if service requests tag collapsing via instance metadata
             if let Some(ref metadata) = instance.metadata {
-                if metadata.get("farp.collapse_service_tags").map(|v| v == "true").unwrap_or(false) {
+                if metadata
+                    .get("farp.collapse_service_tags")
+                    .map(|v| v == "true")
+                    .unwrap_or(false)
+                {
                     self.federation.set_collapse_service_tags(true);
                 }
             }
@@ -366,12 +373,8 @@ impl FarpApiHandler {
 
             // Fetch actual schema content from the service's endpoints
             // (per FARP spec, the manifest lists schema URLs; the gateway fetches them)
-            crate::schema_ops::fetch_manifest_schemas(
-                &self.farp_client,
-                &self.registry,
-                &manifest,
-            )
-            .await;
+            crate::schema_ops::fetch_manifest_schemas(&self.farp_client, &self.registry, &manifest)
+                .await;
 
             // Register upstream and routes in the gateway router (if available)
             if let Some(ref router) = self.router {
@@ -380,18 +383,25 @@ impl FarpApiHandler {
                 let inst_address = if instance.port > 0 && !instance.address.contains(':') {
                     instance.address.clone()
                 } else {
-                    instance.address.split(':').next().unwrap_or(&instance.address).to_string()
+                    instance
+                        .address
+                        .split(':')
+                        .next()
+                        .unwrap_or(&instance.address)
+                        .to_string()
                 };
                 let inst_port = if instance.port > 0 {
                     instance.port
                 } else {
-                    instance.address.split(':').nth(1).and_then(|p| p.parse().ok()).unwrap_or(80)
+                    instance
+                        .address
+                        .split(':')
+                        .nth(1)
+                        .and_then(|p| p.parse().ok())
+                        .unwrap_or(80)
                 };
-                let upstream_inst = octopus_core::UpstreamInstance::new(
-                    &instance.id,
-                    &inst_address,
-                    inst_port,
-                );
+                let upstream_inst =
+                    octopus_core::UpstreamInstance::new(&instance.id, &inst_address, inst_port);
                 cluster.add_instance(upstream_inst);
                 router.register_upstream(cluster);
 
@@ -440,8 +450,12 @@ impl FarpApiHandler {
                     if let Ok(schemas) = self.registry.get_schemas(&service_name) {
                         for schema in &schemas {
                             if schema.format == SchemaFormat::OpenApi {
-                                if let Ok(schema_json) = serde_json::from_str::<serde_json::Value>(&schema.content) {
-                                    if let Some(paths) = schema_json.get("paths").and_then(|p| p.as_object()) {
+                                if let Ok(schema_json) =
+                                    serde_json::from_str::<serde_json::Value>(&schema.content)
+                                {
+                                    if let Some(paths) =
+                                        schema_json.get("paths").and_then(|p| p.as_object())
+                                    {
                                         for (path, operations) in paths {
                                             if crate::schema_ops::should_exclude_introspection()
                                                 && crate::schema_ops::is_introspection_path(path)
@@ -450,17 +464,19 @@ impl FarpApiHandler {
                                             }
                                             if let Some(ops) = operations.as_object() {
                                                 for method_str in ops.keys() {
-                                                    let method = match method_str.to_uppercase().as_str() {
-                                                        "GET" => Method::GET,
-                                                        "POST" => Method::POST,
-                                                        "PUT" => Method::PUT,
-                                                        "DELETE" => Method::DELETE,
-                                                        "PATCH" => Method::PATCH,
-                                                        "HEAD" => Method::HEAD,
-                                                        "OPTIONS" => Method::OPTIONS,
-                                                        _ => continue,
-                                                    };
-                                                    let prefixed_path = format!("/{service_name_lower}{path}");
+                                                    let method =
+                                                        match method_str.to_uppercase().as_str() {
+                                                            "GET" => Method::GET,
+                                                            "POST" => Method::POST,
+                                                            "PUT" => Method::PUT,
+                                                            "DELETE" => Method::DELETE,
+                                                            "PATCH" => Method::PATCH,
+                                                            "HEAD" => Method::HEAD,
+                                                            "OPTIONS" => Method::OPTIONS,
+                                                            _ => continue,
+                                                        };
+                                                    let prefixed_path =
+                                                        format!("/{service_name_lower}{path}");
                                                     let route = octopus_router::RouteBuilder::new()
                                                         .path(&prefixed_path)
                                                         .method(method)
@@ -490,8 +506,7 @@ impl FarpApiHandler {
             }
 
             // Return ack with gateway state (§17.4.1)
-            let (routes_checksum, schemas_applied) =
-                self.get_instance_state(&manifest.instance_id);
+            let (routes_checksum, schemas_applied) = self.get_instance_state(&manifest.instance_id);
 
             return self.json_response(
                 StatusCode::CREATED,
@@ -516,7 +531,8 @@ impl FarpApiHandler {
 
         // Register with registry
         self.registry
-            .register_service(registration.manifest.clone()).await?;
+            .register_service(registration.manifest.clone())
+            .await?;
 
         // Store schemas and trigger federation
         if let Some(schemas) = &registration.schemas {
@@ -560,7 +576,11 @@ impl FarpApiHandler {
     }
 
     /// Handle heartbeat from a service instance (FARP v1 push protocol, §17.4.1)
-    async fn heartbeat(&self, instance_id: &str, req: Request<Full<Bytes>>) -> Result<Response<Full<Bytes>>> {
+    async fn heartbeat(
+        &self,
+        instance_id: &str,
+        req: Request<Full<Bytes>>,
+    ) -> Result<Response<Full<Bytes>>> {
         let body_bytes = req
             .into_body()
             .collect()
@@ -626,11 +646,7 @@ impl FarpApiHandler {
         for name in self.registry.list_services() {
             if let Ok(reg) = self.registry.get_service(&name) {
                 if reg.manifest.instance_id == instance_id {
-                    let checksum = reg
-                        .manifest
-                        .routes_checksum
-                        .clone()
-                        .unwrap_or_default();
+                    let checksum = reg.manifest.routes_checksum.clone().unwrap_or_default();
                     return (checksum, reg.schemas.len());
                 }
             }
@@ -641,16 +657,11 @@ impl FarpApiHandler {
     /// Re-fetch manifest and schemas from a service instance (§17.4.1).
     async fn retry_manifest_fetch(&self, instance_id: &str) {
         // Find the service and its manifest URL
-        let info: Option<(String, String)> = self
-            .registry
-            .list_services()
-            .iter()
-            .find_map(|name| {
+        let info: Option<(String, String)> =
+            self.registry.list_services().iter().find_map(|name| {
                 self.registry.get_service(name).ok().and_then(|reg| {
                     if reg.manifest.instance_id == instance_id {
-                        reg.manifest_url
-                            .clone()
-                            .map(|url| (name.clone(), url))
+                        reg.manifest_url.clone().map(|url| (name.clone(), url))
                     } else {
                         None
                     }
@@ -704,9 +715,15 @@ impl FarpApiHandler {
         info!(instance_id = %instance_id, "Deregistering service instance");
 
         if self.registry.deregister_by_instance_id(instance_id).is_ok() {
-            self.json_response(StatusCode::OK, &serde_json::json!({"status": "deregistered"}))
+            self.json_response(
+                StatusCode::OK,
+                &serde_json::json!({"status": "deregistered"}),
+            )
         } else {
-            self.json_response(StatusCode::NOT_FOUND, &serde_json::json!({"error": "instance not found"}))
+            self.json_response(
+                StatusCode::NOT_FOUND,
+                &serde_json::json!({"error": "instance not found"}),
+            )
         }
     }
 
@@ -842,9 +859,7 @@ impl FarpApiHandler {
             Response::builder()
                 .status(StatusCode::OK)
                 .header("content-type", "application/json")
-                .body(Full::new(Bytes::from(
-                    content,
-                )))
+                .body(Full::new(Bytes::from(content)))
                 .map_err(|e| Error::Internal(format!("Failed to build response: {e}")))
         }
     }
@@ -865,13 +880,17 @@ impl FarpApiHandler {
 
         for route in &all_routes {
             // Skip FARP internal routes
-            if route.path.starts_with("/farp") || route.path.starts_with("/__") || route.path.starts_with("/_farp") {
+            if route.path.starts_with("/farp")
+                || route.path.starts_with("/__")
+                || route.path.starts_with("/_farp")
+            {
                 continue;
             }
 
             // Skip introspection endpoints if filtering is enabled
             if exclude_introspection {
-                let segments: Vec<&str> = route.path.trim_start_matches('/').splitn(2, '/').collect();
+                let segments: Vec<&str> =
+                    route.path.trim_start_matches('/').splitn(2, '/').collect();
                 if segments.len() == 2 {
                     let service_path = format!("/{}", segments[1]);
                     if crate::schema_ops::is_introspection_path(&service_path) {
@@ -917,9 +936,7 @@ impl FarpApiHandler {
         // Merge new paths into the spec
         if !new_paths.is_empty() {
             if let Some(obj) = spec.as_object_mut() {
-                let paths = obj
-                    .entry("paths")
-                    .or_insert_with(|| serde_json::json!({}));
+                let paths = obj.entry("paths").or_insert_with(|| serde_json::json!({}));
 
                 if let Some(paths_obj) = paths.as_object_mut() {
                     for (path, path_item) in new_paths {
@@ -947,11 +964,13 @@ impl FarpApiHandler {
     async fn get_federated_asyncapi(&self) -> Result<Response<Full<Bytes>>> {
         info!("Serving federated AsyncAPI schema");
 
-        if let Ok(schema) = self.federation.get_federated(&SchemaFormat::AsyncApi) { Response::builder()
-        .status(StatusCode::OK)
-        .header("content-type", "application/json")
-        .body(Full::new(Bytes::from(schema.content)))
-        .map_err(|e| Error::Internal(format!("Failed to build response: {e}"))) } else {
+        if let Ok(schema) = self.federation.get_federated(&SchemaFormat::AsyncApi) {
+            Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "application/json")
+                .body(Full::new(Bytes::from(schema.content)))
+                .map_err(|e| Error::Internal(format!("Failed to build response: {e}")))
+        } else {
             let empty_schema = serde_json::json!({
                 "asyncapi": "2.6.0",
                 "info": {
@@ -975,11 +994,13 @@ impl FarpApiHandler {
     async fn get_federated_graphql(&self) -> Result<Response<Full<Bytes>>> {
         info!("Serving federated GraphQL schema");
 
-        if let Ok(schema) = self.federation.get_federated(&SchemaFormat::GraphQL) { Response::builder()
-        .status(StatusCode::OK)
-        .header("content-type", "text/plain; charset=utf-8")
-        .body(Full::new(Bytes::from(schema.content)))
-        .map_err(|e| Error::Internal(format!("Failed to build response: {e}"))) } else {
+        if let Ok(schema) = self.federation.get_federated(&SchemaFormat::GraphQL) {
+            Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "text/plain; charset=utf-8")
+                .body(Full::new(Bytes::from(schema.content)))
+                .map_err(|e| Error::Internal(format!("Failed to build response: {e}")))
+        } else {
             let empty_schema =
                 "# Federated GraphQL Schema (No Services)\ntype Query { _empty: String }";
 
@@ -995,11 +1016,13 @@ impl FarpApiHandler {
     async fn get_federated_grpc(&self) -> Result<Response<Full<Bytes>>> {
         info!("Serving federated gRPC schema");
 
-        if let Ok(schema) = self.federation.get_federated(&SchemaFormat::Grpc) { Response::builder()
-        .status(StatusCode::OK)
-        .header("content-type", "text/plain; charset=utf-8")
-        .body(Full::new(Bytes::from(schema.content)))
-        .map_err(|e| Error::Internal(format!("Failed to build response: {e}"))) } else {
+        if let Ok(schema) = self.federation.get_federated(&SchemaFormat::Grpc) {
+            Response::builder()
+                .status(StatusCode::OK)
+                .header("content-type", "text/plain; charset=utf-8")
+                .body(Full::new(Bytes::from(schema.content)))
+                .map_err(|e| Error::Internal(format!("Failed to build response: {e}")))
+        } else {
             let empty_schema = "// Federated gRPC Schema (No Services)\nsyntax = \"proto3\";";
 
             Response::builder()

@@ -230,17 +230,18 @@ mod tests {
         // Try multiple paths to ensure none route to canary
         for path in &["/api/a", "/api/b", "/api/c", "/api/xyz"] {
             let next = Next::new(stack.clone());
-            let req = Request::builder()
-                .uri(*path)
-                .body(Body::from(""))
-                .unwrap();
+            let req = Request::builder().uri(*path).body(Body::from("")).unwrap();
 
             let response = next.run(req).await.unwrap();
             let body = http_body_util::BodyExt::collect(response.into_body())
                 .await
                 .unwrap()
                 .to_bytes();
-            assert_eq!(&body[..], b"primary", "path {path} should not route to canary");
+            assert_eq!(
+                &body[..],
+                b"primary",
+                "path {path} should not route to canary"
+            );
         }
     }
 
@@ -260,10 +261,7 @@ mod tests {
 
         for path in &["/api/a", "/api/b", "/api/c", "/api/xyz"] {
             let next = Next::new(stack.clone());
-            let req = Request::builder()
-                .uri(*path)
-                .body(Body::from(""))
-                .unwrap();
+            let req = Request::builder().uri(*path).body(Body::from("")).unwrap();
 
             let response = next.run(req).await.unwrap();
             let body = http_body_util::BodyExt::collect(response.into_body())

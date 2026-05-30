@@ -90,8 +90,7 @@ impl GrpcHandler {
 
     /// Check if request is gRPC (for early detection before body buffering)
     pub fn is_grpc_request_raw<B>(req: &Request<B>) -> bool {
-        Self::is_grpc_content_type(req.headers())
-            || Self::is_grpc_web_content_type(req.headers())
+        Self::is_grpc_content_type(req.headers()) || Self::is_grpc_web_content_type(req.headers())
     }
 
     /// Check if request is a gRPC request (buffered body version for ProtocolHandler trait)
@@ -130,10 +129,7 @@ impl GrpcHandler {
             .status(StatusCode::OK) // gRPC always uses HTTP 200, status in headers/trailers
             .header(header::CONTENT_TYPE, "application/grpc")
             .header("grpc-status", grpc_status.to_string())
-            .header(
-                "grpc-message",
-                percent_encode_grpc_message(message),
-            )
+            .header("grpc-message", percent_encode_grpc_message(message))
             .body(Full::new(Bytes::new()))
             .map_err(|e| Error::Internal(format!("Failed to build gRPC error response: {e}")))
     }
@@ -212,9 +208,7 @@ const GRPC_HOP_BY_HOP_HEADERS: &[&str] = &[
 ];
 
 /// Build upstream gRPC headers from the original request
-pub fn build_grpc_upstream_headers(
-    original_headers: &http::HeaderMap,
-) -> http::HeaderMap {
+pub fn build_grpc_upstream_headers(original_headers: &http::HeaderMap) -> http::HeaderMap {
     let mut headers = http::HeaderMap::new();
 
     for (key, value) in original_headers.iter() {
@@ -354,11 +348,17 @@ mod tests {
     #[test]
     fn test_is_grpc_web() {
         let mut headers = http::HeaderMap::new();
-        headers.insert(header::CONTENT_TYPE, "application/grpc-web+proto".parse().unwrap());
+        headers.insert(
+            header::CONTENT_TYPE,
+            "application/grpc-web+proto".parse().unwrap(),
+        );
         assert!(GrpcHandler::is_grpc_web_content_type(&headers));
 
         let mut headers2 = http::HeaderMap::new();
-        headers2.insert(header::CONTENT_TYPE, "application/grpc-web-text".parse().unwrap());
+        headers2.insert(
+            header::CONTENT_TYPE,
+            "application/grpc-web-text".parse().unwrap(),
+        );
         assert!(GrpcHandler::is_grpc_web_content_type(&headers2));
     }
 
@@ -402,8 +402,14 @@ mod tests {
 
     #[test]
     fn test_encode_grpc_timeout() {
-        assert_eq!(GrpcHandler::encode_grpc_timeout(Duration::from_millis(100)), "100m");
-        assert_eq!(GrpcHandler::encode_grpc_timeout(Duration::from_secs(5)), "5S");
+        assert_eq!(
+            GrpcHandler::encode_grpc_timeout(Duration::from_millis(100)),
+            "100m"
+        );
+        assert_eq!(
+            GrpcHandler::encode_grpc_timeout(Duration::from_secs(5)),
+            "5S"
+        );
     }
 
     #[test]
@@ -415,7 +421,10 @@ mod tests {
             ..GrpcHandler::new()
         };
 
-        assert_eq!(handler.resolve_upstream("users.UserService"), Some("user-upstream"));
+        assert_eq!(
+            handler.resolve_upstream("users.UserService"),
+            Some("user-upstream")
+        );
         assert_eq!(handler.resolve_upstream("unknown.Service"), None);
     }
 

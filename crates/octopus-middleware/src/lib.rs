@@ -16,8 +16,8 @@
     unreachable_pub
 )]
 
-pub mod auth_gateway;
 pub mod audit_logger;
+pub mod auth_gateway;
 pub mod body_transform;
 pub mod bot_detection;
 pub mod builder;
@@ -33,8 +33,8 @@ pub mod header_transform;
 pub mod ip_filter;
 pub mod jwt;
 pub mod logging;
-pub mod redirect;
 pub mod rate_limit;
+pub mod redirect;
 pub mod request_id;
 pub mod request_limits;
 pub mod retry;
@@ -45,30 +45,32 @@ pub mod waf;
 pub use audit_logger::{
     AuditEvent, AuditEventType, AuditHandler, AuditLogger, AuditLoggerConfig, AuditOutput,
 };
+pub use auth_gateway::{
+    AuthGatewayMiddleware, AuthRateLimitKey, MatchedRouteAuth, MatchedRouteCors,
+};
+pub use body_transform::{BodyRule, BodyTransform, BodyTransformConfig};
+pub use bot_detection::{BotDetection, BotDetectionConfig, BotMode};
 pub use builder::MiddlewareBuilder;
+pub use caching::{CacheStore, CachedResponse, Caching, CachingConfig, InMemoryCacheStore};
+pub use canary::{Canary, CanaryConfig, CanaryRule, CanaryUpstream};
+pub use circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
 pub use compression::{Compression, CompressionAlgorithm, CompressionConfig};
 pub use connection_limits::{ConnectionLimits, ConnectionLimitsConfig};
 pub use cors::{Cors, CorsConfig};
+pub use deduplication::{Deduplication, DeduplicationConfig};
+pub use forward_auth::{ForwardAuth, ForwardAuthConfig};
+pub use header_transform::{HeaderRules, HeaderTransform, HeaderTransformConfig};
+pub use ip_filter::{IpFilter, IpFilterConfig, IpPattern};
 pub use jwt::{Claims, JwtAuth, JwtConfig};
 pub use logging::{LoggingConfig, RequestLogger};
 pub use rate_limit::{KeyExtractor, RateLimit, RateLimitConfig, RateLimitStrategy, RouteRateLimit};
+pub use redirect::{Redirect, RedirectConfig, RedirectRule, TrailingSlash};
 pub use request_id::{IdGenerator, RequestId, RequestIdConfig};
 pub use request_limits::{RequestLimits, RequestLimitsConfig};
+pub use retry::{Retry, RetryConfig};
 pub use security_headers::{SecurityHeaders, SecurityHeadersConfig};
 pub use timeout::{Timeout, TimeoutConfig};
-pub use caching::{CacheStore, CachedResponse, Caching, CachingConfig, InMemoryCacheStore};
-pub use forward_auth::{ForwardAuth, ForwardAuthConfig};
-pub use header_transform::{HeaderTransform, HeaderTransformConfig, HeaderRules};
-pub use ip_filter::{IpFilter, IpFilterConfig, IpPattern};
-pub use redirect::{Redirect, RedirectConfig, RedirectRule, TrailingSlash};
-pub use auth_gateway::{AuthGatewayMiddleware, AuthRateLimitKey, MatchedRouteCors, MatchedRouteAuth};
-pub use bot_detection::{BotDetection, BotDetectionConfig, BotMode};
-pub use canary::{Canary, CanaryConfig, CanaryRule, CanaryUpstream};
-pub use deduplication::{Deduplication, DeduplicationConfig};
-pub use retry::{Retry, RetryConfig};
-pub use circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
-pub use body_transform::{BodyTransform, BodyTransformConfig, BodyRule};
-pub use waf::{Waf, WafConfig, WafMode, WafTarget, WafRule};
+pub use waf::{Waf, WafConfig, WafMode, WafRule, WafTarget};
 
 #[cfg(feature = "distributed")]
 pub use rate_limit::{DistributedRateLimit, DistributedRateLimitConfig};

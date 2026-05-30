@@ -40,7 +40,13 @@ pub fn map_indexed<T, F>(items: &[T], f: F) -> Node
 where
     F: Fn(usize, &T) -> Node,
 {
-    Node::group(items.iter().enumerate().map(|(i, item)| f(i, item)).collect())
+    Node::group(
+        items
+            .iter()
+            .enumerate()
+            .map(|(i, item)| f(i, item))
+            .collect(),
+    )
 }
 
 /// Conditional class helper - similar to gomponents Classes

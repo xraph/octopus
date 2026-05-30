@@ -54,8 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let router = Arc::new(octopus_router::Router::new());
 
                 for upstream_config in &config.upstreams {
-                    let mut cluster =
-                        octopus_core::UpstreamCluster::new(&upstream_config.name);
+                    let mut cluster = octopus_core::UpstreamCluster::new(&upstream_config.name);
                     for instance_config in &upstream_config.instances {
                         let instance = octopus_core::UpstreamInstance::new(
                             &instance_config.id,

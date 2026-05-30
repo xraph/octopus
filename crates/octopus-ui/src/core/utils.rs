@@ -52,10 +52,7 @@ mod tests {
 
     #[test]
     fn test_class_names() {
-        assert_eq!(
-            class_names(&["btn", "btn-primary", ""]),
-            "btn btn-primary"
-        );
+        assert_eq!(class_names(&["btn", "btn-primary", ""]), "btn btn-primary");
         assert_eq!(class_names(&["", "", ""]), "");
     }
 

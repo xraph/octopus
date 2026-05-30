@@ -30,13 +30,13 @@ pub enum RoutingStrategy {
 pub struct RoutingConfig {
     /// Primary routing strategy
     pub strategy: RoutingStrategy,
-    
+
     /// Enable canary deployments
     pub enable_canary: bool,
-    
+
     /// Enable request shadowing
     pub enable_shadowing: bool,
-    
+
     /// Health check required for selection
     pub require_healthy: bool,
 }
@@ -141,10 +141,7 @@ impl Router {
     ) -> Option<&'a UpstreamInstance> {
         instances
             .iter()
-            .min_by_key(|instance| {
-                self.instance_stats
-                    .get_active_connections(&instance.id)
-            })
+            .min_by_key(|instance| self.instance_stats.get_active_connections(&instance.id))
             .copied()
     }
 
@@ -154,8 +151,11 @@ impl Router {
         instances: &[&'a UpstreamInstance],
     ) -> Option<&'a UpstreamInstance> {
         // Calculate total weight
-        let total_weight: u32 = instances.iter().map(|i| if i.weight == 0 { 1 } else { i.weight }).sum();
-        
+        let total_weight: u32 = instances
+            .iter()
+            .map(|i| if i.weight == 0 { 1 } else { i.weight })
+            .sum();
+
         if total_weight == 0 {
             return self.select_round_robin(instances);
         }
@@ -165,7 +165,11 @@ impl Router {
         let mut target = rng.gen_range(0..total_weight);
 
         for instance in instances {
-            let weight = if instance.weight == 0 { 1 } else { instance.weight };
+            let weight = if instance.weight == 0 {
+                1
+            } else {
+                instance.weight
+            };
             if target < weight {
                 return Some(instance);
             }
@@ -182,9 +186,7 @@ impl Router {
     ) -> Option<&'a UpstreamInstance> {
         instances
             .iter()
-            .min_by_key(|instance| {
-                self.instance_stats.get_avg_latency_ms(&instance.id)
-            })
+            .min_by_key(|instance| self.instance_stats.get_avg_latency_ms(&instance.id))
             .copied()
     }
 
@@ -195,9 +197,7 @@ impl Router {
     ) -> Option<&'a UpstreamInstance> {
         instances
             .iter()
-            .min_by_key(|instance| {
-                self.instance_stats.get_error_rate(&instance.id)
-            })
+            .min_by_key(|instance| self.instance_stats.get_error_rate(&instance.id))
             .copied()
     }
 
@@ -252,7 +252,8 @@ impl Router {
 
     /// Record request metrics for adaptive routing
     pub fn record_request(&self, instance_id: &str, latency: Duration, is_error: bool) {
-        self.instance_stats.record_request(instance_id, latency, is_error);
+        self.instance_stats
+            .record_request(instance_id, latency, is_error);
     }
 
     /// Increment active connections
@@ -284,13 +285,13 @@ impl std::fmt::Debug for Router {
 pub struct CanaryConfig {
     /// Version identifier for canary instances
     pub canary_version: String,
-    
+
     /// Percentage of traffic to route to canary (0-100)
     pub traffic_percentage: u32,
-    
+
     /// Automatically increase traffic if metrics are good
     pub auto_promote: bool,
-    
+
     /// Error rate threshold for auto-rollback (0.0-1.0)
     pub error_threshold: f64,
 }
@@ -343,7 +344,7 @@ impl InstanceStats {
         self.total_requests.fetch_add(1, Ordering::Relaxed);
         self.total_latency_ms
             .fetch_add(latency.as_millis() as u64, Ordering::Relaxed);
-        
+
         if is_error {
             self.total_errors.fetch_add(1, Ordering::Relaxed);
         }
@@ -356,7 +357,7 @@ impl InstanceStats {
         if total == 0 {
             return u64::MAX; // Penalize instances with no data
         }
-        
+
         let latency = self.total_latency_ms.load(Ordering::Relaxed);
         latency / total
     }
@@ -366,7 +367,7 @@ impl InstanceStats {
         if total == 0 {
             return u64::MAX; // Penalize instances with no data
         }
-        
+
         let errors = self.total_errors.load(Ordering::Relaxed);
         (errors * 1000) / total // Error rate * 1000 for precision
     }
@@ -444,13 +445,13 @@ impl InstanceStatsMap {
 pub struct ShadowConfig {
     /// Target instance/cluster for shadow traffic
     pub shadow_target: String,
-    
+
     /// Percentage of traffic to shadow (0-100)
     pub traffic_percentage: u32,
-    
+
     /// Whether to wait for shadow response
     pub synchronous: bool,
-    
+
     /// Whether to log shadow failures
     pub log_failures: bool,
 }
@@ -565,7 +566,7 @@ mod tests {
     #[test]
     fn test_canary_deployment() {
         use std::collections::HashMap;
-        
+
         let config = RoutingConfig {
             strategy: RoutingStrategy::RoundRobin,
             enable_canary: true,
@@ -574,10 +575,14 @@ mod tests {
         let router = Router::new(config);
 
         let mut stable = create_test_instance("stable", true, 1);
-        stable.metadata.insert("version".to_string(), "v1".to_string());
+        stable
+            .metadata
+            .insert("version".to_string(), "v1".to_string());
 
         let mut canary = create_test_instance("canary", true, 1);
-        canary.metadata.insert("version".to_string(), "v2".to_string());
+        canary
+            .metadata
+            .insert("version".to_string(), "v2".to_string());
 
         let instances = vec![stable, canary];
 
@@ -622,7 +627,7 @@ mod tests {
     #[test]
     fn test_shadow_config() {
         let config = ShadowConfig::new("shadow-cluster".to_string(), 10);
-        
+
         assert_eq!(config.shadow_target, "shadow-cluster");
         assert_eq!(config.traffic_percentage, 10);
         assert!(!config.synchronous);

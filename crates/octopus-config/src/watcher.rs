@@ -84,9 +84,7 @@ impl ConfigWatcher {
                         Ok(config) => match validate_config(&config) {
                             Ok(()) => {
                                 if tx.send(config).await.is_err() {
-                                    tracing::debug!(
-                                        "Config watcher channel closed, stopping"
-                                    );
+                                    tracing::debug!("Config watcher channel closed, stopping");
                                     break;
                                 }
                                 tracing::info!("Config reloaded successfully");
@@ -174,10 +172,7 @@ observability:
         let path = dir.path().join("config.yaml");
         write_config(&path, "127.0.0.1:9000");
 
-        let watcher = ConfigWatcher::new(
-            vec![path.clone()],
-            Duration::from_millis(200),
-        );
+        let watcher = ConfigWatcher::new(vec![path.clone()], Duration::from_millis(200));
         let mut rx = watcher.watch().await;
 
         // macOS HFS+/APFS has 1-second mtime granularity so we wait >1s.
@@ -188,10 +183,7 @@ observability:
         assert!(result.is_ok(), "Expected config change notification");
 
         let config = result.unwrap().expect("channel should not be closed");
-        assert_eq!(
-            config.gateway.listen,
-            "127.0.0.1:9001".parse().unwrap()
-        );
+        assert_eq!(config.gateway.listen, "127.0.0.1:9001".parse().unwrap());
     }
 
     #[tokio::test]
@@ -200,10 +192,7 @@ observability:
         let path = dir.path().join("config.yaml");
         write_config(&path, "127.0.0.1:9000");
 
-        let watcher = ConfigWatcher::new(
-            vec![path.clone()],
-            Duration::from_millis(200),
-        );
+        let watcher = ConfigWatcher::new(vec![path.clone()], Duration::from_millis(200));
         let mut rx = watcher.watch().await;
 
         // Write invalid YAML after waiting for mtime to tick.
@@ -224,10 +213,7 @@ observability:
         let result = timeout(Duration::from_secs(5), rx.recv()).await;
         assert!(result.is_ok(), "Expected config change after fix");
         let config = result.unwrap().expect("channel open");
-        assert_eq!(
-            config.gateway.listen,
-            "127.0.0.1:9002".parse().unwrap()
-        );
+        assert_eq!(config.gateway.listen, "127.0.0.1:9002".parse().unwrap());
     }
 
     #[tokio::test]
@@ -236,10 +222,7 @@ observability:
         let path = dir.path().join("config.yaml");
         write_config(&path, "127.0.0.1:9000");
 
-        let watcher = ConfigWatcher::new(
-            vec![path.clone()],
-            Duration::from_millis(100),
-        );
+        let watcher = ConfigWatcher::new(vec![path.clone()], Duration::from_millis(100));
         let mut rx = watcher.watch().await;
 
         // Don't modify the file -- should timeout.

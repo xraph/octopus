@@ -107,8 +107,7 @@ impl ForwardAuthClient {
             .body(Full::<Bytes>::new(Bytes::new()))
             .map_err(|e| ForwardAuthError::RequestBuild(e.to_string()))?;
 
-        let client =
-            Client::builder(TokioExecutor::new()).build_http::<Full<Bytes>>();
+        let client = Client::builder(TokioExecutor::new()).build_http::<Full<Bytes>>();
 
         let result = tokio::time::timeout(self.timeout, client.request(req))
             .await
@@ -236,7 +235,12 @@ impl Middleware for ForwardAuth {
         if auth_result.status == StatusCode::OK {
             // Copy configured response headers from auth response to upstream request
             for (name, value) in &auth_result.headers {
-                if self.config.response_headers.iter().any(|h| h.eq_ignore_ascii_case(name)) {
+                if self
+                    .config
+                    .response_headers
+                    .iter()
+                    .any(|h| h.eq_ignore_ascii_case(name))
+                {
                     if let Ok(hv) = http::header::HeaderValue::from_str(value) {
                         if let Ok(hn) = http::header::HeaderName::from_bytes(name.as_bytes()) {
                             req.headers_mut().insert(hn, hv);
@@ -295,9 +299,13 @@ mod tests {
     fn test_default_config() {
         let config = ForwardAuthConfig::default();
         assert_eq!(config.timeout, Duration::from_secs(5));
-        assert!(config.forward_headers.contains(&"Authorization".to_string()));
+        assert!(config
+            .forward_headers
+            .contains(&"Authorization".to_string()));
         assert!(config.forward_headers.contains(&"Cookie".to_string()));
-        assert!(config.response_headers.contains(&"X-Auth-Subject".to_string()));
+        assert!(config
+            .response_headers
+            .contains(&"X-Auth-Subject".to_string()));
         assert!(config.response_headers.contains(&"X-Auth-Role".to_string()));
     }
 

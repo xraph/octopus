@@ -1,18 +1,15 @@
 //! Security integration tests - limits, rate limiting, TLS validation
 
 use super::*;
-use octopus_proxy::{
-    ProxyLimits, 
-    InMemoryRateLimiter, RateLimitConfig, RateLimitKeyBuilder,
-};
-use http::{Method, StatusCode, HeaderValue};
 use bytes::Bytes;
+use http::{HeaderValue, Method, StatusCode};
+use octopus_proxy::{InMemoryRateLimiter, ProxyLimits, RateLimitConfig, RateLimitKeyBuilder};
 use std::time::Duration;
 
 #[tokio::test]
 async fn test_body_size_limits_configured() {
     let limits = ProxyLimits {
-        max_request_body_size: 1024, // 1KB limit
+        max_request_body_size: 1024,  // 1KB limit
         max_response_body_size: 2048, // 2KB limit
         ..Default::default()
     };
@@ -20,7 +17,7 @@ async fn test_body_size_limits_configured() {
     // Verify limits are set correctly
     assert_eq!(limits.max_request_body_size, 1024);
     assert_eq!(limits.max_response_body_size, 2048);
-    
+
     // Body size validation happens during streaming with LimitedBody
     // which is tested separately in the proxy integration tests
 }
@@ -72,7 +69,8 @@ async fn test_header_count_limit() {
     // Add 15 headers (exceeds limit)
     for i in 0..15 {
         let header_name: http::HeaderName = format!("x-custom-{}", i).parse().unwrap();
-        req.headers_mut().insert(header_name, HeaderValue::from_static("value"));
+        req.headers_mut()
+            .insert(header_name, HeaderValue::from_static("value"));
     }
 
     // Validate should fail
@@ -97,7 +95,8 @@ async fn test_header_total_size_limit() {
     for i in 0..10 {
         let value = "x".repeat(50); // 50 chars each
         let header_name: http::HeaderName = format!("x-header-{}", i).parse().unwrap();
-        req.headers_mut().insert(header_name, HeaderValue::from_str(&value).unwrap());
+        req.headers_mut()
+            .insert(header_name, HeaderValue::from_str(&value).unwrap());
     }
 
     // Validate should fail (10 headers * ~50 chars = 500+ bytes)

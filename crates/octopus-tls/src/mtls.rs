@@ -46,12 +46,14 @@ impl MtlsConfig {
         let builder = WebPkiClientVerifier::builder(Arc::new(root_store));
 
         let verifier = if self.require_client_cert {
-            builder.build().map_err(|e| {
-                Error::Config(format!("Failed to build client cert verifier: {e}"))
-            })?
+            builder
+                .build()
+                .map_err(|e| Error::Config(format!("Failed to build client cert verifier: {e}")))?
         } else {
             builder.allow_unauthenticated().build().map_err(|e| {
-                Error::Config(format!("Failed to build optional client cert verifier: {e}"))
+                Error::Config(format!(
+                    "Failed to build optional client cert verifier: {e}"
+                ))
             })?
         };
 
@@ -113,9 +115,9 @@ impl TargetTlsConfig {
             let ca_certs = load_certificates(ca_path)?;
             let mut store = RootCertStore::empty();
             for cert in ca_certs {
-                store.add(cert).map_err(|e| {
-                    Error::Config(format!("Failed to add CA cert: {e}"))
-                })?;
+                store
+                    .add(cert)
+                    .map_err(|e| Error::Config(format!("Failed to add CA cert: {e}")))?;
             }
             store
         } else {
@@ -125,17 +127,16 @@ impl TargetTlsConfig {
             store
         };
 
-        let builder = rustls::ClientConfig::builder()
-            .with_root_certificates(root_store);
+        let builder = rustls::ClientConfig::builder().with_root_certificates(root_store);
 
         // Configure client authentication if cert+key provided
         let config = match (&self.client_cert_file, &self.client_key_file) {
             (Some(cert_path), Some(key_path)) => {
                 let certs = load_certificates(cert_path)?;
                 let key = load_private_key(key_path)?;
-                builder.with_client_auth_cert(certs, key).map_err(|e| {
-                    Error::Config(format!("Failed to configure client auth: {e}"))
-                })?
+                builder
+                    .with_client_auth_cert(certs, key)
+                    .map_err(|e| Error::Config(format!("Failed to configure client auth: {e}")))?
             }
             (Some(_), None) | (None, Some(_)) => {
                 return Err(Error::Config(
