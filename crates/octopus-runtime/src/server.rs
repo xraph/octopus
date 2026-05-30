@@ -30,16 +30,22 @@ enum TlsMode {
 
 /// Serve a single connection (HTTP/1.1 or HTTP/2 auto-detected), injecting the
 /// optional client-certificate CN (mTLS) into request extensions.
-async fn serve_io<IO>(io: IO, handler: crate::RequestHandler, client_cn: Option<String>)
-where
+async fn serve_io<IO>(
+    io: IO,
+    handler: crate::RequestHandler,
+    client_cn: Option<String>,
+    sni: Option<String>,
+) where
     IO: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
     let service =
         hyper::service::service_fn(move |mut req: http::Request<hyper::body::Incoming>| {
             let handler = handler.clone();
             let cn = client_cn.clone();
+            let sni = sni.clone();
             async move {
                 req.extensions_mut().insert(octopus_tls::TlsClientCn(cn));
+                req.extensions_mut().insert(octopus_tls::TlsSniName(sni));
                 handler.handle(req).await.or_else(|e| {
                     tracing::error!("Request handler error: {}", e);
                     let status = e.to_status_code();
@@ -196,28 +202,17 @@ impl Server {
             TlsMode::Plain
         };
 
-        // Build middleware chain
-        let mut middlewares: Vec<Arc<dyn octopus_core::middleware::Middleware>> = Vec::new();
-
-        // Add compression middleware if enabled
-        if self.config.gateway.compression.enabled {
-            let compression_config = octopus_compression::CompressionConfig {
-                enabled: self.config.gateway.compression.enabled,
-                level: self.config.gateway.compression.level,
-                min_size: self.config.gateway.compression.min_size,
-                algorithms: self.config.gateway.compression.algorithms.clone(),
-            };
-            let compression_middleware = Arc::new(octopus_compression::CompressionMiddleware::new(
-                compression_config,
-            ))
-                as Arc<dyn octopus_core::middleware::Middleware>;
-            middlewares.push(compression_middleware);
-            tracing::info!(
-                level = self.config.gateway.compression.level,
-                algorithms = ?self.config.gateway.compression.algorithms,
-                "Compression middleware enabled"
+        // Build the pre-auth request middleware (compression, CORS) from config.
+        let mut middlewares: Vec<Arc<dyn octopus_core::middleware::Middleware>> =
+            crate::chain::build_request_middleware(
+                &self.config.gateway.compression,
+                self.config.cors.as_ref(),
             );
-        }
+        tracing::info!(
+            compression = self.config.gateway.compression.enabled,
+            cors = self.config.cors.is_some(),
+            "Request middleware chain built"
+        );
 
         // Initialize auth providers from config and add auth middleware
         let mut auth_registry: Option<Arc<octopus_auth::AuthProviderRegistry>> = None;
@@ -353,6 +348,9 @@ impl Server {
             );
         }
 
+        // Anti host-spoofing (Host == TLS SNI), gated by config.
+        handler.set_enforce_sni_check(self.config.gateway.enforce_sni_check);
+
         // Wire health probes (/livez, /readyz, /startupz).
         {
             let probes_cfg = &self.config.gateway.probes;
@@ -363,6 +361,20 @@ impl Server {
                 startup: probes_cfg.startup_path.clone(),
             };
             handler.set_lifecycle(self.lifecycle.clone(), probe_routes);
+        }
+
+        // EndpointSlice-backed convention upstreams need a live pod watcher.
+        #[cfg(feature = "kubernetes")]
+        if self.config.kubernetes.enabled {
+            match octopus_k8s::EndpointWatchManager::connect(Arc::clone(&self.router)).await {
+                Ok(mgr) => {
+                    handler.set_backend_watcher(mgr);
+                    tracing::info!("EndpointSlice backend watcher enabled for convention routes");
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "failed to start EndpointSlice backend watcher")
+                }
+            }
         }
 
         let mut shutdown_rx = self.shutdown.subscribe();
@@ -405,18 +417,20 @@ impl Server {
                             // Spawn a task to handle this connection
                             tokio::spawn(async move {
                                 match tls_mode {
-                                    TlsMode::Plain => serve_io(stream, handler, None).await,
+                                    TlsMode::Plain => serve_io(stream, handler, None, None).await,
                                     TlsMode::Static(acceptor) => match acceptor.accept(stream).await {
                                         Ok(tls_stream) => {
                                             let cn = octopus_tls::extract_client_cn(&tls_stream);
-                                            serve_io(tls_stream, handler, cn).await;
+                                            let sni = octopus_tls::extract_server_name(&tls_stream);
+                                            serve_io(tls_stream, handler, cn, sni).await;
                                         }
                                         Err(e) => tracing::error!("TLS handshake failed: {}", e),
                                     },
                                     TlsMode::Operator(acceptor) => match acceptor.accept(stream).await {
                                         Ok(tls_stream) => {
                                             let cn = octopus_tls::extract_client_cn(&tls_stream);
-                                            serve_io(tls_stream, handler, cn).await;
+                                            let sni = octopus_tls::extract_server_name(&tls_stream);
+                                            serve_io(tls_stream, handler, cn, sni).await;
                                         }
                                         Err(e) => tracing::error!("TLS handshake failed: {}", e),
                                     },
@@ -1176,6 +1190,7 @@ mod tests {
                 compression: CompressionConfig::default(),
                 internal_route_prefix: Some("__".to_string()),
                 probes: ProbeConfig::default(),
+                enforce_sni_check: true,
             })
             .build()
             .unwrap()

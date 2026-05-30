@@ -20,12 +20,12 @@ has defaults and may be omitted.
 <Callout type="warn">
   **Implementation status.** Octopus parses the entire schema documented here, but some fields are
   accepted for forward-compatibility and **not yet enforced at runtime**. The notable ones (each
-  flagged on its page): per-route [`rate_limit` and `cors`](/docs/configuration/routes) and the
-  global [`cors`](/docs/configuration/auth) are stored but not applied; [distributed tracing and the
-  JSON log format](/docs/configuration/observability) and [`admin.allowed_ips`](/docs/configuration/admin)
-  are inert; the [`grpc`](/docs/configuration/grpc) block and the [`plugins`](/docs/configuration/middleware)
-  array are parsed but not consumed. The middleware wired into the request chain today are
-  compression and authentication.
+  flagged on its page): per-route [`rate_limit`](/docs/configuration/routes) is stored but not
+  applied; [distributed tracing and the JSON log format](/docs/configuration/observability) and
+  [`admin.allowed_ips`](/docs/configuration/admin) are inert; the
+  [`grpc`](/docs/configuration/grpc) block and the [`plugins`](/docs/configuration/middleware) array
+  are parsed but not consumed. The middleware wired into the request chain today are compression,
+  CORS (global + per-route), and authentication.
 </Callout>
 
 ```yaml

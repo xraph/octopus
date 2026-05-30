@@ -16,6 +16,7 @@
 )]
 
 pub mod admin;
+mod chain;
 pub mod handler;
 pub mod lifecycle;
 pub mod probes;
