@@ -263,13 +263,19 @@ mod tests {
     use super::*;
 
     async fn setup() -> Option<HybridBackend> {
-        HybridBackend::with_prefix(
-            "redis://127.0.0.1:6379",
-            "octopus_hybrid_test",
-            Duration::from_secs(5),
+        // Fail fast if Redis isn't reachable so the test skips instead of hanging.
+        // `ConnectionManager` otherwise retries with backoff well past CI test timeouts.
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            HybridBackend::with_prefix(
+                "redis://127.0.0.1:6379",
+                "octopus_hybrid_test",
+                Duration::from_secs(5),
+            ),
         )
         .await
         .ok()
+        .and_then(Result::ok)
     }
 
     #[tokio::test]

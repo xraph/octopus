@@ -271,9 +271,15 @@ mod tests {
     // Run with: docker run -p 6379:6379 redis:7-alpine
 
     async fn setup() -> Option<RedisBackend> {
-        RedisBackend::with_prefix("redis://127.0.0.1:6379", "octopus_test")
-            .await
-            .ok()
+        // Fail fast if Redis isn't reachable so the test skips instead of hanging.
+        // `ConnectionManager` otherwise retries with backoff well past CI test timeouts.
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            RedisBackend::with_prefix("redis://127.0.0.1:6379", "octopus_test"),
+        )
+        .await
+        .ok()
+        .and_then(Result::ok)
     }
 
     #[tokio::test]

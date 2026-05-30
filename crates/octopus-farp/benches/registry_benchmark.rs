@@ -37,7 +37,9 @@ fn create_test_manifest(service_name: &str, instance_id: &str) -> SchemaManifest
 
 fn bench_register_service(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    let registry = Arc::new(SchemaRegistry::new());
+    // Disable rate limiting: criterion repeatedly re-registers the same service,
+    // which would otherwise trip the default 60-updates/minute limit.
+    let registry = Arc::new(SchemaRegistry::with_rate_limit(u32::MAX));
 
     c.bench_function("register_service", |b| {
         let mut counter = 0;
@@ -94,7 +96,9 @@ fn bench_list_services(c: &mut Criterion) {
 
 fn bench_update_service(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    let registry = Arc::new(SchemaRegistry::new());
+    // Disable rate limiting: criterion repeatedly updates the same service,
+    // which would otherwise trip the default 60-updates/minute limit.
+    let registry = Arc::new(SchemaRegistry::with_rate_limit(u32::MAX));
 
     // Register initial service
     let manifest = create_test_manifest("test-service", "inst-1");
