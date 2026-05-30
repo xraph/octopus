@@ -15,6 +15,14 @@ rules:
   - apiGroups: ["discovery.k8s.io"]
     resources: ["endpointslices"]
     verbs: ["get", "list", "watch"]
+  # Standard Gateway API resources the operator reconciles.
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["httproutes", "grpcroutes", "gateways", "gatewayclasses"]
+    verbs: ["get", "list", "watch"]
+  # Custom Octopus CRDs.
+  - apiGroups: ["gateway.octopus.io"]
+    resources: ["octopusgateways", "octopusroutes", "octopusupstreams", "octopuspolicies"]
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

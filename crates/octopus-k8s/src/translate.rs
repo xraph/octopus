@@ -1,10 +1,12 @@
 //! Translate Gateway API resources into the intermediate routing representation.
 
+use crate::crds::{OctopusRouteSpec, OctopusUpstreamSpec};
 use crate::gateway_api::{HTTPRouteSpec, HttpRouteRule};
-use crate::ir::{IntermediateRoute, RouteSource};
+use crate::ir::{IntermediateRoute, RateLimit, RouteSource};
 use http::Method;
 use octopus_core::types::LoadBalanceStrategy;
 use octopus_core::{UpstreamCluster, UpstreamInstance};
+use std::time::Duration;
 
 /// Wildcard parameter name used to emulate Gateway API `PathPrefix` semantics
 /// (the segment-based router matches a registered prefix exactly, so subpaths
@@ -84,6 +86,7 @@ pub fn httproute_to_route(
                         &cluster_name,
                         RouteSource::GatewayApi,
                     );
+                    route.source_id = format!("{namespace}/{name}");
                     if replace_prefix.is_some() {
                         route.strip_prefix = Some(path_value.clone());
                         route.add_prefix = replace_prefix.clone();
@@ -141,6 +144,85 @@ fn expand_paths(path_type: &str, value: &str) -> Vec<String> {
             vec![exact, wildcard]
         }
         _ => Vec::new(),
+    }
+}
+
+/// Translate an `OctopusRoute` into intermediate routes. Unlike Gateway API
+/// routes, the path is used as-is (it is already a native router pattern) and
+/// the upstream is referenced by name (resolved from an `OctopusUpstream` or
+/// discovery), so no upstream cluster is produced here.
+pub fn octopus_route_to_route(
+    name: &str,
+    namespace: &str,
+    spec: &OctopusRouteSpec,
+) -> Vec<IntermediateRoute> {
+    let source_id = format!("{namespace}/{name}");
+    let methods: Vec<String> = if spec.methods.is_empty() {
+        DEFAULT_METHODS.iter().map(|m| m.to_string()).collect()
+    } else {
+        spec.methods.clone()
+    };
+
+    let mut routes = Vec::new();
+    for method_str in &methods {
+        let Ok(method) = method_str.parse::<Method>() else {
+            tracing::warn!(route = %name, method = %method_str, "Invalid HTTP method; skipping");
+            continue;
+        };
+        let mut route = IntermediateRoute::new(
+            method,
+            &spec.path,
+            &spec.upstream,
+            RouteSource::OctopusRoute,
+        );
+        route.source_id = source_id.clone();
+        route.priority = spec.priority.unwrap_or(0);
+        route.strip_prefix = spec.strip_prefix.clone();
+        route.add_prefix = spec.add_prefix.clone();
+        route.auth_provider = spec.auth_provider.clone();
+        route.skip_auth = spec.skip_auth;
+        route.require_roles = spec.require_roles.clone();
+        route.require_scopes = spec.require_scopes.clone();
+        route.authz_rule = spec.authz_rule.clone();
+        route.timeout = spec.timeout_seconds.map(Duration::from_secs);
+        route.rate_limit = spec.rate_limit.as_ref().map(|rl| RateLimit {
+            requests: rl.requests,
+            window: Duration::from_secs(rl.window_seconds),
+        });
+        routes.push(route);
+    }
+    routes
+}
+
+/// Translate an `OctopusUpstream` into an upstream cluster named after the
+/// resource (so `OctopusRoute.upstream` can reference it by name).
+pub fn octopus_upstream_to_cluster(
+    name: &str,
+    _namespace: &str,
+    spec: &OctopusUpstreamSpec,
+) -> UpstreamCluster {
+    let mut cluster = UpstreamCluster::new(name);
+    cluster.strategy = parse_lb_strategy(spec.lb_strategy.as_deref());
+    for target in &spec.targets {
+        let mut instance = UpstreamInstance::new(
+            format!("{}:{}", target.host, target.port),
+            &target.host,
+            target.port,
+        );
+        instance.weight = target.weight.unwrap_or(1);
+        cluster.add_instance(instance);
+    }
+    cluster
+}
+
+/// Map an `OctopusUpstream.lbStrategy` string to a [`LoadBalanceStrategy`].
+fn parse_lb_strategy(s: Option<&str>) -> LoadBalanceStrategy {
+    match s.unwrap_or("round_robin") {
+        "least_conn" | "least_connections" => LoadBalanceStrategy::LeastConnections,
+        "weighted" | "weighted_round_robin" => LoadBalanceStrategy::WeightedRoundRobin,
+        "random" => LoadBalanceStrategy::Random,
+        "ip_hash" => LoadBalanceStrategy::IpHash,
+        _ => LoadBalanceStrategy::RoundRobin,
     }
 }
 
@@ -302,5 +384,97 @@ mod tests {
             routes.iter().map(|r| r.path.as_str()).collect();
         assert!(paths.contains("/"), "catch-all root");
         assert!(paths.contains("/*octopus_prefix"), "catch-all subpaths");
+    }
+
+    #[test]
+    fn octopus_route_maps_fields_per_method() {
+        use crate::crds::{OctopusRouteSpec, RateLimitSpec};
+        let spec = OctopusRouteSpec {
+            path: "/orders".into(),
+            methods: vec!["GET".into(), "POST".into()],
+            upstream: "orders-up".into(),
+            priority: Some(5),
+            auth_provider: Some("jwt".into()),
+            strip_prefix: Some("/orders".into()),
+            timeout_seconds: Some(30),
+            rate_limit: Some(RateLimitSpec {
+                requests: 100,
+                window_seconds: 60,
+            }),
+            ..Default::default()
+        };
+
+        let routes = octopus_route_to_route("orders", "shop", &spec);
+        assert_eq!(routes.len(), 2, "one route per method");
+        for r in &routes {
+            assert_eq!(r.path, "/orders");
+            assert_eq!(r.upstream, "orders-up");
+            assert_eq!(r.priority, 5);
+            assert_eq!(r.source, RouteSource::OctopusRoute);
+            assert_eq!(r.source_id, "shop/orders");
+            assert_eq!(r.auth_provider.as_deref(), Some("jwt"));
+            assert_eq!(r.strip_prefix.as_deref(), Some("/orders"));
+            assert_eq!(r.timeout, Some(Duration::from_secs(30)));
+            assert_eq!(
+                r.rate_limit,
+                Some(RateLimit {
+                    requests: 100,
+                    window: Duration::from_secs(60)
+                })
+            );
+        }
+        let methods: std::collections::HashSet<String> =
+            routes.iter().map(|r| r.method.to_string()).collect();
+        assert!(methods.contains("GET") && methods.contains("POST"));
+    }
+
+    #[test]
+    fn octopus_route_empty_methods_expands_all() {
+        use crate::crds::OctopusRouteSpec;
+        let spec = OctopusRouteSpec {
+            path: "/x".into(),
+            methods: vec![],
+            upstream: "up".into(),
+            ..Default::default()
+        };
+        let routes = octopus_route_to_route("r", "default", &spec);
+        assert_eq!(routes.len(), DEFAULT_METHODS.len());
+    }
+
+    #[test]
+    fn octopus_upstream_builds_cluster_with_weights() {
+        use crate::crds::{OctopusUpstreamSpec, UpstreamTarget};
+        let spec = OctopusUpstreamSpec {
+            targets: vec![
+                UpstreamTarget {
+                    host: "10.0.0.1".into(),
+                    port: 8080,
+                    weight: Some(3),
+                },
+                UpstreamTarget {
+                    host: "10.0.0.2".into(),
+                    port: 8080,
+                    weight: None,
+                },
+            ],
+            lb_strategy: Some("least_conn".into()),
+        };
+
+        let cluster = octopus_upstream_to_cluster("orders-up", "shop", &spec);
+        assert_eq!(cluster.name, "orders-up");
+        assert_eq!(cluster.instances.len(), 2);
+        assert_eq!(cluster.strategy, LoadBalanceStrategy::LeastConnections);
+        let i1 = cluster
+            .instances
+            .iter()
+            .find(|i| i.address == "10.0.0.1")
+            .unwrap();
+        let i2 = cluster
+            .instances
+            .iter()
+            .find(|i| i.address == "10.0.0.2")
+            .unwrap();
+        assert_eq!(i1.weight, 3);
+        assert_eq!(i2.weight, 1, "missing weight defaults to 1");
     }
 }

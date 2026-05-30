@@ -79,6 +79,9 @@ pub struct IntermediateRoute {
     pub priority: i32,
     /// Producing source.
     pub source: RouteSource,
+    /// Originating resource identity (`namespace/name`), used to match policy
+    /// attachments to the routes a given resource produced.
+    pub source_id: String,
     /// Strip this prefix before proxying.
     pub strip_prefix: Option<String>,
     /// Add this prefix before proxying.
@@ -113,6 +116,7 @@ impl IntermediateRoute {
             upstream: upstream.into(),
             priority: 0,
             source,
+            source_id: String::new(),
             strip_prefix: None,
             add_prefix: None,
             auth_provider: None,

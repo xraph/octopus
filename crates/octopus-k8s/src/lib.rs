@@ -24,6 +24,7 @@ pub mod crds;
 pub mod error;
 pub mod gateway_api;
 pub mod ir;
+pub mod policy;
 pub mod translate;
 
 pub use error::{K8sError, Result};
