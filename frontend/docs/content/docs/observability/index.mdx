@@ -1,107 +1,106 @@
 ---
 title: Observability
-description: Monitor and debug Octopus API Gateway
+description: How Octopus exposes metrics, logging, health probes, and an admin dashboard — and what is wired today.
 ---
 
 import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Callout } from 'fumadocs-ui/components/callout';
 
 # Observability
 
-Octopus provides comprehensive observability through metrics, tracing, and logging.
+Octopus gives you four ways to see what the gateway is doing: a Prometheus
+**metrics** endpoint, structured **logging**, Kubernetes-style **health probes**,
+and a built-in **admin dashboard** with a JSON REST API.
 
-## Overview
+This section is grounded in the gateway source. Where a configuration field
+exists but is not yet honoured by the runtime, it is called out explicitly so
+you do not build on a feature that is not there.
 
 <Cards>
   <Card
     title="Metrics"
-    description="Prometheus metrics for monitoring"
+    description="Prometheus /metrics endpoint and the metric names it emits."
     href="/docs/observability/metrics"
   />
   <Card
     title="Tracing"
-    description="Distributed tracing with OpenTelemetry"
+    description="What is and is not wired for distributed tracing today."
     href="/docs/observability/tracing"
   />
   <Card
     title="Logging"
-    description="Structured logging with JSON output"
+    description="Log levels and format, and how logging is initialized."
     href="/docs/observability/logging"
   />
   <Card
-    title="Health Checks"
-    description="Health and readiness endpoints"
-    href="/docs/observability/health"
+    title="Health probes"
+    description="/livez, /readyz, /startupz and graceful-drain semantics."
+    href="/docs/observability/health-probes"
+  />
+  <Card
+    title="Admin dashboard"
+    description="The built-in UI, and how to protect it."
+    href="/docs/observability/admin-dashboard"
+  />
+  <Card
+    title="Admin API"
+    description="The /admin/api REST reference, grounded in the route table."
+    href="/docs/observability/admin-api"
   />
 </Cards>
 
-## Configuration
+## The four pillars at a glance
+
+| Pillar | Where it is served | Driven by config | Status |
+| --- | --- | --- | --- |
+| Metrics | `/metrics` on the gateway listen port | [`observability.metrics`](/docs/configuration/observability) | Emitted; endpoint path is fixed (see [Metrics](/docs/observability/metrics)). |
+| Logging | stdout / stderr | [`observability.logging`](/docs/configuration/observability) (level) and the `--log-level` flag | Level configurable; format/level wiring has caveats (see [Logging](/docs/observability/logging)). |
+| Tracing | — | [`observability.tracing`](/docs/configuration/observability) | Config type exists; **not wired** in the runtime (see [Tracing](/docs/observability/tracing)). |
+| Health probes | `/livez` `/readyz` `/startupz` on the gateway listen port | [`gateway.probes`](/docs/configuration/gateway) | Fully wired. |
+| Admin dashboard + API | `/admin` on the gateway listen port | [`admin`](/docs/configuration/admin) | Served; auth wiring has caveats (see [Admin dashboard](/docs/observability/admin-dashboard)). |
+
+<Callout type="info">
+  Everything observable is served on the **gateway listen port**. There is no
+  separate metrics or admin port. Metrics, probes, and `/admin*` are matched
+  ahead of normal proxy routing.
+</Callout>
+
+## Enabling each pillar
+
+A minimal observability block in your gateway config:
 
 ```yaml
 observability:
-  metrics:
-    enabled: true
-    path: /metrics
-    port: 9090
-  
-  tracing:
-    enabled: true
-    exporter: otlp
-    endpoint: http://jaeger:4317
-    sample_rate: 0.1
-  
   logging:
     level: info
-    format: json
-    include_request_id: true
+    format: text
+  metrics:
+    enabled: true
+    endpoint: /metrics
+  tracing:
+    enabled: false
 ```
 
-## Key Metrics
+Health probes are configured separately, under `gateway.probes`:
 
-```bash
-# Request metrics
-octopus_requests_total{method, status, route}
-octopus_request_duration_seconds{method, route}
-
-# Upstream metrics
-octopus_upstream_requests_total{upstream, status}
-octopus_upstream_duration_seconds{upstream}
-
-# Circuit breaker
-octopus_circuit_breaker_state{upstream}
-
-# FARP
-octopus_farp_services_total
-octopus_farp_routes_total
+```yaml
+gateway:
+  probes:
+    enabled: true
+    liveness_path: /livez
+    readiness_path: /readyz
+    startup_path: /startupz
 ```
 
-## Accessing Metrics
+The admin dashboard is on by default and protected via the `admin` section:
 
-```bash
-# Prometheus metrics
-curl http://localhost:9090/metrics
-
-# Health check
-curl http://localhost:9090/_/health
-
-# Service status
-curl http://localhost:9090/_/services
+```yaml
+admin:
+  auth_provider: dashboard-auth   # name of an auth provider, optional
+  allowed_ips: []                 # see the Admin dashboard page for caveats
 ```
 
-## Grafana Dashboard
-
-Import the official Octopus dashboard:
-
-```bash
-# Download dashboard
-curl -O https://grafana.com/dashboards/octopus-gateway.json
-
-# Import to Grafana
-```
-
-## Next Steps
-
-- [Metrics](/docs/observability/metrics) - Prometheus metrics
-- [Tracing](/docs/observability/tracing) - Distributed tracing
-- [Logging](/docs/observability/logging) - Structured logging
-- [Health Checks](/docs/observability/health) - Health endpoints
-
+For the full field reference of each block, see
+[Configuration → Observability](/docs/configuration/observability),
+[Configuration → Gateway](/docs/configuration/gateway), and
+[Configuration → Admin](/docs/configuration/admin).

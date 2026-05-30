@@ -1,90 +1,91 @@
 ---
-title: Protocol Support
-description: Multi-protocol support in Octopus API Gateway
+title: Protocols
+description: How Octopus detects and proxies HTTP, gRPC, WebSocket, SSE, and GraphQL traffic.
 ---
 
 import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Callout } from 'fumadocs-ui/components/callout';
 
-# Protocol Support
+# Protocols
 
-Octopus provides native support for multiple protocols out of the box.
+Octopus is an HTTP-based reverse proxy. Every request arrives over the same listener,
+and the gateway inspects each one to decide how to forward it. There is no per-protocol
+port and no `protocol` field on a route — protocol handling is selected **per request**
+from the method, headers, and (for GraphQL) the path.
 
-## Supported Protocols
+This section documents exactly what the gateway does for each protocol, grounded in the
+handler code. Where support is partial, it says so.
+
+## Support matrix
+
+| Protocol | Status | What is actually supported |
+| --- | --- | --- |
+| HTTP/1.1 & HTTP/2 | Supported | Reverse proxy with connection pooling. The listener auto-negotiates HTTP/1.1 or HTTP/2 (prior-knowledge h2c) per connection. This is the default path for all traffic that is not detected as one of the protocols below. |
+| WebSocket | Supported | RFC 6455 upgrade handshake (version 13), then a full bidirectional frame proxy with keepalive pings and a close handshake. |
+| Server-Sent Events (SSE) | Supported | Streaming proxy — the upstream response body is forwarded to the client without buffering. Triggered by `Accept: text/event-stream`. |
+| gRPC | Partial | Transparent proxy over HTTP/2 to a plaintext (h2c) upstream. Metadata and `grpc-timeout` deadlines are forwarded. The request body is **buffered**, so true client/bidirectional streaming RPCs are not streamed. No reflection proxy or transcoding. |
+| GraphQL | Stub only | The built-in `/graphql` handler parses the request and serves a minimal placeholder; it does **not** proxy to a GraphQL upstream or federate. To proxy GraphQL today, route `/graphql` as a normal HTTP route. See [GraphQL](/docs/protocols/graphql). |
+
+<Callout type="warn">
+  There is no WebTransport or HTTP/3 module in the codebase. HTTP/3 is not implemented
+  and is not exposed in configuration.
+</Callout>
+
+## How protocol routing works
+
+The request handler checks for protocols in a fixed order, **before** it buffers the
+request body. The first match wins:
+
+1. **WebSocket** — if the request carries `Upgrade: websocket` together with a
+   `Connection: Upgrade` token, it is handled as a WebSocket upgrade. This must run
+   before body buffering so hyper's upgrade future is preserved.
+2. **SSE** — if the `Accept` header contains `text/event-stream`, the request is
+   handled as a streaming Server-Sent Events proxy.
+3. **gRPC** — if the `Content-Type` starts with `application/grpc` (or
+   `application/grpc-web` / `application/grpc-web-text`), the request is handled by the
+   gRPC proxy.
+4. **Everything else** — the body is buffered and the request flows through the normal
+   HTTP path: registered protocol handlers (the GraphQL stub and a fallback gRPC
+   handler), then the middleware chain, then the reverse proxy.
+
+In all cases the upstream is selected by the **router** using the request host, method,
+and path — the same matching described in [Routing](/docs/concepts/routing). Detection
+only decides *how* the request is proxied; the route decides *where*. A WebSocket, SSE,
+or gRPC request to a path with no matching route is rejected.
+
+<Callout type="info">
+  Because detection is header- and method-driven, a single upstream can serve plain
+  HTTP, WebSocket, and SSE on the same route. You do not declare the protocol in the
+  route — you only point the path at an upstream. See
+  [Routes](/docs/configuration/routes).
+</Callout>
+
+## Per-protocol pages
 
 <Cards>
   <Card
     title="HTTP/1.1 & HTTP/2"
-    description="Full HTTP support with connection pooling and multiplexing"
+    description="The default reverse-proxy path with connection pooling."
     href="/docs/protocols/http"
   />
   <Card
     title="gRPC"
-    description="Proxy gRPC services with reflection and transcoding"
+    description="Transparent gRPC over HTTP/2 — and where it stops short of full streaming."
     href="/docs/protocols/grpc"
   />
   <Card
     title="WebSocket"
-    description="Bidirectional WebSocket proxying"
+    description="Upgrade detection and the bidirectional frame proxy."
     href="/docs/protocols/websocket"
   />
   <Card
     title="Server-Sent Events"
-    description="SSE streaming support"
+    description="Streaming responses with no body buffering."
     href="/docs/protocols/sse"
   />
   <Card
     title="GraphQL"
-    description="GraphQL federation and schema stitching"
+    description="What the built-in handler does — and what it does not."
     href="/docs/protocols/graphql"
   />
-  <Card
-    title="WebTransport"
-    description="QUIC-based transport (experimental)"
-    href="/docs/protocols/webtransport"
-  />
 </Cards>
-
-## Protocol Detection
-
-Octopus automatically detects protocols based on:
-
-- HTTP headers (`Upgrade`, `Content-Type`)
-- URL path patterns
-- Port configuration
-- Request method
-
-## Configuration
-
-```yaml
-routes:
-  # HTTP/REST
-  - path: /api/*
-    upstream: api-service
-    protocol: http
-  
-  # gRPC
-  - path: /grpc.*
-    upstream: grpc-service
-    protocol: grpc
-  
-  # WebSocket
-  - path: /ws
-    upstream: ws-service
-    protocol: websocket
-  
-  # SSE
-  - path: /events
-    upstream: event-service
-    protocol: sse
-```
-
-## Next Steps
-
-Learn about specific protocol support:
-
-- [HTTP](/docs/protocols/http)
-- [gRPC](/docs/protocols/grpc)
-- [WebSocket](/docs/protocols/websocket)
-- [SSE](/docs/protocols/sse)
-- [GraphQL](/docs/protocols/graphql)
-

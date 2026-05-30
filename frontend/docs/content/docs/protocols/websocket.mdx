@@ -1,0 +1,103 @@
+---
+title: WebSocket
+description: RFC 6455 upgrade detection and the bidirectional frame proxy.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+# WebSocket
+
+Octopus is a full WebSocket proxy. It performs the RFC 6455 upgrade handshake with the
+client, opens a WebSocket connection to the upstream, and then forwards frames in both
+directions until either side closes.
+
+## Detection
+
+A request is treated as a WebSocket upgrade when it has both:
+
+- `Upgrade: websocket`, and
+- a `Connection` header containing an `upgrade` token (case-insensitive, comma-tolerant).
+
+This check runs **first**, before the body is buffered, so hyper's upgrade machinery
+stays intact. Only WebSocket protocol **version 13** is accepted during the handshake;
+other versions are rejected.
+
+## How it is handled
+
+<Steps>
+<Step>
+**Route match.** The upstream is selected by the normal router from the request host,
+method, and path. No matching route means the upgrade is refused.
+</Step>
+<Step>
+**Connect upstream first.** The gateway dials the upstream WebSocket **before** replying
+to the client, with a connect timeout (default 10s). If the upstream is unreachable the
+client gets a `502` and no upgrade happens. The upstream URL is derived from the
+upstream's base URL with the scheme rewritten to `ws://` / `wss://`, applying the route's
+`strip_prefix` / `add_prefix`.
+</Step>
+<Step>
+**Forward headers.** A curated set of headers is forwarded to the upstream:
+`X-Forwarded-For`, `X-Real-IP`, `X-Forwarded-Proto` (set to `ws`), `Origin`, `Cookie`,
+`Authorization`, and `Sec-WebSocket-Protocol`.
+</Step>
+<Step>
+**Complete the handshake.** The gateway returns `101 Switching Protocols` with the
+computed `Sec-WebSocket-Accept`, echoing the client's `Sec-WebSocket-Protocol` if present.
+</Step>
+<Step>
+**Proxy frames.** A background task runs a bidirectional loop, forwarding messages each
+way. It sends keepalive pings on an interval, answers incoming pings with pongs, and
+performs the RFC 6455 close handshake (forwarding the close frame and waiting, up to a
+timeout, for the peer's close reply).
+</Step>
+</Steps>
+
+## Example route
+
+A WebSocket endpoint is an ordinary route pointed at an upstream that accepts WebSocket
+connections:
+
+```yaml
+upstreams:
+  - name: ws-service
+    instances:
+      - address: 127.0.0.1
+        port: 9001
+
+routes:
+  - path: /ws
+    upstream: ws-service
+```
+
+The same route can also carry plain HTTP requests — the gateway only treats a request as
+a WebSocket when the upgrade headers are present. See
+[Routes](/docs/configuration/routes) and [Routing](/docs/concepts/routing).
+
+## Size and timeout limits
+
+WebSocket frame/message size limits and timeouts come from built-in defaults, **not** from
+route or gateway configuration. There is no `max_message_size` (or similar) field on a
+route that the WebSocket path reads. The compiled-in defaults are:
+
+| Limit | Default |
+| --- | --- |
+| Max frame size | 16 MB |
+| Max message size | 64 MB |
+| Keepalive ping interval | 30s |
+| Close handshake timeout | 5s |
+| Upstream connect timeout | 10s |
+
+<Callout type="warn">
+  Do not document or rely on per-route WebSocket tuning fields — the handler constructs
+  its config from defaults and these values are not currently configurable from YAML.
+</Callout>
+
+## Limitations
+
+- WebSocket tuning (sizes, timeouts, ping interval) is **not configurable** from
+  configuration; the defaults above are compiled in.
+- Per-message-deflate / compression extensions are not negotiated by the gateway.
+- The upstream URL scheme is derived by rewriting the upstream base URL to `ws`/`wss`;
+  the upstream must accept a WebSocket upgrade at the rewritten path.

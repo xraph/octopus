@@ -1,0 +1,82 @@
+---
+title: Forward auth
+description: The forward_auth provider — delegate the authentication decision to an external HTTP service, deriving the principal from its response headers.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Forward auth provider
+
+`type: forward_auth` delegates the authentication decision to an external HTTP service (similar to
+Traefik's ForwardAuth or NGINX `auth_request`). The gateway makes a sub-request to that service for
+each request and maps its response to an authentication outcome.
+
+## How it works
+
+1. The provider issues an HTTP **GET** to `endpoint`, copying each header named in `forward_headers`
+   from the incoming request, and adding `X-Original-URI` (the request URI) and `X-Original-Method`
+   (the request method).
+2. The auth service's response status decides the outcome:
+   - **2xx** → **Authenticated**. The principal is read from response headers:
+     `X-Auth-Subject` (used as both `id` and `name`), `X-Auth-Role` (comma-separated roles), and
+     `X-Auth-Scopes` (comma-separated scopes). A missing subject defaults to `unknown`.
+   - **401** → **Unauthenticated**.
+   - Any other status, or a transport error reaching the service → **Failed** (with the status/body
+     or error in the reason).
+
+<Callout type="warn">
+  The principal is derived from the **fixed** response header names `X-Auth-Subject`,
+  `X-Auth-Role`, and `X-Auth-Scopes`. The `response_headers` configuration field is parsed but is
+  **not** currently used to copy arbitrary response headers back onto the upstream request — only
+  those three fixed headers shape the principal. The principal's id/roles/scopes are then re-emitted
+  upstream via the global `auth.principal_header` / `roles_header` / `scopes_header`.
+</Callout>
+
+## Configuration
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `endpoint` | string | — | URL of the external auth service. The provider sends a GET here. **Required.** |
+| `forward_headers` | list of strings | `["Authorization", "Cookie", "X-Forwarded-For"]` | Incoming headers copied onto the sub-request. |
+| `response_headers` | list of strings | `["X-Auth-Subject", "X-Auth-Role", "X-Auth-Scopes"]` | **Not wired** — see callout above. |
+| `timeout` | duration | `5s` | Timeout for the sub-request to the auth service. |
+| `cache_ttl` | duration | none | **Not wired** by this provider — see caching note. |
+
+<Callout type="info">
+  The sub-request is always a `GET`, with the original method and URI conveyed via the
+  `X-Original-Method` and `X-Original-URI` headers rather than by replaying the original request.
+</Callout>
+
+## Caching note
+
+The forward-auth provider itself does not cache decisions; its `cache_ttl` field is not consumed.
+However, the auth-gateway's shared token cache still applies when the request carries an
+`Authorization` header (the cache key hashes the provider name plus that header), so repeated
+requests with the same bearer token can be served from cache for `auth.token_cache_ttl`. Requests
+authenticated by `Cookie` alone (no `Authorization` header and no TLS client CN) are not cached and
+hit the auth service every time. See [token caching](/docs/security/authentication#token-caching).
+
+## Example
+
+```yaml
+auth_providers:
+  external-auth:
+    type: forward_auth
+    endpoint: http://auth-service.internal/verify
+    forward_headers: ["Authorization", "Cookie", "X-Forwarded-For"]
+    timeout: 2s
+
+auth:
+  default_provider: external-auth
+  global_enforce: true
+```
+
+Your auth service should return `2xx` with `X-Auth-Subject` (and optionally `X-Auth-Role` /
+`X-Auth-Scopes`) for an authenticated caller, `401` for an unauthenticated one, and any other
+status to signal an error.
+
+## See also
+
+- [Authentication flow](/docs/security/authentication).
+- [Authorization](/docs/security/authorization).
+- [Configuration reference](/docs/configuration/auth).

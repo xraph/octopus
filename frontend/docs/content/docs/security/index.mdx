@@ -4,45 +4,84 @@ description: Authentication, authorization, and TLS in Octopus — named auth pr
 ---
 
 import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Callout } from 'fumadocs-ui/components/callout';
 
 # Security
 
 Octopus secures traffic at three layers: **authentication** (who is calling), **authorization**
 (what they may do), and **transport security** (TLS/mTLS). Each is configured declaratively and
-can be applied globally or per route.
+applied globally or per route by a single auth-gateway middleware.
+
+## How the three layers fit together
+
+A request passes through the auth-gateway middleware once, in this order:
+
+1. **Authentication** — a named provider inspects the request (a token, an API key, a client
+   certificate, or an external service) and produces an authenticated *principal* (id, roles,
+   scopes), or rejects the request.
+2. **Authorization** — the principal is checked against the matched route's role/scope requirements
+   and any Rhai rule, then against global authorization rules (Rhai or OPA).
+3. **Transport security** — TLS is terminated on the listener before any of this; mutual TLS can
+   additionally require and verify a client certificate at the handshake.
+
+Only one auth-gateway middleware runs, and it is added to the chain only when at least one provider
+is declared under `auth_providers`, or when `auth.global_enforce` is `true`. If neither is the case,
+no authentication or authorization is performed.
 
 ## Authentication
 
-Authentication providers are declared once under `auth_providers` and referenced by name from the
-global `auth` block or from an individual route. A request is authenticated by the provider its
-matched route selects; routes may also opt out with `skip_auth`. Supported provider types:
+Authentication providers are declared once under `auth_providers` (a map keyed by provider name) and
+referenced by name. A request is authenticated by **one** provider — the one its matched route
+selects via `auth_provider`, falling back to the global `auth.default_provider`. Routes may opt out
+entirely with `skip_auth: true`, and global `auth.skip_paths` patterns bypass auth before any
+provider runs. Supported provider types (the `type:` tag, snake_case):
 
-- **JWT** — validate bearer tokens against a secret or JWKS, checking issuer, audience, and expiry.
-- **OIDC** — discover an OpenID Connect provider and validate its tokens.
-- **API key** — match keys presented in a header or query parameter.
-- **Forward auth** — delegate the decision to an external HTTP service (à la Traefik/NGINX `auth_request`).
-- **mTLS** — authenticate clients by their presented certificate.
+- **`jwt`** — validate bearer tokens against a static secret or public key, checking issuer,
+  audience, and expiry.
+- **`oidc`** — discover an OpenID Connect provider, refresh its JWKS in the background, and validate
+  tokens against the published keys.
+- **`api_key`** — match a key presented in a header or query parameter against a static key list.
+- **`forward_auth`** — delegate the decision to an external HTTP service.
+- **`mtls`** — derive the principal from a verified client certificate's Common Name.
+
+<Callout type="info">
+  Octopus selects a single provider per request — it does not try multiple providers in sequence.
+  The `oidc` provider's `fallback_provider` field is parsed but **not** currently wired (see
+  [OIDC](/docs/security/oidc)).
+</Callout>
 
 ## Authorization
 
-Once a caller is authenticated, authorization decides whether the request is allowed: role and
-scope checks, expression rules evaluated by the embedded **Rhai** engine, or an external **OPA**
-policy. Rules can be global or attached to specific routes.
+Once a caller is authenticated, authorization decides whether the request is allowed. The matched
+route can require **roles** (any-of) and **scopes** (all-of), and carry a custom **Rhai** expression
+(`authz_rule`). Beyond the route, global rules in `auth.authz` run through the embedded **Rhai**
+engine or an external **OPA** server. See [Authorization](/docs/security/authorization) for exactly
+what each engine evaluates.
 
 ## Transport security (TLS)
 
-Octopus terminates TLS on its listener, supports **mutual TLS** for client authentication, and
-**hot-reloads** certificates without dropping connections. On Kubernetes, certificates can be
-sourced from Gateway listener Secrets (for example, issued by cert-manager).
+Octopus terminates TLS on its listener when `gateway.tls` is set, supports **mutual TLS** to
+authenticate clients by certificate, and **hot-reloads** file-based certificates. On Kubernetes,
+certificates can instead be sourced from Gateway listener Secrets (for example, issued by
+cert-manager) and swapped without dropping connections. See [TLS](/docs/security/tls).
 
 ## In this section
 
-- **Authentication** — the route auth flow, the default provider, `skip_auth`, and token caching.
-- **JWT**, **OIDC**, **API key**, **Forward auth**, **mTLS** — one page per provider.
-- **Authorization** — roles, scopes, Rhai rules, and OPA.
-- **TLS** — termination, SNI, hot certificate reload, and mutual TLS.
+<Cards>
+  <Card title="Authentication" description="The route auth flow, default provider, skip_auth, and token caching." href="/docs/security/authentication" />
+  <Card title="JWT" description="Static-key JWT validation." href="/docs/security/jwt" />
+  <Card title="OIDC" description="Discovery and JWKS-based validation." href="/docs/security/oidc" />
+  <Card title="API key" description="Header/query key matching." href="/docs/security/api-key" />
+  <Card title="Forward auth" description="Delegate to an external service." href="/docs/security/forward-auth" />
+  <Card title="mTLS" description="Authenticate by client certificate." href="/docs/security/mtls" />
+  <Card title="Authorization" description="Roles, scopes, Rhai rules, and OPA." href="/docs/security/authorization" />
+  <Card title="TLS" description="Termination, mutual TLS, and hot reload." href="/docs/security/tls" />
+</Cards>
+
+## Configuration reference
 
 <Cards>
-  <Card title="Configuration reference" description="The auth, auth_providers, and tls schema." href="/docs/configuration" />
-  <Card title="Kubernetes TLS" description="cert-manager and Gateway listener Secrets." href="/docs/kubernetes" />
+  <Card title="auth_providers, auth, authz" description="The full schema for providers and authorization." href="/docs/configuration/auth" />
+  <Card title="gateway.tls" description="Certificate, mTLS, version, and reload settings." href="/docs/configuration/tls" />
+  <Card title="Kubernetes TLS" description="cert-manager and Gateway listener Secrets." href="/docs/kubernetes/tls-cert-manager" />
 </Cards>

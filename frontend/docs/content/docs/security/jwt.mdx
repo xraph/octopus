@@ -1,0 +1,95 @@
+---
+title: JWT
+description: The jwt auth provider — validate bearer tokens against a static HMAC secret or RSA/ECDSA public key, checking issuer, audience, and expiry.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# JWT provider
+
+`type: jwt` validates JSON Web Tokens against a **static** key configured on the gateway. Use it when
+you control the signing key (HMAC) or hold the issuer's public key (RSA/ECDSA) and do not need
+runtime key rotation via JWKS. For automatic discovery and JWKS refresh, use the
+[OIDC provider](/docs/security/oidc) instead.
+
+## How it works
+
+1. The token is extracted from `header_name` (default `Authorization`). If the value starts with
+   `token_prefix` (default `Bearer `), the prefix is stripped; otherwise the whole header value is
+   used as the token.
+2. If no token is present, the result is **Unauthenticated**.
+3. The token is decoded and verified with the configured `algorithm` and decoding key. Expiry
+   (`exp`) is always checked. If `issuer` is set, the `iss` claim must match; if `audience` is set,
+   the `aud` claim must match.
+4. On success, the principal is built from the claims: `id` from `sub`, `name` from the `name`
+   claim, `roles` from the `roles` claim, and `scopes` from splitting the `scope` claim on
+   whitespace. A verification error yields **Failed**.
+
+<Callout type="info">
+  Roles and scopes come from custom `roles` and `scope` claims on the token. A standard token
+  without these claims authenticates with empty roles and scopes, which then interact with any
+  route `require_roles` / `require_scopes` — see [Authorization](/docs/security/authorization).
+</Callout>
+
+## Key selection
+
+Exactly one key source must be provided. The decoding key is chosen by the configured fields, in
+this precedence:
+
+1. `secret` — used as an HMAC key (valid for `HS256`/`HS384`/`HS512`).
+2. `public_key` — a PEM string, parsed as RSA (`RS256`/`RS384`/`RS512`) or EC (`ES256`/`ES384`)
+   according to `algorithm`.
+3. `public_key_file` — a path read at startup, parsed the same way as `public_key`.
+
+If none is set, the provider fails to initialize. Supplying a `public_key` (or file) with an HMAC
+algorithm, or a `secret` with an asymmetric algorithm, is a misconfiguration.
+
+## Configuration
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `secret` | string | none | HMAC secret for `HS256`/`HS384`/`HS512`. |
+| `public_key` | string | none | RSA/ECDSA public key as a PEM string. |
+| `public_key_file` | string | none | Path to a PEM public key file, read at startup. |
+| `algorithm` | string | `HS256` | One of `HS256`, `HS384`, `HS512`, `RS256`, `RS384`, `RS512`, `ES256`, `ES384`. |
+| `issuer` | string | none | Expected `iss` claim. When set, tokens with a different issuer are rejected. |
+| `audience` | string | none | Expected `aud` claim. When set, tokens with a different audience are rejected. |
+| `header_name` | string | `Authorization` | Header to read the token from. |
+| `token_prefix` | string | `Bearer ` | Prefix stripped from the header value before decoding. |
+
+<Callout type="warn">
+  Supported algorithms are exactly those listed above. `none`, `PS*` (RSA-PSS), and `EdDSA` are
+  **not** accepted and cause provider initialization to fail.
+</Callout>
+
+## Example
+
+```yaml
+auth_providers:
+  # HMAC-signed tokens
+  hmac-jwt:
+    type: jwt
+    secret: "${JWT_SECRET}"
+    algorithm: HS256
+    issuer: https://auth.example.com
+    audience: my-api
+
+  # RSA public-key verification, token in a custom header
+  rsa-jwt:
+    type: jwt
+    public_key_file: /etc/octopus/keys/jwt-pub.pem
+    algorithm: RS256
+    issuer: https://auth.example.com
+    header_name: X-Access-Token
+    token_prefix: "Bearer "
+
+auth:
+  default_provider: hmac-jwt
+  global_enforce: true
+```
+
+## See also
+
+- [Authentication flow](/docs/security/authentication) — selection, enforcement, and token caching.
+- [OIDC provider](/docs/security/oidc) — for JWKS-based validation with key rotation.
+- [Configuration reference](/docs/configuration/auth).

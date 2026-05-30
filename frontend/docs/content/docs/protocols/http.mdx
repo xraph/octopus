@@ -1,0 +1,75 @@
+---
+title: HTTP/1.1 & HTTP/2
+description: The default reverse-proxy path — auto-negotiated HTTP/1.1 and HTTP/2 with connection pooling.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# HTTP/1.1 & HTTP/2
+
+HTTP is the default path. Any request that is not detected as a WebSocket upgrade, an
+SSE stream, or a gRPC call (see [Protocols](/docs/protocols)) is buffered and proxied as
+ordinary HTTP.
+
+## How it is handled
+
+Each inbound connection is served with hyper's automatic protocol builder, which
+negotiates **HTTP/1.1 or HTTP/2 per connection** and supports connection upgrades (this
+is what enables WebSocket on the same listener). HTTP/2 is accepted via prior-knowledge
+(h2c) on the same port; there is no separate HTTP/2 port.
+
+For a matched HTTP request the gateway:
+
+1. Buffers the request body.
+2. Matches a route by host, method, and path (see [Routing](/docs/concepts/routing)).
+3. Runs the configured middleware chain.
+4. Forwards the request to a selected upstream instance through the pooled HTTP client,
+   applying any `strip_prefix` / `add_prefix` rewriting from the route.
+5. Returns the upstream response to the client.
+
+Upstream HTTP/1.1 connections are pooled and reused. A separate pooled, multiplexed
+HTTP/2 connection path also exists and is used for the gRPC proxy (see
+[gRPC](/docs/protocols/grpc)).
+
+The built-in HTTP protocol handler also answers `OPTIONS` preflight requests directly,
+returning `204 No Content` with `Allow` and `Access-Control-Allow-*` headers for the
+methods it accepts (`GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS`).
+
+## Route considerations
+
+Routes are protocol-agnostic. An HTTP route is just a path pointed at an upstream:
+
+```yaml
+upstreams:
+  - name: api-service
+    instances:
+      - address: 127.0.0.1
+        port: 8080
+
+routes:
+  - path: /api
+    methods: [GET, POST, PUT, DELETE, PATCH]
+    upstream: api-service
+    strip_prefix: /api
+```
+
+There is no `protocol:` field — do not add one. The same upstream and route can also
+serve WebSocket or SSE traffic; the gateway decides per request based on headers. See
+[Routes](/docs/configuration/routes) for the full route schema, including method
+filtering, prefix rewriting, priority, per-route timeouts, rate limits, and CORS.
+
+<Callout type="info">
+  Cross-cutting behavior — load balancing across upstream instances, health checks, and
+  circuit breaking — applies to the HTTP path. See
+  [Load Balancing](/docs/concepts/load-balancing),
+  [Health Checks](/docs/concepts/health-checks), and
+  [Circuit Breaker](/docs/concepts/circuit-breaker).
+</Callout>
+
+## Limitations
+
+- **HTTP/3 / QUIC is not implemented.** Only HTTP/1.1 and HTTP/2 are served.
+- The HTTP proxy path **buffers** the full request and response body in memory before
+  forwarding. Large uploads/downloads are not streamed on this path. Streaming is only
+  used for [SSE](/docs/protocols/sse), [WebSocket](/docs/protocols/websocket), and the
+  gRPC response body.

@@ -1,0 +1,106 @@
+---
+title: gRPC
+description: Transparent gRPC proxying over HTTP/2 — what is forwarded, and where streaming and reflection stop short.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+# gRPC
+
+Octopus proxies gRPC **transparently** over HTTP/2. It does not understand your
+`.proto` files — it forwards the gRPC framing, metadata, and trailers between client and
+upstream. There is no transcoding (JSON↔gRPC) and no reflection proxy.
+
+## Detection
+
+A request is treated as gRPC when its `Content-Type` begins with `application/grpc`. The
+gRPC-Web content types (`application/grpc-web`, `application/grpc-web-text`) are also
+recognized at detection time. Detection happens **before** body buffering so the proxy
+can use the HTTP/2 path.
+
+## How it is handled
+
+<Steps>
+<Step>
+**Validate.** Only `POST` is accepted. gRPC paths must be `/{package.Service}/{Method}`;
+anything else is rejected with a gRPC `UNIMPLEMENTED` status (the gateway always replies
+with HTTP 200 and the gRPC status in headers, per the gRPC spec).
+</Step>
+<Step>
+**Route.** The upstream is resolved by the normal router using the request host and the
+gRPC path — exactly like an HTTP route. Point a route at your gRPC upstream.
+</Step>
+<Step>
+**Forward headers.** All headers are forwarded except hop-by-hop ones (`connection`,
+`keep-alive`, `transfer-encoding`, `upgrade`, the proxy-auth headers). `te: trailers` is
+always set, which gRPC over HTTP/2 requires. This means `grpc-*` metadata,
+`authorization`, and custom metadata pass straight through.
+</Step>
+<Step>
+**Propagate deadlines.** If the request carries a `grpc-timeout` header, it is parsed and
+used as the upstream call timeout and re-sent to the upstream. With no `grpc-timeout`, a
+default 30-second timeout applies. On timeout the gateway returns gRPC
+`DEADLINE_EXCEEDED`.
+</Step>
+<Step>
+**Send over HTTP/2.** The request is sent to the upstream over a pooled, multiplexed
+HTTP/2 connection. The **upstream connection is plaintext HTTP/2 (h2c)** — the gateway
+opens a TCP connection and performs an HTTP/2 handshake directly. The upstream response
+body is streamed back to the client.
+</Step>
+</Steps>
+
+If the upstream cannot be reached, the gateway returns gRPC `UNAVAILABLE`.
+
+<Callout type="warn">
+  The request body is **collected (buffered) in full** before being sent to the upstream.
+  This works for unary RPCs and is fine for server-streaming responses (the response is
+  streamed back), but it means **client-streaming and bidirectional-streaming RPCs are
+  not truly streamed** — the client's stream is buffered before forwarding. The handler
+  code documents this as the known limitation of the current implementation.
+</Callout>
+
+## Example route
+
+A gRPC upstream is just an HTTP/2 upstream and a route whose path is the gRPC service:
+
+```yaml
+upstreams:
+  - name: users-grpc
+    instances:
+      - address: 127.0.0.1
+        port: 50051
+
+routes:
+  - path: /users.UserService
+    upstream: users-grpc
+```
+
+There is no protocol flag on the route — detection is driven by the `application/grpc`
+content type. The upstream must speak **plaintext HTTP/2 (h2c)**.
+
+## Configuration block
+
+A top-level `grpc` configuration block exists (`enabled`, `max_message_size`,
+`enable_reflection`, `enable_grpc_web`, `deadline_propagation`, and a `services`
+service→upstream map). See [gRPC configuration](/docs/configuration/grpc) for the schema.
+
+<Callout type="warn">
+  In the current build these `grpc` config fields are parsed and surfaced via the admin
+  API, but the live gRPC proxy path does **not** read them: it uses built-in defaults,
+  routes via the normal router (not the `services` map), and always propagates
+  `grpc-timeout` when present. Treat `enable_reflection`, `enable_grpc_web`,
+  `max_message_size`, and `services` as **not yet wired into the proxy**.
+</Callout>
+
+## Limitations
+
+- **No reflection proxy.** The server reflection service is not proxied or synthesized.
+- **No transcoding.** There is no JSON-to-gRPC (HTTP/JSON ↔ gRPC) translation.
+- **gRPC-Web is not handled in the proxy path.** Although gRPC-Web content types are
+  detected, the proxy does not perform gRPC-Web ↔ gRPC framing translation.
+- **Streaming is partial.** Unary and server-streaming work; client-streaming and
+  bidirectional streaming are buffered on the request side rather than streamed.
+- **Plaintext upstream only.** The HTTP/2 upstream connection is h2c (no TLS to the
+  upstream).

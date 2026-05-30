@@ -1,0 +1,114 @@
+---
+title: Health probes
+description: Octopus serves /livez, /readyz, and /startupz on the gateway listen port, with drain-aware readiness for zero-drop shutdowns.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Health probes
+
+Octopus serves Kubernetes-style liveness, readiness, and startup probes directly
+on the gateway listen port — the same port kubelet (or an external load
+balancer) already targets. Probes are answered **before** request accounting, so
+polling them during a drain never inflates the in-flight counter or blocks
+graceful shutdown.
+
+## The three endpoints
+
+| Path | Probe | Returns `200` when | Behaviour during drain |
+| --- | --- | --- | --- |
+| `/livez` | liveness | The process has not fully stopped. | Stays `200` while draining. |
+| `/readyz` | readiness | Running **and** config loaded **and** not draining **and** (if required) discovery has synced. | Flips to `503` the instant `SIGTERM` is received. |
+| `/startupz` | startup | The listener has bound. | Gates liveness/readiness while the process boots. |
+
+Each probe returns a small JSON body and `Cache-Control: no-store`:
+
+```bash
+curl -i http://localhost:8080/livez
+# HTTP/1.1 200 OK
+# Content-Type: application/json
+# Cache-Control: no-store
+#
+# {"status":"ok","probe":"live"}
+```
+
+A not-yet-ready or draining instance returns `503` with
+`{"status":"unavailable","probe":"ready"}`.
+
+### Readiness aliases
+
+`/healthz` and `/health` are accepted as back-compat **readiness** aliases — they
+map to the same logic as `/readyz`.
+
+## What each probe actually checks
+
+The probes are backed by a single lock-free lifecycle state:
+
+- **Liveness** is true unless the process has fully stopped. It deliberately does
+  **not** depend on readiness, so a draining-but-healthy pod stays live and
+  Kubernetes lets it finish in-flight requests instead of killing it mid-drain.
+- **Readiness** requires the accept loop to be running, configuration to be
+  loaded, the instance to not be draining, and — when discovery is required —
+  the initial service-discovery sync to have completed.
+- **Startup** becomes true once the listener has bound to its address.
+
+<Callout type="warn">
+  Never point a liveness probe at `/readyz`. Doing so causes Kubernetes to kill
+  the pod the moment it starts draining, cutting off in-flight requests. Use
+  `/livez` for liveness and `/readyz` for readiness.
+</Callout>
+
+## Drain semantics on SIGTERM
+
+The readiness flip is the foundation of a zero-drop rolling update. On `SIGTERM`
+(or `SIGINT`):
+
+1. The instance **begins draining** — `/readyz` returns `503` immediately, so
+   Kubernetes endpoint controllers and load balancers stop sending new traffic.
+2. The gateway **keeps accepting** new connections for `gateway.pre_stop_delay`,
+   covering the window before kube-proxy / the load balancer notices the
+   readiness change. `/livez` stays `200` throughout.
+3. After the pre-stop delay, the accept loop stops and the gateway drains
+   in-flight requests for up to `gateway.shutdown_timeout`.
+4. The process marks itself stopped — `/livez` now returns `503` — and exits.
+
+`pre_stop_delay` and `shutdown_timeout` are configured under the
+[`gateway`](/docs/configuration/gateway) section, not under `observability`.
+
+## Configuration
+
+Probe paths and the enable switch live under `gateway.probes`:
+
+```yaml
+gateway:
+  probes:
+    enabled: true
+    liveness_path: /livez
+    readiness_path: /readyz
+    startup_path: /startupz
+    require_discovery_sync: true   # readiness waits for first discovery sync
+  pre_stop_delay: 5s               # keep accepting after SIGTERM
+  shutdown_timeout: 30s            # max in-flight drain window
+```
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `probes.enabled` | boolean | `true` | Serve the probe endpoints at all. |
+| `probes.liveness_path` | string | `/livez` | Liveness path. |
+| `probes.readiness_path` | string | `/readyz` | Readiness path. |
+| `probes.startup_path` | string | `/startupz` | Startup path. |
+| `probes.require_discovery_sync` | boolean | `true` | Readiness waits for the first service-discovery sync (only when discovery is configured). |
+
+When `probes.enabled` is `false`, the probe paths are not intercepted and fall
+through to normal request dispatch.
+
+## Mapping to Kubernetes
+
+For the full deployment recipe — probe stanzas, `terminationGracePeriodSeconds`,
+and how `pre_stop_delay` / `shutdown_timeout` line up with the drain — see
+[Kubernetes → Probes & drain](/docs/kubernetes/probes-and-drain).
+
+## Related
+
+- [Configuration → Gateway](/docs/configuration/gateway) — `probes`, `pre_stop_delay`, `shutdown_timeout`.
+- [Concepts → Health checks](/docs/concepts/health-checks) — upstream health checking (distinct from these process probes).

@@ -1,0 +1,176 @@
+---
+title: Authentication
+description: How Octopus selects an auth provider per route, the global default provider and skip rules, the per-request authentication flow, and the validated-token cache.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+# Authentication
+
+Authentication is performed by the auth-gateway middleware. It runs once per request, picks exactly
+one provider, and either attaches an authenticated **principal** to the request or rejects it. This
+page covers provider selection and the request flow; each provider type has its own page.
+
+## When the middleware runs
+
+The auth-gateway middleware is added to the chain only when at least one provider is declared under
+`auth_providers`, or when `auth.global_enforce` is `true`. With no providers and no global
+enforcement, no auth middleware exists and every request passes through unauthenticated.
+
+## The request flow
+
+<Steps>
+
+<Step>
+**Skip OPTIONS.** `OPTIONS` preflight requests bypass authentication entirely for CORS
+compatibility.
+</Step>
+
+<Step>
+**Skip global paths.** If the request path matches any `auth.skip_paths` pattern, auth is skipped.
+Patterns are exact strings, or a trailing `*` wildcard that matches a path prefix (for example
+`/public/*` matches any path starting with `/public/`).
+</Step>
+
+<Step>
+**Skip the route.** If the matched route has `skip_auth: true`, auth is skipped for that route.
+</Step>
+
+<Step>
+**Select the provider.** The provider name is the route's `auth_provider` if set, otherwise the
+global `auth.default_provider`. If neither resolves to a name and `auth.global_enforce` is `true`,
+the request fails with `500 configuration_error`. If neither resolves and enforcement is off, the
+request passes through unauthenticated.
+</Step>
+
+<Step>
+**Authenticate.** The selected provider inspects the request (headers, query, and the verified TLS
+client CN for mTLS) and returns one of three outcomes:
+
+- **Authenticated** — a principal with `id`, `name`, `roles`, `scopes`, and the provider name.
+- **Unauthenticated** — no credentials were presented.
+- **Failed** — credentials were presented but invalid.
+</Step>
+
+<Step>
+**Authorize.** On success, the route's role/scope/Rhai requirements and any global rules are
+evaluated (see [Authorization](/docs/security/authorization)).
+</Step>
+
+<Step>
+**Inject identity and forward.** The principal's id, roles, and scopes are written to upstream
+request headers (`X-Auth-Principal`, `X-Auth-Roles`, `X-Auth-Scopes` by default), the principal is
+stored in request extensions, and a rate-limit key of `user:<principal-id>` is set for any
+downstream rate limiter.
+</Step>
+
+</Steps>
+
+## What each outcome returns
+
+| Outcome | `global_enforce: false` | `global_enforce: true` |
+| --- | --- | --- |
+| **Authenticated** | Proceed to authorization | Proceed to authorization |
+| **Unauthenticated** (no credentials) | Pass through unauthenticated | `401 unauthorized`, `WWW-Authenticate` challenge |
+| **Failed** (bad credentials) | `401 unauthorized` with the failure reason | `401 unauthorized` with the failure reason |
+| Provider not found / errored | `500 auth_error` | `500 auth_error` |
+
+<Callout type="warn">
+  A **Failed** result (invalid credentials) always returns `401`, regardless of `global_enforce`.
+  Enforcement only changes what happens when **no** credentials are presented: enforced routes
+  reject with `401`, unenforced routes pass through.
+</Callout>
+
+Error responses are JSON: `{ "error": ..., "message": ..., "provider": ... }`. For `401` responses a
+`WWW-Authenticate` header is added based on the provider type — `Bearer` for JWT, OIDC, and forward
+auth; `ApiKey` for API key; and none for mTLS.
+
+## Global `auth` settings
+
+These keys live under the top-level `auth` block. The fields that drive provider selection and the
+flow above are summarized here; the full reference is in
+[configuration / auth](/docs/configuration/auth).
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `default_provider` | string | none | Provider applied to routes that do not set `auth_provider`. |
+| `global_enforce` | boolean | `false` | When true, all non-skipped routes require successful authentication. |
+| `skip_paths` | list of strings | `[]` | Paths that bypass auth. Exact match or trailing-`*` prefix. |
+| `principal_header` | string | `X-Auth-Principal` | Header injected with the authenticated principal id. |
+| `roles_header` | string | `X-Auth-Roles` | Header injected with the principal's roles (comma-joined). |
+| `scopes_header` | string | `X-Auth-Scopes` | Header injected with the principal's scopes (comma-joined). |
+| `token_cache_ttl` | duration | `60s` | How long a successful authentication is cached (see below). |
+| `error_format` | string | `json` | Configured error format. The middleware emits JSON error bodies. |
+| `authz` | object | — | Authorization settings (see [Authorization](/docs/security/authorization)). |
+
+Roles and scopes headers are only injected when the principal actually has roles or scopes.
+
+## Per-route fields
+
+Each route may carry these authentication-related fields:
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `auth_provider` | string | none | Provider name overriding `auth.default_provider` for this route. |
+| `skip_auth` | boolean | `false` | Skip authentication and authorization for this route. |
+| `require_roles` | list of strings | `[]` | Authorization: principal must have at least one. |
+| `require_scopes` | list of strings | `[]` | Authorization: principal must have all of them. |
+| `authz_rule` | string | none | Authorization: a Rhai expression evaluated for this route. |
+
+See [routes configuration](/docs/configuration/routes) for the full route schema.
+
+## Token caching
+
+The provider registry caches successful authentications to avoid re-validating the same credential
+on every request. The cache key is derived per provider:
+
+- For requests with an `Authorization` header, the key is a SHA-256 hash of the provider name plus
+  the header value — so JWT and OIDC bearer tokens are cached by their token value.
+- For mTLS, the key is `mtls:<provider>:<cn>`.
+- Requests with neither an `Authorization` header nor a client CN (for example an API key in a
+  custom header only) are **not** cached.
+
+A cached entry is reused while its age is below `auth.token_cache_ttl` (default `60s`); on expiry it
+is evicted on next access. Only **Authenticated** results are cached — failures and unauthenticated
+results are never cached. Separately, a background task runs every 120 seconds and sweeps expired
+entries from the cache so memory does not grow unbounded.
+
+<Callout type="info">
+  Because caching keys on the credential value (not the decoded claims), a token whose `exp` passes
+  *within* the TTL window can still be accepted from cache until the entry expires. Keep
+  `token_cache_ttl` short relative to your token lifetimes if this matters.
+</Callout>
+
+## Example
+
+```yaml
+auth_providers:
+  primary-jwt:
+    type: jwt
+    secret: "${JWT_SECRET}"
+    algorithm: HS256
+    issuer: https://auth.example.com
+
+auth:
+  default_provider: primary-jwt
+  global_enforce: true
+  skip_paths: ["/health", "/public/*"]
+  token_cache_ttl: 60s
+
+routes:
+  - path: /health
+    upstream: backend
+    skip_auth: true
+  - path: /admin/*
+    upstream: backend
+    auth_provider: primary-jwt
+    require_roles: ["admin"]
+```
+
+## Next
+
+- Pick a provider: [JWT](/docs/security/jwt), [OIDC](/docs/security/oidc),
+  [API key](/docs/security/api-key), [Forward auth](/docs/security/forward-auth), or
+  [mTLS](/docs/security/mtls).
+- Restrict what authenticated callers may do: [Authorization](/docs/security/authorization).

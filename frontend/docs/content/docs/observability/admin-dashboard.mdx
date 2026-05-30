@@ -1,0 +1,120 @@
+---
+title: Admin dashboard
+description: The built-in Octopus admin dashboard — what it serves, where it lives, and how to protect it.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tabs } from 'fumadocs-ui/components/tabs';
+
+# Admin dashboard
+
+Octopus ships a built-in admin dashboard: a server-rendered web UI plus a JSON
+REST API for inspecting routes, health, metrics, plugins, configuration, and
+FARP services. It is served on the **gateway listen port** — there is no
+separate admin port or process.
+
+## Where it lives
+
+The dashboard mounts under `/admin`, and a `/__admin` alias is rewritten to the
+same routes:
+
+```bash
+# Open the dashboard UI
+open http://localhost:8080/admin
+
+# Internal-prefix alias (rewritten to /admin)
+curl http://localhost:8080/__admin
+```
+
+The `/admin*` path space is matched ahead of normal proxy routing, so it is not
+forwarded to an upstream.
+
+## What the dashboard renders
+
+The UI is built with server-side templates (Askama) plus HTMX and Alpine.js for
+live refresh, and includes:
+
+| Page | Path | Shows |
+| --- | --- | --- |
+| Overview | `/admin` | Aggregate stats — requests, active routes, latency, health, connections. |
+| Routes | `/admin/routes` | Configured routes with per-route request counts and health. |
+| Health | `/admin/health` | Upstream health-check status. |
+| Plugins | `/admin/plugins` | Installed plugins and their state. |
+| Analytics | `/admin/analytics` | Traffic and latency analytics. |
+| Logs | `/admin/logs` | Recent activity log entries. |
+| Config | `/admin/config` | Effective configuration values. |
+
+There is also a set of modern UI pages under `/admin/octopus-ui*` and an optional
+React SPA mounted at `/admin/ui`. A WebSocket at `/admin/ws` drives real-time
+dashboard events.
+
+All of the data behind these pages is also available as JSON — see the
+[Admin API](/docs/observability/admin-api) reference.
+
+## Protecting the dashboard
+
+The dashboard is enabled by default and, out of the box, **requires no
+authentication**. You protect it with the [`admin`](/docs/configuration/admin)
+config block.
+
+<Tabs items={["Auth provider", "IP allowlist"]}>
+
+<div title="Auth provider">
+
+Set `admin.auth_provider` to the name of an [auth provider](/docs/configuration/auth)
+you have defined. When set, every `/admin*` request must authenticate against
+that provider; unauthenticated requests get `401 Unauthorized`.
+
+```yaml
+admin:
+  auth_provider: dashboard-auth   # must match a configured auth provider name
+```
+
+This is wired in the runtime: when an admin auth provider is configured, the
+gateway runs each `/admin*` request through it before dispatching to the
+dashboard.
+
+<Callout type="info">
+  Static assets are exempt from admin auth. Requests whose path contains
+  `/static/` or `/_next/` (CSS, JS, fonts for the UI) bypass the auth check so
+  the login-protected pages can still load their assets.
+</Callout>
+
+</div>
+
+<div title="IP allowlist">
+
+`admin.allowed_ips` is part of the config schema and is intended to restrict
+admin access to a set of IPs/CIDRs.
+
+```yaml
+admin:
+  allowed_ips:
+    - 10.0.0.0/8
+    - 192.168.1.10
+```
+
+<Callout type="warn">
+  **`allowed_ips` is not enforced by the runtime today.** The field is accepted
+  in configuration but the gateway does not currently filter `/admin*` requests
+  by source IP. Do not rely on it as your only protection — use `auth_provider`,
+  and restrict access at the network layer (NetworkPolicy, firewall, or by not
+  exposing the gateway's admin paths publicly).
+</Callout>
+
+</div>
+
+</Tabs>
+
+<Callout type="warn">
+  With no `auth_provider` configured, the admin dashboard and its JSON API are
+  reachable by anyone who can reach the gateway port. Always set an
+  `auth_provider` (and lock the port down at the network layer) in any non-local
+  deployment.
+</Callout>
+
+## Related
+
+- [Admin API](/docs/observability/admin-api) — the full JSON REST reference.
+- [Configuration → Admin](/docs/configuration/admin) — the `admin` block schema.
+- [Security](/docs/security) — auth providers you can reference from `auth_provider`.

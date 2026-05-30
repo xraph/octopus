@@ -1,0 +1,268 @@
+---
+title: Writing a Plugin
+description: Author a plugin against octopus-plugin-api — implement the core Plugin trait, add a capability trait such as RequestInterceptor, return continue/short-circuit/abort actions, and package it as a static or dynamic plugin.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+import { Tabs } from 'fumadocs-ui/components/tabs';
+
+# Writing a Plugin
+
+Plugins are authored against the `octopus-plugin-api` crate. A plugin is a Rust type that
+implements the core `Plugin` trait (identity + lifecycle) and, optionally, one or more **capability
+traits** that give it behaviour at a specific point in request handling.
+
+<Callout type="warn">
+The SDK and the lifecycle runtime are implemented and tested, but the gateway does not yet invoke
+plugin capability hooks during request handling (see the [overview](/docs/plugins)). This page
+documents the real, compilable API surface so your plugin is ready when execution wiring lands. For
+logic you can run on live traffic today, use [middleware](/docs/middleware) or
+[scripting](/docs/plugins/scripting).
+</Callout>
+
+## The core trait
+
+Start by implementing `Plugin`. Only `name`, `version`, `init`, `start`, and `stop` are required;
+the rest have defaults.
+
+```rust
+use octopus_plugin_api::prelude::*;
+
+#[derive(Debug, Default)]
+struct HeaderStamp {
+    header_value: String,
+}
+
+#[async_trait]
+impl Plugin for HeaderStamp {
+    fn name(&self) -> &str { "header-stamp" }
+    fn version(&self) -> &str { "0.1.0" }
+    fn description(&self) -> &str { "Stamps an X-Gateway header onto every request" }
+
+    async fn init(&mut self, config: serde_json::Value) -> Result<(), PluginError> {
+        // `config` is the JSON map from the plugin's `config:` block.
+        self.header_value = config
+            .get("value")
+            .and_then(|v| v.as_str())
+            .unwrap_or("octopus")
+            .to_string();
+        Ok(())
+    }
+
+    async fn start(&mut self) -> Result<(), PluginError> { Ok(()) }
+    async fn stop(&mut self) -> Result<(), PluginError> { Ok(()) }
+}
+```
+
+### Errors
+
+Return `PluginError` from any hook. Constructors map to typed variants:
+
+| Constructor | Variant | Use for |
+| --- | --- | --- |
+| `PluginError::init(msg)` | `InitError` | Failures during `init`. |
+| `PluginError::config(msg)` | `ConfigError` | Invalid/missing configuration. |
+| `PluginError::runtime(msg)` | `RuntimeError` | General runtime failures. |
+| `PluginError::dependency(name)` | `DependencyMissing` | A required dependency is absent. |
+| `PluginError::invalid_state(msg)` | `InvalidState` | Operation called in the wrong lifecycle state. |
+| `PluginError::auth(msg)` | `AuthError` | Authentication failures. |
+| `PluginError::authz(msg)` | `AuthzError` | Authorization failures. |
+| `PluginError::transform(msg)` | `TransformError` | Transformation failures. |
+| `PluginError::protocol(msg)` | `ProtocolError` | Protocol-handler failures. |
+
+`std::io::Error` and `serde_json::Error` convert into `PluginError` automatically (via `#[from]`),
+so `?` works on them.
+
+## Adding a capability
+
+The core trait gives you a managed lifecycle but no behaviour. To *do* something, implement a
+capability trait. Each one extends `Plugin`, so your type implements both.
+
+| Capability trait | Hook(s) | What it does |
+| --- | --- | --- |
+| `RequestInterceptor` | `intercept_request` | Inspect/modify the request before routing; may short-circuit. |
+| `ResponseInterceptor` | `intercept_response` | Inspect/modify the response before it returns. |
+| `AuthProvider` | `authenticate`, `validate`, `extract_credentials` | Custom authentication schemes. |
+| `TransformPlugin` | `transform_request`, `transform_response` | Config-driven header/path/body transforms. |
+| `ProtocolHandler` | `protocol`, `supports`, `handle`, `upgrade` | Handle non-HTTP protocols (gRPC, GraphQL, WebSocket). |
+| `ScriptInterceptorPlugin` | `execute_on_request`, `execute_on_response` | Wrap a scripting engine as a plugin capability. |
+
+### Request interceptor example
+
+`RequestInterceptor` receives a mutable `http::Request<Body>` (where `Body = Full<Bytes>`) and a
+shared `RequestContext`. It returns an `InterceptorAction`.
+
+```rust
+use octopus_plugin_api::prelude::*;
+use octopus_plugin_api::interceptor::Body;
+use http::{Request, Response, StatusCode};
+
+#[async_trait]
+impl RequestInterceptor for HeaderStamp {
+    async fn intercept_request(
+        &self,
+        req: &mut Request<Body>,
+        ctx: &RequestContext,
+    ) -> Result<InterceptorAction, PluginError> {
+        // Read context: request_id, remote_addr, route, upstream, metadata, elapsed().
+        let _ = ctx.request_id.as_str();
+
+        // Modify the request in place.
+        req.headers_mut().insert(
+            "x-gateway",
+            self.header_value.parse().map_err(PluginError::runtime)?,
+        );
+
+        // Short-circuit: block requests missing an API key.
+        if !req.headers().contains_key("x-api-key") {
+            let res = Response::builder()
+                .status(StatusCode::UNAUTHORIZED)
+                .body(Body::default())
+                .map_err(PluginError::runtime)?;
+            return Ok(InterceptorAction::Return(res));
+        }
+
+        // Otherwise hand off to the next interceptor / the router.
+        Ok(InterceptorAction::Continue)
+    }
+}
+```
+
+### Continue, short-circuit, or abort
+
+`intercept_request` / `intercept_response` decide control flow by returning one of:
+
+- **`InterceptorAction::Continue`** — proceed to the next interceptor or the router/handler.
+- **`InterceptorAction::Return(Response<Body>)`** — stop here and return this response immediately
+  (short-circuit). Useful for auth rejections, cached responses, redirects.
+- **`InterceptorAction::Abort(PluginError)`** — abort the request with an error.
+
+`InterceptorAction` provides `is_continue()`, `is_return()`, `is_abort()`, and
+`into_result() -> Result<Option<Response<Body>>>` (where `Abort` becomes the `Err`).
+
+<Callout type="info">
+`ResponseInterceptor::intercept_response` uses the same `InterceptorAction` type, but `Return` on
+the response side is for replacing the response, not short-circuiting routing (the upstream has
+already run).
+</Callout>
+
+## The request and response context
+
+Interceptors receive read-mostly context structs (the request/response bodies are mutated through
+the `http::Request`/`http::Response`, not the context):
+
+- **`RequestContext`** — `request_id: String`, `remote_addr: SocketAddr`, `start_time: Instant`,
+  `route: Option<String>`, `upstream: Option<String>`, `metadata: HashMap<String, Value>`. Helpers:
+  `elapsed()`, `set_metadata` / `get_metadata`.
+- **`ResponseContext`** — `request_id`, `duration: Duration`, `status_code: u16`,
+  `upstream: Option<String>`, `response_size: Option<usize>`, `metadata`. Helpers: `is_success()`,
+  `is_client_error()`, `is_server_error()`.
+
+## Declaring dependencies
+
+If your plugin needs another plugin to be present, declare it. The registry validates required
+dependencies at registration time, detects cycles, and starts dependencies before your plugin.
+
+```rust
+fn dependencies(&self) -> Vec<PluginDependency> {
+    vec![
+        PluginDependency::required("auth", ">=1.0.0"),
+        PluginDependency::optional("metrics", "*"),
+    ]
+}
+```
+
+Version requirements are semver (`semver::VersionReq`); a missing required dependency fails
+registration with `DependencyMissing`.
+
+## Packaging: static vs dynamic
+
+<Tabs items={['Static', 'Dynamic']}>
+
+<div title="Static">
+
+Compile the plugin into the gateway and register it programmatically with the runtime:
+
+```rust
+use octopus_plugin_runtime::PluginManager;
+
+let manager = PluginManager::new();
+manager
+    .register_and_init(
+        "header-stamp",
+        Box::new(HeaderStamp::default()),
+        serde_json::json!({ "value": "octopus" }),
+    )
+    .await?;
+manager.start("header-stamp").await?;
+```
+
+This is the `plugin_type: "static"` model. (Note: the gateway does not yet auto-register plugins
+from the `plugins:` config array — see the [overview](/docs/plugins).)
+
+</div>
+
+<div title="Dynamic">
+
+Dynamic plugins are shared libraries loaded at runtime. This path uses the **`octopus-plugins`**
+crate (a separate, simpler `Plugin` trait), and the plugin crate exports the required C-ABI symbols
+with the `octopus_declare_plugin!` macro:
+
+```rust
+use octopus_plugins::octopus_declare_plugin;
+
+#[derive(Default)]
+struct MyDynamicPlugin { /* ... */ }
+
+// impl octopus_plugins::Plugin for MyDynamicPlugin { ... }
+
+octopus_declare_plugin!(MyDynamicPlugin, "my-plugin", "1.0.0");
+```
+
+The macro emits `octopus_plugin_abi_version`, `octopus_plugin_name`, `octopus_plugin_version`, and
+`octopus_create_plugin`. At load time, `PluginLoader` validates the ABI version (must equal
+`PLUGIN_ABI_VERSION`, currently `1`) and rejects mismatches.
+
+<Callout type="warn">
+Loading arbitrary shared libraries is inherently unsafe: the library must be built with a compatible
+toolchain and expose exactly these symbols. ABI mismatches are caught at load; other layout
+mismatches are not detectable at runtime.
+</Callout>
+
+</div>
+
+</Tabs>
+
+## Recommended workflow
+
+<Steps>
+
+<Step>
+**Add the dependency.** Depend on `octopus-plugin-api` and use the `prelude` (it re-exports the core
+trait, capability traits, context, error, and `async_trait`).
+</Step>
+
+<Step>
+**Implement `Plugin`.** Provide `name`/`version` and the three lifecycle hooks. Parse your
+`config: serde_json::Value` in `init`.
+</Step>
+
+<Step>
+**Add a capability trait** (e.g. `RequestInterceptor`) and return `Continue` / `Return` / `Abort`
+from the hook.
+</Step>
+
+<Step>
+**Declare dependencies** if needed, then register and start the plugin through `PluginManager`
+(static) or package it as a shared library with `octopus_declare_plugin!` (dynamic).
+</Step>
+
+</Steps>
+
+## Related
+
+- [Plugins overview](/docs/plugins) — the trait layers, lifecycle, and integration status.
+- [Built-in plugins](/docs/plugins/built-in) — what ships today.
+- [Configuration](/docs/configuration) — the `plugins:` array / `PluginConfig`.
+- [Concepts: Plugins](/docs/concepts/plugins) — the conceptual model.

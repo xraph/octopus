@@ -1,0 +1,101 @@
+---
+title: Compression
+description: Response compression (brotli, zstd, gzip) — the one body-shaping middleware wired to gateway configuration.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Compression
+
+Compression is one of two middleware Octopus adds to its global chain from
+configuration. It compresses response bodies based on the client's
+`Accept-Encoding`, the response content type, and the response status.
+
+It is implemented by the `octopus-compression` crate's `CompressionMiddleware`
+and configured entirely through the [`gateway.compression`](/docs/configuration/gateway)
+block.
+
+<Callout type="info">
+  The `octopus-middleware` crate also contains a separate `compression.rs`
+  implementation. The runtime does **not** use it — the active compression
+  middleware comes from `octopus-compression`. The middleware-crate version is
+  only reachable via the [builder](/docs/middleware#using-middleware-programmatically).
+</Callout>
+
+## When it is active
+
+Compression is added to the chain **only when**
+[`gateway.compression.enabled`](/docs/configuration/gateway) is `true`. That is
+the default, so out of the box the gateway compresses eligible responses.
+
+It sits at the outermost position of the chain, so it observes the final
+response (after auth and proxying) and compresses the body on the way out.
+
+## How it decides to compress
+
+For each request/response the middleware:
+
+1. Reads the client's `Accept-Encoding` and negotiates an algorithm. The
+   **first** algorithm in `gateway.compression.algorithms` that the client also
+   accepts wins. If the client accepts none of them, the response is returned
+   uncompressed.
+2. Skips compression if the response already has a `Content-Encoding` header.
+3. Skips compression unless the response `Content-Type` is compressible (see
+   below).
+4. Skips compression for non-`2xx` responses.
+5. Compresses the body; if the compressed output is not actually smaller than
+   the original, the original is sent uncompressed.
+
+On success the middleware sets `Content-Encoding`, recomputes `Content-Length`,
+and removes any `Transfer-Encoding` header.
+
+### Compressible content types
+
+A content type is compressible if it starts with `text/` or contains/equals any
+of: `json`, `xml`, `javascript`, `ecmascript`, `wasm`, `application/graphql`,
+`application/x-yaml`, `application/yaml`, or `image/svg+xml`. Binary types such
+as `image/png`, `video/mp4`, and `application/octet-stream` are not compressed.
+
+<Callout type="warn" title="`min_size` is configured but not enforced">
+  The schema accepts `gateway.compression.min_size`, and the config type has a
+  helper that would skip small bodies. However, the active
+  `CompressionMiddleware` does **not** consult `min_size` when deciding whether
+  to compress — it only checks `Content-Encoding`, content type, and status.
+  Setting `min_size` therefore has no effect on the request path today (small
+  responses are still eligible, though the "not actually smaller" guard avoids
+  inflating them).
+</Callout>
+
+## Configuration
+
+The `gateway.compression` block:
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `enabled` | bool | `true` | Add the compression middleware to the chain |
+| `level` | int | `6` | Compression level (1–9 for gzip/zstd, 1–11 for brotli) |
+| `min_size` | int (bytes) | `1024` | Minimum body size to compress. **Currently not enforced** (see callout). |
+| `algorithms` | list&lt;string&gt; | `["br", "zstd", "gzip"]` | Preferred algorithms, in order. Valid values: `br`, `zstd`, `gzip`. |
+
+```yaml
+gateway:
+  listen: "0.0.0.0:8080"
+  compression:
+    enabled: true
+    level: 6
+    min_size: 1024
+    algorithms:
+      - br
+      - zstd
+      - gzip
+```
+
+The algorithm order is the gateway's preference order. With the default
+`["br", "zstd", "gzip"]`, a client sending `Accept-Encoding: gzip, br` receives
+brotli (`br`), because brotli appears first in the preference list and the client
+accepts it.
+
+## Related
+
+- [Gateway configuration](/docs/configuration/gateway) — the full `gateway` schema.
+- [Middleware overview](/docs/middleware) — the global chain and execution order.

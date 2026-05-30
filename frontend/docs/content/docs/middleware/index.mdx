@@ -1,87 +1,233 @@
 ---
 title: Middleware
-description: Built-in middleware for request and response processing
+description: How Octopus assembles its request-processing chain, what runs today, and the full catalogue of built-in middleware.
 ---
 
 import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
 
 # Middleware
 
-Octopus provides a comprehensive set of middleware for processing requests and responses.
+Middleware in Octopus is Rust code that wraps the request/response path. Each
+middleware implements the `octopus_core::middleware::Middleware` trait and is
+invoked through a `Next` chain, in registration order on the way in and reverse
+order on the way out.
 
-## Available Middleware
+This page documents the **real, source-verified** model: which middleware the
+gateway actually activates from configuration, what runs unconditionally, and a
+complete catalogue of every implementation shipped in the `octopus-middleware`
+crate — including the many that exist but are **not** wired to configuration
+today.
+
+<Callout type="warn" title="There is no `middleware:` config array">
+  The top-level [`Config`](/docs/configuration) struct has **no** `middleware`
+  list. You cannot declare an arbitrary, ordered middleware stack in YAML. The
+  global chain is assembled in code and currently contains at most two entries:
+  compression and the auth gateway. Older examples that show a
+  `middleware: [...]` array are inaccurate — that key is silently ignored.
+</Callout>
+
+## The real middleware model
+
+When the server starts, it builds a single global chain
+(`crates/octopus-runtime/src/server.rs`) and applies it to every HTTP request
+in `crates/octopus-runtime/src/handler.rs`. The chain is built from exactly two
+optional entries, in this order:
+
+<Steps>
+
+<Step>
+### Compression (optional, global)
+
+Added **only when** [`gateway.compression.enabled`](/docs/configuration/gateway)
+is `true` (the default). This uses the `octopus-compression` crate's
+`CompressionMiddleware` and is configured entirely by the `gateway.compression`
+block. See [Compression](/docs/middleware/compression).
+</Step>
+
+<Step>
+### Auth gateway (optional, global)
+
+Added **only when** there is at least one entry in
+[`auth_providers`](/docs/configuration/auth) **or**
+[`auth.global_enforce`](/docs/configuration/auth) is `true`. This is
+`octopus_middleware::AuthGatewayMiddleware`, driven by the `auth` and
+`auth_providers` config. See [Authentication gateway](/docs/middleware/authentication).
+</Step>
+
+</Steps>
+
+If neither condition holds, the global chain is **empty** and requests go
+straight to routing and proxying.
+
+### Execution order
+
+```text
+Request
+  → [Compression]        (if gateway.compression.enabled)
+    → [Auth gateway]     (if auth_providers non-empty OR auth.global_enforce)
+      → Route match → Upstream proxy
+    ← Auth gateway (pass-through on the way out)
+  ← Compression (compresses the response body)
+Response
+```
+
+Compression is registered first, so it is the outermost wrapper: it sees the
+final response body and compresses it after the auth gateway and proxy have run.
+The auth gateway runs second, authenticating/authorizing before the request is
+proxied.
+
+<Callout type="info" title="Route matching happens inside the chain">
+  The handler pre-matches the route and injects auth/CORS context into request
+  extensions *before* running the chain, then the final handler does the actual
+  route match and proxy. So per-route auth settings (`auth_provider`,
+  `skip_auth`, `require_roles`, `require_scopes`, `authz_rule`) are honored by
+  the auth gateway. See [Routes](/docs/configuration/routes).
+</Callout>
+
+## Always-on behavior (not via the middleware crate)
+
+One request-shaping behavior is unconditional but does **not** come from a
+`octopus-middleware` middleware:
+
+- **`X-Request-ID` injection toward upstreams.** The proxy's header transformer
+  (`octopus-proxy`) adds an `X-Request-ID` header to the forwarded request when
+  one is absent. This is hardcoded on by default (`ProxyConfig::default()`) and
+  is **not** exposed through gateway configuration. Note this is the proxy
+  behavior — the separate `RequestId` middleware in `octopus-middleware` is
+  **not** part of the runtime chain.
+
+There is no always-on logging, timeout, or request-ID *middleware* in the chain.
+Request access logging is emitted via tracing from the runtime/proxy layers, not
+from the `logging` middleware.
+
+## Per-route settings: configured, surfaced, but not enforced at request time
+
+[Routes](/docs/configuration/routes) accept `rate_limit` and `cors` blocks, and
+there is a top-level `cors` block. These parse and validate, and the per-route
+values are stored on the router's `Route` and surfaced through the admin API,
+the Kubernetes translation layer, and FARP-generated routes. **However, none of
+them are enforced on the live HTTP request path today.**
+
+<Callout type="warn" title="CORS and per-route rate limiting are not active">
+  - **`routes[].rate_limit`** — accepted and stored on the route, but no
+    middleware reads it during request handling. No `429` is produced from this
+    setting.
+  - **`routes[].cors`** — accepted and stored (and copied into request
+    extensions as `MatchedRouteCors`), but the `Cors` middleware that would
+    consume it is **not** in the runtime chain, so no CORS headers or preflight
+    responses are produced.
+  - **top-level `cors`** (`CorsGlobalConfig`) — defined in the config schema but
+    **not read anywhere** in the runtime.
+
+  These are documented here so you don't rely on behavior that isn't wired up.
+  To enforce CORS or rate limiting today you must embed the middleware yourself
+  via the [builder](#using-middleware-programmatically) or place an external
+  proxy in front of the gateway.
+</Callout>
+
+## Catalogue of built-in middleware
+
+The `octopus-middleware` crate ships roughly two dozen middleware. The table
+below lists every implementation and its **current wiring status**:
+
+- **Configurable** — activated from gateway configuration today.
+- **Builder-only** — fully implemented and reachable via
+  `MiddlewareBuilder`/direct construction for custom embeddings, but **not**
+  wired to any gateway config key or the runtime chain.
+
+| Middleware | Source file | Status | Notes |
+| --- | --- | --- | --- |
+| Auth gateway | `auth_gateway.rs` | **Configurable (global)** | Added when `auth_providers` non-empty or `auth.global_enforce`. See [Authentication gateway](/docs/middleware/authentication). |
+| Compression | (`octopus-compression`) | **Configurable (global)** | Added when `gateway.compression.enabled`. See [Compression](/docs/middleware/compression). The crate also has its own `compression.rs`, used only via the builder. |
+| CORS | `cors.rs` | Builder-only | Consumes `MatchedRouteCors`, but not in the runtime chain. See [CORS](/docs/middleware/cors). |
+| Rate limit | `rate_limit.rs` | Builder-only | Token-bucket / fixed-window; `routes[].rate_limit` is stored but not enforced. See [Rate limiting](/docs/middleware/rate-limiting). |
+| Request ID | `request_id.rs` | Builder-only | Distinct from the proxy's always-on `X-Request-ID` injection. |
+| Timeout | `timeout.rs` | Builder-only | Per-request timeout. Note `gateway.request_timeout` and `routes[].timeout` are applied by the proxy/router, not this middleware. |
+| Logging | `logging.rs` | Builder-only | Request/response access logging. |
+| Caching | `caching.rs` | Builder-only | In-memory response cache with TTL + FIFO eviction. |
+| Security headers | `security_headers.rs` | Builder-only | Adds HSTS, X-Frame-Options, CSP, etc. |
+| WAF | `waf.rs` | Builder-only | SQLi/XSS pattern detection, block/log modes. |
+| IP filter | `ip_filter.rs` | Builder-only | Allowlist/blocklist by IP/CIDR. |
+| Forward auth | `forward_auth.rs` | Builder-only | Delegates auth to an external subrequest. Also available as an auth *provider* — see [Authentication](/docs/configuration/auth). |
+| JWT | `jwt.rs` | Builder-only | Standalone JWT validation. JWT auth is normally done via the auth provider, not this middleware. |
+| Header transform | `header_transform.rs` | Builder-only | Add/set/remove/rename request & response headers. |
+| Body transform | `body_transform.rs` | Builder-only | Field-level JSON body transforms (remove/rename/set/redact). |
+| Redirect | `redirect.rs` | Builder-only | Regex path redirects, HTTPS enforcement, trailing-slash normalization. |
+| Retry | `retry.rs` | Builder-only | Exponential-backoff retries. The proxy has its own retry path; this is the middleware form. |
+| Circuit breaker | `circuit_breaker.rs` | Builder-only | Per-upstream Closed→Open→Half-Open. See [Circuit breaker concept](/docs/concepts/circuit-breaker). |
+| Canary | `canary.rs` | Builder-only | Weighted traffic splitting between upstreams. |
+| Deduplication | `deduplication.rs` | Builder-only | Request idempotency / dedup. |
+| Bot detection | `bot_detection.rs` | Builder-only | User-Agent-based bot blocking. |
+| Connection limits | `connection_limits.rs` | Builder-only | Caps concurrent connections. |
+| Request limits | `request_limits.rs` | Builder-only | Caps request body/header/URI size. |
+| Audit logger | `audit_logger.rs` | Builder-only | Structured security/audit event logging. |
+
+<Callout type="info">
+  "Builder-only" middleware are real, tested implementations — they are simply
+  not exposed through gateway configuration in the current release. They can be
+  composed into a chain programmatically (see below) or used as building blocks
+  for embedding Octopus as a library.
+</Callout>
+
+## Using middleware programmatically
+
+For embedded/library use, `octopus_middleware::MiddlewareBuilder` composes a
+chain. The builder exposes helpers for a subset of the catalogue
+(`with_request_id`, `with_timeout`, `with_logging`, `with_rate_limit`,
+`with_cors`, `with_compression`, `with_ip_filter`, `with_forward_auth`,
+`with_caching`) plus `with_middleware` for any `Arc<dyn Middleware>`:
+
+```rust
+use octopus_middleware::MiddlewareBuilder;
+
+let chain = MiddlewareBuilder::new()
+    .with_request_id()
+    .with_logging()
+    .with_cors()
+    .with_compression()
+    .build(); // -> Arc<[Arc<dyn Middleware>]>
+```
+
+This is the only way to activate the builder-only middleware today. The standard
+gateway binary does **not** call the builder; it assembles its (compression +
+auth) chain directly.
+
+## Pages in this section
 
 <Cards>
   <Card
-    title="Authentication"
-    description="JWT, OAuth2, API keys, and custom auth"
+    title="Authentication gateway"
+    description="The global auth/authz middleware: providers, skip paths, principal headers, 401/403 responses."
     href="/docs/middleware/authentication"
   />
   <Card
-    title="Rate Limiting"
-    description="Token bucket, leaky bucket, and distributed rate limiting"
-    href="/docs/middleware/rate-limiting"
-  />
-  <Card
-    title="CORS"
-    description="Cross-origin resource sharing"
-    href="/docs/middleware/cors"
-  />
-  <Card
     title="Compression"
-    description="gzip, brotli, and zstd compression"
+    description="Response compression (brotli, zstd, gzip) configured via gateway.compression."
     href="/docs/middleware/compression"
   />
   <Card
-    title="Transformation"
-    description="Request and response transformation"
-    href="/docs/middleware/transformation"
+    title="CORS"
+    description="The CORS middleware and config schema — and why it is not enforced today."
+    href="/docs/middleware/cors"
   />
   <Card
-    title="Caching"
-    description="Response caching with TTL"
-    href="/docs/middleware/caching"
+    title="Rate limiting"
+    description="The rate-limit middleware, strategies, and the not-yet-enforced route config."
+    href="/docs/middleware/rate-limiting"
+  />
+  <Card
+    title="Catalogue"
+    description="Reference for every built-in middleware not exposed through gateway config."
+    href="/docs/middleware/catalogue"
   />
 </Cards>
 
-## Configuration
+## Related
 
-```yaml
-middleware:
-  - auth
-  - rate_limit
-  - cors
-  - compression
-
-auth:
-  type: jwt
-  secret: ${JWT_SECRET}
-
-rate_limit:
-  requests_per_second: 100
-  burst: 200
-
-cors:
-  allowed_origins: ["*"]
-  allowed_methods: [GET, POST, PUT, DELETE]
-
-compression:
-  enabled: true
-  level: 6
-```
-
-## Execution Order
-
-Middleware executes in the order specified:
-
-```
-Request → Auth → Rate Limit → CORS → Upstream → CORS → Compression → Response
-```
-
-## Next Steps
-
-- [Authentication](/docs/middleware/authentication)
-- [Rate Limiting](/docs/middleware/rate-limiting)
-- [CORS](/docs/middleware/cors)
-- [Compression](/docs/middleware/compression)
-
+- [Middleware concept](/docs/concepts/middleware) — the architectural model.
+- [Gateway configuration](/docs/configuration/gateway) — compression, timeouts.
+- [Routes](/docs/configuration/routes) — per-route auth, `rate_limit`, `cors`.
+- [Authentication & authorization](/docs/configuration/auth) — providers and authz.
+- [Security](/docs/security) — the end-to-end security model.

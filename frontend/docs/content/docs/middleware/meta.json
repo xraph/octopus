@@ -4,14 +4,10 @@
   "defaultOpen": false,
   "pages": [
     "index",
-    "rate-limiting",
-    "cors",
+    "authentication",
     "compression",
-    "security-headers",
-    "transformation",
-    "caching",
-    "waf",
-    "traffic-controls",
-    "request-context"
+    "cors",
+    "rate-limiting",
+    "catalogue"
   ]
 }

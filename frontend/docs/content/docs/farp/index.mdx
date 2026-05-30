@@ -1,6 +1,6 @@
 ---
 title: Service Discovery & FARP
-description: FARP — the Forge API Gateway Registration Protocol — lets services publish their own schemas so Octopus generates routes automatically, backed by mDNS, Consul, etcd, DNS, and Kubernetes discovery.
+description: FARP — the Forge API Gateway Registration Protocol — lets services publish their own schemas so Octopus generates routes automatically, backed by mDNS, Consul, DNS, and Kubernetes discovery.
 ---
 
 import { Card, Cards } from 'fumadocs-ui/components/card';
@@ -9,9 +9,11 @@ import { Callout } from 'fumadocs-ui/components/callout';
 # Service Discovery & FARP
 
 Most gateways expect you to declare every route by hand. **FARP** — the Forge API Gateway
-Registration Protocol — flips that around: services publish their own schemas (OpenAPI, AsyncAPI,
-gRPC, GraphQL), and Octopus turns those schemas into routes as services come and go. Static
-`upstreams`/`routes` and FARP-driven discovery work together — you can use either or both.
+Registration Protocol — flips that around: services publish their own schemas, and Octopus turns
+those schemas into routes as services come and go. In the live discovery path, services publish an
+**OpenAPI** document; the federated API surface additionally merges AsyncAPI and GraphQL schemas
+(see [Schema federation](/docs/farp/schema-federation)). Static `upstreams`/`routes` and FARP-driven
+discovery work together — you can use either or both.
 
 ## How it works
 
@@ -22,13 +24,18 @@ gRPC, GraphQL), and Octopus turns those schemas into routes as services come and
 
 ## Discovery backends
 
-FARP can source instances from several backends:
+FARP can source instances from several backends, each configured under `farp.discovery.backends`:
 
 - **mDNS / Bonjour** — zero-config discovery for local development.
 - **Consul** — service catalog with health filtering.
-- **etcd** — key/value-based registration.
-- **DNS** — resolve instances from DNS records.
+- **DNS** — resolve instances from SRV/A records.
 - **Kubernetes** — discover Pod endpoints via the `discovery.k8s.io/v1` EndpointSlice API.
+
+<Callout type="info">
+  An etcd discovery backend exists in the source tree but is **not** wired into the gateway's
+  discovery configuration — only the four backends above can be selected. See
+  [Discovery backends](/docs/farp/backends) for the honest breakdown.
+</Callout>
 
 <Callout type="info">
   Kubernetes discovery uses **EndpointSlice**, which reflects Pod scale up/down that the legacy
@@ -37,10 +44,15 @@ FARP can source instances from several backends:
 
 ## In this section
 
-- **Backends** — configuring mDNS, Consul, etcd, and DNS discovery.
-- **Schema federation** — how OpenAPI, AsyncAPI, gRPC, and GraphQL schemas become a unified API surface.
+<Cards>
+  <Card title="Discovery backends" description="Configuring mDNS, Consul, DNS, and Kubernetes discovery." href="/docs/farp/backends" />
+  <Card title="Schema federation" description="How published schemas become a unified, auto-routed API surface." href="/docs/farp/schema-federation" />
+</Cards>
+
+## Related
 
 <Cards>
-  <Card title="FARP configuration" description="The farp section: watch intervals, caching, and backends." href="/docs/configuration" />
+  <Card title="FARP configuration" description="The farp section: watch intervals, caching, and backends." href="/docs/configuration/farp" />
   <Card title="FARP concept" description="A conceptual overview of discovery and auto-routing." href="/docs/concepts/farp" />
+  <Card title="Kubernetes discovery" description="EndpointSlice-based Pod discovery for in-cluster deployments." href="/docs/kubernetes/discovery" />
 </Cards>

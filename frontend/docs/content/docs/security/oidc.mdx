@@ -1,0 +1,76 @@
+---
+title: OIDC
+description: The oidc auth provider — OpenID Connect discovery, background JWKS refresh, and token validation against published keys with required-scope enforcement.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# OIDC provider
+
+`type: oidc` validates JWTs issued by an OpenID Connect provider, fetching the signing keys from the
+issuer's JWKS endpoint and refreshing them in the background. Use it when your identity provider
+(Auth0, Keycloak, Okta, Google, etc.) rotates keys, so the gateway does not need a static key.
+
+## How it works
+
+1. **Discovery at startup.** The provider fetches
+   `<issuer_url>/.well-known/openid-configuration`, reads the `issuer` and `jwks_uri`, then fetches
+   the JWKS and caches each key by its `kid`. If startup discovery fails, the provider still starts
+   and retries discovery on the first request.
+2. **Background refresh.** A task re-fetches the JWKS every `jwks_refresh_interval`. If a refresh
+   fails, the last known good keys are kept.
+3. **Per-request validation.** The token is extracted from `header_name` (default `Authorization`),
+   stripping `token_prefix` (default `Bearer `). The JWT header's `kid` selects the matching cached
+   key; if the token has no `kid`, every cached key is tried. Each candidate key validates expiry,
+   the discovered issuer, and `audience` (when set).
+4. **Required scopes.** If `required_scopes` is non-empty, the token's `scope` claim (split on
+   whitespace) must contain **all** of them, or the result is **Failed**.
+5. On success the principal is built from the claims: `id` from `sub`, `name` from `name`, `roles`
+   from the `roles` claim, and `scopes` from the `scope` claim.
+
+<Callout type="info">
+  The issuer used for validation comes from the **discovery document's** `issuer`, not directly from
+  your configured `issuer_url`. Supported JWK key types are RSA and EC; keys with an unsupported
+  `kty` or `alg` are skipped when building the cache.
+</Callout>
+
+## Configuration
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `issuer_url` | string | — | OIDC issuer URL, e.g. `https://accounts.google.com`. **Required.** |
+| `audience` | string | none | Expected `aud` claim. When set, tokens with a different audience are rejected. |
+| `jwks_refresh_interval` | duration | `1h` | How often the JWKS is re-fetched in the background. |
+| `required_scopes` | list of strings | `[]` | All listed scopes must be present in the token's `scope` claim. |
+| `header_name` | string | `Authorization` | Header to read the token from. |
+| `token_prefix` | string | `Bearer ` | Prefix stripped from the header value before decoding. |
+| `fallback_provider` | string | none | **Not wired** — see callout below. |
+
+<Callout type="warn">
+  `fallback_provider` is accepted by the configuration schema but is **not** currently used: the
+  gateway authenticates with a single provider per request and does not fall back to another
+  provider if OIDC discovery is unavailable. If discovery and re-discovery both fail at request
+  time, the result is a **Failed** authentication (`OIDC provider unavailable`).
+</Callout>
+
+## Example
+
+```yaml
+auth_providers:
+  keycloak:
+    type: oidc
+    issuer_url: https://sso.example.com/realms/main
+    audience: octopus-api
+    jwks_refresh_interval: 1h
+    required_scopes: ["openid", "profile"]
+
+auth:
+  default_provider: keycloak
+  global_enforce: true
+```
+
+## See also
+
+- [JWT provider](/docs/security/jwt) — for static-key validation without JWKS.
+- [Authentication flow](/docs/security/authentication) — selection, enforcement, and token caching.
+- [Configuration reference](/docs/configuration/auth).

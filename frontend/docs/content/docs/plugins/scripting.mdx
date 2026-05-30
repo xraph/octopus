@@ -1,0 +1,207 @@
+---
+title: Scripting
+description: The embedded Rhai scripting engine in Octopus — how scripts actually attach (convention host-resolution is the wired path; the script middleware exists but is not yet wired), the context API exposed to scripts, execution sandboxing, timeouts, and AST caching. Lua, JavaScript, and WebAssembly are planned.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tabs } from 'fumadocs-ui/components/tabs';
+
+# Scripting
+
+Octopus embeds [Rhai](https://rhai.rs), a small Rust-native scripting language, in the
+`octopus-scripting` crate. Scripts can run from inline source or from a file, with compiled scripts
+cached as ASTs for fast repeat execution.
+
+<Callout type="warn">
+**How scripting actually attaches today.** There is one place where the gateway runs your scripts on
+live traffic: **convention host-resolution** (subdomain → backend mapping). The general-purpose
+"run a script as request/response middleware" component (`ScriptMiddleware`) is implemented and
+tested, but it is **not wired into the middleware chain** — there is no `type: script` middleware in
+the gateway. The example YAML you may have seen showing a `type: script` middleware is **not
+implemented**. This page documents the real wiring and the engine API.
+</Callout>
+
+## The wired path: convention host-resolution
+
+Octopus's subdomain routing can derive the backend for a request from its `Host` header using a
+"convention". A convention may carry an **inline Rhai script** that maps the host to a target. This
+is evaluated per host (cached) by the request handler — the one production scripting integration.
+
+The script is given the request host as a string variable named `host`, and must return a Rhai map
+`#{ namespace: "...", service: "...", port: 1234 }` to map the host to a backend, or unit `()` to
+**decline** (the handler then falls back to label-based resolution). `port` is optional; when
+omitted the convention's default port is used.
+
+```rust
+// `host` is provided by the gateway, e.g. "orders.acme.platform.com".
+// Return a backend mapping, or `()` to decline and use label parsing.
+if host == "special.example.com" {
+    #{ namespace: "vip", service: "web" }   // port omitted → convention default
+} else {
+    let parts = host.split(".");
+    #{ namespace: parts[1], service: parts[0], port: 8080 }
+}
+```
+
+Behaviour:
+
+- Returning a map with both `namespace` and `service` produces the backend target.
+- Returning a map missing either field, or returning any non-map value, is treated as **decline**.
+- If the script errors, the handler logs a warning and falls back to the convention's label layout.
+
+Each distinct script body gets its own AST cache slot (keyed by a content hash), so the script
+compiles once and is reused across requests. A single process-wide `RhaiEngine` backs this path so
+the AST cache persists for the lifetime of the gateway.
+
+<Callout type="info">
+The convention (and its `script` field) is part of the router's convention model used by the
+Kubernetes-first subdomain routing. It is configured programmatically / via the operator rather than
+through the main gateway YAML's `routes:` section. See
+[Concepts: Routing](/docs/concepts/routing) and the [Kubernetes](/docs/kubernetes) docs.
+</Callout>
+
+## The `ScriptMiddleware` (implemented, not wired)
+
+`octopus-scripting` also provides a `ScriptMiddleware` that implements `octopus_core::Middleware`. It
+can run a script on the request (before routing) and/or on the response (after the upstream), apply
+the script's mutations back to the HTTP request/response, and short-circuit when the request script
+returns `false`.
+
+Its configuration type, `ScriptMiddlewareConfig`, is what a `type: script` middleware *would*
+deserialize into:
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `language` | enum | `rhai` | Script language (see [Languages](#languages)). |
+| `code` / `path` | string | — | Inline `code` or a file `path` (flattened `ScriptSource`). |
+| `on_request` | bool | `true` | Run the script on the request. |
+| `on_response` | bool | `false` | Run the script on the response. |
+| `continue_on_error` | bool | `false` | If `true`, script errors are logged and the request continues. |
+| `timeout_ms` | u64 | `100` | Per-execution timeout in milliseconds. |
+
+<Callout type="warn">
+`ScriptMiddleware` is not constructed from configuration anywhere in the gateway and is not added to
+the middleware chain. There is no config key that turns it on. It is usable programmatically and is
+covered here so the engine semantics are documented, but you cannot enable it from a config file
+today.
+</Callout>
+
+When the request script returns `false`, `ScriptMiddleware` short-circuits and returns an empty
+`200 OK` response. On a script error, it returns a `500` unless `continue_on_error` is set.
+
+## The context API exposed to scripts
+
+When a script runs against a request or response, the engine pushes the HTTP fields into the Rhai
+scope as variables. Scripts read and write those variables directly; the engine extracts the
+modified values back out afterwards.
+
+<Tabs items={['Request scope', 'Response scope']}>
+
+<div title="Request scope">
+
+| Variable | Rhai type | Notes |
+| --- | --- | --- |
+| `method` | string | HTTP method; writing it changes the request method. |
+| `uri` | string | Full request URI; writable. |
+| `version` | string | HTTP version (read). |
+| `headers` | map | Header name → value; writable (e.g. `headers["X-Custom"] = "v"`). |
+| `query` | map | Parsed query parameters (read). |
+| `path_params` | map | Router path parameters (read). |
+| `body` | string | Present only when a body string was loaded; writable. |
+
+```rust
+// Add a header, rewrite the method, then continue.
+headers["X-Custom"] = "test";
+method = "POST";
+true   // return value: true = continue, false = short-circuit
+```
+
+</div>
+
+<div title="Response scope">
+
+| Variable | Rhai type | Notes |
+| --- | --- | --- |
+| `status` | integer | HTTP status code; writable. |
+| `headers` | map | Header name → value; writable. |
+| `body` | string | Present only when a body string was loaded; writable. |
+
+```rust
+status = 200;
+headers["X-Processed"] = "true";
+true
+```
+
+</div>
+
+</Tabs>
+
+The script's **return value** controls flow: a boolean `false` means short-circuit (request) / stop
+(response); any other value (or no boolean) defaults to continue.
+
+### Built-in helper functions
+
+The Rhai engine registers a handful of host functions usable from any script:
+
+| Function | Returns | Description |
+| --- | --- | --- |
+| `base64_encode(s)` | string | Standard base64 encode. |
+| `base64_decode(s)` | string | Standard base64 decode (empty string on failure). |
+| `unix_time()` | integer | Current Unix time in seconds. |
+| `uuid()` | string | A new random UUID v4. |
+| `log_debug(msg)` | — | Emit a debug-level trace log. |
+| `log_info(msg)` | — | Emit an info-level trace log. |
+| `log_warn(msg)` | — | Emit a warn-level trace log. |
+| `parse_json(s)` / `to_json(v)` | string | Currently pass-through helpers (return the string as-is); scripts manipulate JSON as strings. |
+
+## Sandboxing and limits
+
+The default `RhaiEngine` is configured with guardrails:
+
+- Max operations per run: `10_000` (prevents infinite loops).
+- Max expression depths: `25` / `10`.
+- Max string size: `1 MiB`; max array size: `10_000`; max map size: `10_000`.
+
+The engine forbids `unsafe` code and runs without filesystem or network access beyond the host
+functions listed above.
+
+## Timeouts
+
+`ScriptMiddleware` wraps each execution in a `tokio::time::timeout` using `timeout_ms` (default
+`100` ms); exceeding it yields a timeout error. The convention host-resolution path does not apply a
+wall-clock timeout — it instead relies on the engine's operation/size limits to bound execution.
+
+## AST caching
+
+Compiled scripts are cached as Rhai ASTs:
+
+- The cache is keyed by script name (inline scripts default to the name `"inline"`; the convention
+  path hashes the script body so distinct scripts get distinct slots).
+- First execution compiles and stores the AST (a cache miss); subsequent executions reuse it (a
+  cache hit).
+- `CacheStats` exposes `cached_scripts`, `hits`, `misses`, and a `hit_rate()`; `clear_cache()`
+  empties the cache.
+
+## Languages
+
+`ScriptLanguage` defines four variants, but only one is implemented:
+
+| Language | Status |
+| --- | --- |
+| **Rhai** | Implemented. |
+| Lua | Planned. Selecting it logs a warning and **falls back to Rhai**. |
+| JavaScript (Deno) | Planned. Falls back to Rhai. |
+| WebAssembly | Planned. Falls back to Rhai. |
+
+<Callout type="warn">
+Lua, JavaScript, and WebAssembly are **not implemented**. The enum variants exist, but the script
+middleware silently substitutes the Rhai engine for any of them. Treat Rhai as the only usable
+language today.
+</Callout>
+
+## Related
+
+- [Plugins overview](/docs/plugins) — how scripting relates to the plugin system.
+- [Concepts: Routing](/docs/concepts/routing) — where convention host-resolution scripts fit.
+- [Kubernetes](/docs/kubernetes) — subdomain routing and conventions in a cluster.
+- [Configuration](/docs/configuration) — the gateway configuration schema.

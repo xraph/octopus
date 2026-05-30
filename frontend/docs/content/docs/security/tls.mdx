@@ -1,0 +1,107 @@
+---
+title: TLS
+description: TLS termination on the listener, minimum TLS version, mutual TLS with client-certificate verification, and certificate hot reload — including the Kubernetes operator path.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# TLS
+
+Octopus terminates TLS on its listener when `gateway.tls` is configured. The same listener handles
+HTTP/1.1 and HTTP/2 (negotiated via ALPN, advertising `h2` and `http/1.1`). Without `gateway.tls`,
+the listener serves plain HTTP — unless TLS is supplied by the Kubernetes operator (see
+[Kubernetes-managed TLS](#kubernetes-managed-tls)).
+
+## Configuration
+
+```yaml
+gateway:
+  listen: "0.0.0.0:8443"
+  tls:
+    cert_file: /etc/octopus/tls/cert.pem
+    key_file: /etc/octopus/tls/key.pem
+    min_tls_version: "1.2"
+    enable_cert_reload: true
+    reload_interval_secs: 300
+    # Mutual TLS:
+    client_ca_file: /etc/octopus/tls/client-ca.pem
+    require_client_cert: true
+```
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `cert_file` | string | — | Server certificate file (PEM). **Required.** |
+| `key_file` | string | — | Server private key file (PEM). **Required.** |
+| `client_ca_file` | string | none | CA used to verify client certificates (enables mutual TLS). |
+| `require_client_cert` | boolean | `false` | Require a client certificate during the handshake. |
+| `min_tls_version` | string | `1.2` | Minimum TLS version. Must be `1.2` or `1.3` — see the note below. |
+| `enable_cert_reload` | boolean | `true` | Watch the certificate files and reload on change. |
+| `reload_interval_secs` | integer (seconds) | `300` | How often the certificate files are checked for changes. |
+
+For the full `gateway.tls` schema and validation rules, see
+[TLS configuration](/docs/configuration/tls).
+
+## Minimum TLS version
+
+`min_tls_version` is validated at load time (only `1.2` and `1.3` are accepted) and logged when the
+acceptor starts.
+
+<Callout type="warn">
+  The file-based TLS acceptor does **not** currently pin the rustls protocol versions from
+  `min_tls_version` — it builds the server config with rustls's defaults (TLS 1.2 and TLS 1.3). So
+  setting `min_tls_version: "1.3"` is validated and logged but does **not** yet disable TLS 1.2 at
+  the protocol level. Treat this field as advisory for now; do not rely on it to forbid TLS 1.2.
+</Callout>
+
+## Mutual TLS (client certificates)
+
+Setting `client_ca_file` enables client-certificate verification at the TLS handshake. The CA file
+is loaded into a root store and a verifier is built:
+
+- `require_client_cert: true` — clients **must** present a certificate that chains to the configured
+  CA; the handshake fails otherwise.
+- `require_client_cert: false` — a client certificate is **optional**; if presented it is verified
+  against the CA, but a client without one still completes the handshake.
+
+After a successful handshake the peer certificate's Common Name (CN) is extracted and made available
+to the gateway. To turn that verified identity into an authenticated principal with roles, pair this
+with the [mTLS auth provider](/docs/security/mtls).
+
+<Callout type="info">
+  There are two distinct layers: `gateway.tls` performs the cryptographic verification of the client
+  certificate, while the `mtls` **auth provider** maps the resulting CN to a principal and roles.
+  Verification happens at the listener — the auth provider does not re-verify the certificate.
+</Callout>
+
+## Certificate hot reload (file-based)
+
+When `enable_cert_reload` is `true`, a background task checks the certificate file's modification
+time every `reload_interval_secs` and, on change, reloads the certificate and key from disk into the
+reloader's store, keeping the previous material if a reload fails.
+
+<Callout type="warn">
+  For the **file-based** acceptor, the reloader detects and reads updated files, but the
+  certificate actively served by the running rustls acceptor is built once at startup and is **not**
+  swapped in place by the file reloader. True zero-downtime certificate swapping is provided by the
+  Kubernetes operator path below (`SwappableTlsAcceptor`). If you rotate file-based certificates,
+  plan for a restart to pick up the new material reliably.
+</Callout>
+
+## Kubernetes-managed TLS
+
+On Kubernetes, certificates can come from Gateway listener Secrets instead of files on disk. The
+operator builds a rustls config from the Secret's `tls.crt` / `tls.key` and serves it through a
+**swappable** acceptor: when the Secret rotates (for example, a cert-manager renewal), the operator
+swaps in the new config so connections accepted afterward use the new certificate — without a
+restart. A single listener can serve many hostnames, selecting the certificate by SNI server name
+(with exact-host matches preferred over wildcards, and an optional default).
+
+This path is selected when no file-based `gateway.tls` is configured but operator TLS is available.
+See [Kubernetes TLS with cert-manager](/docs/kubernetes/tls-cert-manager) and
+[Gateway API support](/docs/kubernetes/gateway-api).
+
+## See also
+
+- [mTLS auth provider](/docs/security/mtls) — authenticate callers by client certificate.
+- [TLS configuration reference](/docs/configuration/tls).
+- [Kubernetes TLS with cert-manager](/docs/kubernetes/tls-cert-manager).

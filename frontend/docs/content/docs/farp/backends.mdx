@@ -1,0 +1,210 @@
+---
+title: Discovery backends
+description: Configure FARP's discovery backends — mDNS, Consul, DNS, and Kubernetes — under farp.discovery.backends, each tagged by type.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Card, Cards } from 'fumadocs-ui/components/card';
+
+# Discovery backends
+
+A discovery backend tells FARP which service instances are live and where to reach them. Octopus
+then fetches each instance's published schema and generates routes — see
+[Schema federation](/docs/farp/schema-federation).
+
+Backends are listed under `farp.discovery.backends`. Each entry is a tagged object with a `type`
+field (`mdns`, `dns`, `consul`, or `kubernetes`), an `enabled` flag (defaults to `true`), and a
+backend-specific `config` block. You can configure several backends at once — every enabled backend
+becomes a provider, and FARP polls them all on each tick of `farp.watch_interval`.
+
+```yaml
+farp:
+  enabled: true
+  watch_interval: 5s
+  schema_cache_ttl: 5m
+  discovery:
+    backends:
+      - type: mdns
+        enabled: true
+        config:
+          service_type: _octopus._tcp
+          domain: local.
+          watch_interval: 30s
+          query_timeout: 5s
+          enable_ipv6: false
+      - type: consul
+        enabled: true
+        config:
+          address: http://consul:8500
+          datacenter: dc1
+          watch_interval: 30s
+```
+
+<Callout type="info">
+  Each backend is gated behind a Cargo feature in the gateway build (`mdns`, `dns`, `consul`,
+  `kubernetes`). The default runtime build enables only `mdns`. If a backend is configured but its
+  feature is not compiled in, the gateway logs a warning and skips that backend rather than failing
+  to start.
+</Callout>
+
+## What a backend reports
+
+Every backend resolves to a list of service instances with an `id`, logical `name`, `address`,
+`port`, a health status (`healthy` / `unhealthy` / `unknown` / `warning`), and optional metadata
+(version, tags, datacenter, and a free-form custom map). FARP keys schema fetching and route
+generation off this metadata.
+
+<Callout type="warn">
+  FARP only registers an instance and generates routes for it when its metadata advertises
+  `farp.enabled = true`. Instances without that flag are discovered but skipped. The OpenAPI
+  document is then fetched from `farp.openapi.path` (default `/openapi.json`); the health, metrics,
+  AsyncAPI, gRPC reflection, and GraphQL endpoints come from the matching `farp.*.path` keys (with
+  legacy unprefixed keys such as `openapi` / `health` accepted as fallbacks).
+</Callout>
+
+## etcd is not a configurable backend
+
+The source tree contains an etcd discovery module, but it is **not** exposed through
+`farp.discovery.backends` — the configuration only accepts `mdns`, `dns`, `consul`, and
+`kubernetes`. There is no `type: etcd` entry, and the gateway runtime does not compile an etcd
+discovery feature. Treat etcd discovery as unavailable for now. (Separately, etcd can act as a
+schema *registry* backend for the fetcher, but that path is marked unimplemented in the source and
+is not configurable here.)
+
+## mDNS
+
+Zero-configuration discovery for local development. The gateway browses for a multicast-DNS service
+type (e.g. `_octopus._tcp.local.`) and reads service metadata from the advertised TXT records.
+mDNS does **not** support registration from the gateway side — services advertise themselves using
+their own mDNS library.
+
+```yaml
+- type: mdns
+  enabled: true
+  config:
+    service_type: _octopus._tcp
+    domain: local.
+    watch_interval: 30s
+    query_timeout: 5s
+    enable_ipv6: false
+```
+
+| Key | Type | Required | Description |
+| --- | --- | --- | --- |
+| `service_type` | string | yes | mDNS service type to browse, e.g. `_octopus._tcp`. |
+| `domain` | string | yes | mDNS domain, usually `local.`. |
+| `watch_interval` | duration | yes | How often to re-browse for services. |
+| `query_timeout` | duration | yes | How long each browse waits to collect responses. |
+| `enable_ipv6` | boolean | no (`true`) | Register IPv6 addresses. When `false`, only IPv4 addresses from discovered services are registered. |
+
+<Callout type="info">
+  `enable_ipv6: false` filters which discovered *addresses* are registered — it does not stop the
+  mDNS library from querying IPv6 interfaces, so harmless IPv6/VPN interface log lines may still
+  appear. The internal default for `enable_ipv6` is `false` on macOS and `true` elsewhere, but
+  because `MdnsDiscoveryConfig` has no serde default for this field, set it explicitly in your YAML.
+</Callout>
+
+TXT-record keys are mapped onto instance metadata: `version`, `dc`/`datacenter`, `tags` (comma
+separated), and `openapi` / `asyncapi` / `graphql` / `health` (recorded as endpoint hints). Any
+other `key=value` pair is preserved in the custom metadata map.
+
+## Consul
+
+Discovery from a Consul service catalog with health filtering. The gateway calls Consul's HTTP API
+(`/v1/catalog/services` then `/v1/health/service/{name}`) and maps Consul health checks onto FARP
+health: any `critical` check marks the instance unhealthy, any `warning` check marks it warning,
+otherwise healthy.
+
+```yaml
+- type: consul
+  enabled: true
+  config:
+    address: http://consul:8500
+    datacenter: dc1
+    token: "${CONSUL_TOKEN}"
+    watch_interval: 30s
+```
+
+| Key | Type | Required | Description |
+| --- | --- | --- | --- |
+| `address` | string | yes | Base URL of the Consul HTTP API, e.g. `http://consul:8500`. |
+| `datacenter` | string | yes | Datacenter to query. Sent as the `dc` query parameter; pass an empty string to omit it. |
+| `token` | string | no | ACL token, sent as the `X-Consul-Token` header. |
+| `watch_interval` | duration | yes | Polling interval for catalog changes. |
+
+The Consul `version` meta field becomes the instance version, Consul tags become instance tags, and
+the full service `Meta` map is carried through as custom metadata (so `farp.enabled` and the
+`farp.*` endpoint keys can be set there).
+
+<Callout type="info">
+  The Consul HTTP client connects over plain HTTP. Front Consul with a local agent or a TLS-
+  terminating proxy if you need encryption in transit.
+</Callout>
+
+## DNS
+
+Resolve instances by name from DNS. For a queried name, the resolver tries an `SRV` lookup first
+(using the SRV target host and port), then falls back to `A`/`AAAA` records on a default port.
+
+```yaml
+- type: dns
+  enabled: true
+  config:
+    servers: ["10.0.0.53:53"]
+    domain: services.internal
+    watch_interval: 30s
+```
+
+| Key | Type | Required | Description |
+| --- | --- | --- | --- |
+| `servers` | array of string | yes | DNS server addresses. **Accepted by the schema but currently ignored by the runtime** (see callout). |
+| `domain` | string | yes | Domain to query. **Accepted by the schema but currently ignored by the runtime** (see callout). |
+| `watch_interval` | duration | yes | Polling interval. This *is* applied. |
+
+<Callout type="warn">
+  The DNS backend is the least complete. When wiring the provider, the runtime only forwards
+  `watch_interval` — the `servers` and `domain` fields you set are not applied, and the resolver
+  uses the host's system DNS configuration with a hardcoded default port of `80`. The provider also
+  cannot *enumerate* services (it resolves a known name on demand), so it does not return a service
+  list during FARP's discovery sync. Prefer mDNS, Consul, or Kubernetes for automatic route
+  generation, and treat DNS discovery as experimental.
+</Callout>
+
+## Kubernetes
+
+In-cluster discovery of Pod endpoints via the `discovery.k8s.io/v1` EndpointSlice API, falling back
+to the legacy Endpoints API when EndpointSlices are unavailable. This backend is documented in
+depth in the Kubernetes section, including RBAC and how it relates to the Gateway API controller.
+
+```yaml
+- type: kubernetes
+  enabled: true
+  config:
+    namespace: default
+    label_selector: "app.kubernetes.io/part-of=myapp"
+    watch_interval: 10s
+    use_endpoint_slices: true
+    include_not_ready: false
+```
+
+| Key | Type | Required | Description |
+| --- | --- | --- | --- |
+| `namespace` | string | yes | Namespace to watch. An empty string watches all namespaces. |
+| `label_selector` | string | no | Label selector to filter Services/Pods. |
+| `watch_interval` | duration | yes | Polling interval. |
+| `use_endpoint_slices` | boolean | no (`true`) | Prefer the EndpointSlice API; falls back to Endpoints if unavailable. |
+| `include_not_ready` | boolean | no (`false`) | Include endpoints whose `ready` condition is false/unknown. |
+
+<Callout type="info">
+  EndpointSlices reflect Pod scale up/down that a legacy Endpoints + Service watch can miss. See
+  [Kubernetes discovery](/docs/kubernetes/discovery) for cluster setup, RBAC, and the full
+  configuration reference.
+</Callout>
+
+## Where to go next
+
+<Cards>
+  <Card title="Schema federation" description="How fetched schemas become routes and a unified API surface." href="/docs/farp/schema-federation" />
+  <Card title="FARP configuration reference" description="The full farp config schema and per-backend tables." href="/docs/configuration/farp" />
+  <Card title="Kubernetes discovery" description="EndpointSlice discovery, RBAC, and probes." href="/docs/kubernetes/discovery" />
+</Cards>

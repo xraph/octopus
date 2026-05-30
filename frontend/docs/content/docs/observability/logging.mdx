@@ -1,0 +1,79 @@
+---
+title: Logging
+description: How Octopus initializes logging, the levels it accepts, and how the log format is selected.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Logging
+
+Octopus logs through the [`tracing`](https://docs.rs/tracing) crate with a
+`tracing_subscriber` formatting layer. Logs go to the process's standard output
+in a human-readable text format.
+
+## How logging is initialized
+
+When you run `octopus serve`, the CLI calls its `init_tracing` routine once at
+startup. That routine builds a `tracing_subscriber` registry with two layers:
+
+- a **formatting layer** (`tracing_subscriber::fmt`) that prints the level and
+  message (the per-event target is suppressed);
+- an **`EnvFilter`** seeded from the requested level, with a built-in directive
+  that quiets noisy `mdns_sd` library logs to `warn` and above.
+
+## Setting the level
+
+The effective level comes from the `serve` command's `--log-level` flag (which
+defaults to `info`), combined with the standard `RUST_LOG` environment variable
+through `EnvFilter`.
+
+```bash
+# Via the CLI flag
+octopus serve --config gateway.yaml --log-level debug
+
+# Via RUST_LOG (EnvFilter directives, per-module overrides supported)
+RUST_LOG=octopus_proxy=trace,info octopus serve --config gateway.yaml
+```
+
+Accepted level values for `--log-level` are `trace`, `debug`, `info`, `warn`,
+and `error`. An unrecognized value falls back to `info`.
+
+<Callout type="warn">
+  **The level comes from the CLI flag and `RUST_LOG`, not from
+  `observability.logging.level`.** The
+  [`observability.logging.level`](/docs/configuration/observability) field is
+  part of the config schema (and is surfaced read-only by the
+  [Admin API](/docs/observability/admin-api) config endpoint), but the runtime
+  does not feed it into the subscriber. To change the level, use `--log-level`
+  or `RUST_LOG`.
+</Callout>
+
+## Log format
+
+| Field | Type | Default | Runtime effect today |
+| --- | --- | --- | --- |
+| `observability.logging.level` | string | `info` | Not applied by the runtime — set the level via `--log-level` / `RUST_LOG`. |
+| `observability.logging.format` | string (`json` \| `text`) | `text` | Not applied — the subscriber always uses the human-readable text formatter. |
+
+<Callout type="warn">
+  **JSON output is not wired yet.** The config exposes a `format` field with
+  `json` and `text` options and the default is `text`, but the formatting layer
+  the runtime installs is the text formatter unconditionally. Setting
+  `format: json` does not currently switch the output to JSON. If you need JSON
+  logs, collect the text output and structure it downstream (for example with
+  your log shipper).
+</Callout>
+
+## What gets logged
+
+The gateway emits `tracing` events across its components — request handling,
+proxying, health checks, discovery syncs, lifecycle transitions, and admin
+actions — at the levels you would expect (`debug` for per-request detail,
+`info` for lifecycle and configuration events, `warn`/`error` for failures).
+Raising the level to `debug` or `trace` surfaces per-request path/method logging
+in the request handler.
+
+## Related
+
+- [Tracing](/docs/observability/tracing) — the same `tracing` crate, and why no spans are exported.
+- [Configuration → Observability](/docs/configuration/observability) — the `logging` block schema.

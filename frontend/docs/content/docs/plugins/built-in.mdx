@@ -1,0 +1,92 @@
+---
+title: Built-in Plugins
+description: The honest inventory of plugins that ship with Octopus today — there are no bundled plugin implementations yet, and the capabilities you might expect as plugins exist as first-class middleware and auth providers instead.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Cards, Card } from 'fumadocs-ui/components/card';
+
+# Built-in Plugins
+
+<Callout type="warn">
+**There are no bundled plugins in Octopus today.** Neither the plugin SDK crate
+(`octopus-plugin-api`), the plugin runtime (`octopus-plugin-runtime`), nor the dynamic-loading crate
+(`octopus-plugins`) contains any concrete `Plugin` implementations beyond test fixtures. There is no
+registry of ready-to-enable plugins, and the `plugins:` configuration array is not consumed by the
+gateway (see the [overview](/docs/plugins)).
+
+Any older documentation or example YAML referencing plugins like `jwt-auth`, `redis-cache`,
+`rate-limiter`, or `kafka-producer` as built-in plugins is **inaccurate** — those names do not exist
+as plugins in the codebase.
+</Callout>
+
+## What the crates actually contain
+
+| Crate | Concrete plugins | What's there instead |
+| --- | --- | --- |
+| `octopus-plugin-api` | None | The `Plugin` trait and capability traits (`RequestInterceptor`, `AuthProvider`, `TransformPlugin`, `ProtocolHandler`, `ScriptInterceptorPlugin`), context, and error types. |
+| `octopus-plugin-runtime` | None | Lifecycle management (`PluginRegistry`, `PluginManager`) and the `HotReloadWatcher`. |
+| `octopus-plugins` | None | The dynamic shared-library `PluginLoader` and the `octopus_declare_plugin!` ABI macro. |
+
+The traits, lifecycle, and loader are real and tested. What is missing is a set of shipped plugin
+*implementations* and the wiring to register them.
+
+## Where those capabilities live today
+
+The features you might expect as "built-in plugins" are implemented elsewhere in the gateway as
+**first-class middleware** and **auth providers** — and those *are* wired into the request path.
+
+### Middleware
+
+The `octopus-middleware` crate provides cross-cutting request/response behaviour as middleware
+(not plugins), including request ID, timeout, logging, rate limiting, CORS, compression, IP
+filtering, forward auth, caching, header/body transforms, circuit breaking, retry, redirects,
+security headers, WAF, bot detection, canary, deduplication, connection/request limits, and audit
+logging.
+
+These are configured and applied directly, independent of the plugin system.
+
+### Authentication and authorization
+
+Authentication is provided by `octopus-auth` through its own `AuthProvider` trait (distinct from the
+plugin-api `AuthProvider`), with built-in providers for JWT, OIDC, API key, forward-auth, and mTLS.
+Authorization uses a Rhai-based rule engine and/or OPA. These are wired in via the auth gateway
+middleware.
+
+<Callout type="info">
+So if you were looking for "JWT authentication" or "rate limiting": they exist and work — just as
+**middleware / auth providers**, configured through their own sections, not as plugins in the
+`plugins:` array.
+</Callout>
+
+## Roadmap
+
+Bundled plugins (and the wiring to load them from the `plugins:` array) are not yet present. When
+that work lands, this page will enumerate each shipped plugin and its configuration keys. Until
+then, this page intentionally lists nothing as "available" to avoid implying support that does not
+exist.
+
+## Related
+
+<Cards>
+  <Card
+    title="Plugins overview"
+    description="Trait layers, lifecycle, and the honest integration status."
+    href="/docs/plugins"
+  />
+  <Card
+    title="Writing a Plugin"
+    description="Author your own plugin against octopus-plugin-api."
+    href="/docs/plugins/writing-plugins"
+  />
+  <Card
+    title="Middleware"
+    description="The wired-up extension point where most of these capabilities actually live."
+    href="/docs/middleware"
+  />
+  <Card
+    title="Security"
+    description="Authentication and authorization providers."
+    href="/docs/security"
+  />
+</Cards>

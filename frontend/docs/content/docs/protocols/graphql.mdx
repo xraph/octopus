@@ -1,0 +1,78 @@
+---
+title: GraphQL
+description: What the built-in GraphQL handler does today — and how to proxy GraphQL in the meantime.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# GraphQL
+
+<Callout type="warn">
+  The built-in GraphQL handler is a **stub**. It is registered on `/graphql` but does not
+  proxy to a GraphQL upstream, does not federate, and does not stitch schemas. Do not
+  rely on it for real GraphQL traffic.
+</Callout>
+
+## What the built-in handler actually does
+
+When protocol handlers are enabled, a `GraphQLHandler` is registered for the `/graphql`
+path. For a request to that path it will:
+
+- Serve a minimal **placeholder HTML page** for browser requests (a `GET` whose `Accept`
+  contains `text/html`) — not a real GraphiQL/Playground IDE, just a static stub page.
+- Parse the GraphQL request from a `POST` JSON body, or from the `query` URL parameter on
+  a `GET`.
+- Reject introspection (`__schema` / `IntrospectionQuery`) with a GraphQL error **only if
+  introspection is disabled** in the handler's settings.
+- Otherwise return a **fixed placeholder JSON response** (`{"data":{"message":"GraphQL
+  endpoint is configured"}}`) rather than a result from any upstream.
+
+In other words, the handler validates and parses the request shape but does not execute
+the query against anything. The source comments mark the federation/execution path as not
+yet implemented.
+
+There is also no GraphQL configuration block in the gateway config — the handler is
+constructed with built-in defaults (endpoint `/graphql`, playground on, introspection on),
+and these are not exposed in YAML.
+
+## Proxying GraphQL today
+
+Because GraphQL is just HTTP `POST` (and `GET`) with a JSON body, you can proxy a real
+GraphQL server through the normal HTTP path. Route a path **other than `/graphql`** (so it
+does not hit the stub handler) at your GraphQL upstream:
+
+```yaml
+upstreams:
+  - name: graphql-api
+    instances:
+      - address: 127.0.0.1
+        port: 4000
+
+routes:
+  - path: /api/graphql
+    methods: [GET, POST]
+    upstream: graphql-api
+```
+
+This forwards GraphQL requests and responses verbatim like any other HTTP traffic, with
+the gateway's routing, middleware, auth, and load balancing applied. See
+[HTTP/1.1 & HTTP/2](/docs/protocols/http), [Routes](/docs/configuration/routes), and
+[Routing](/docs/concepts/routing).
+
+<Callout type="info">
+  GraphQL subscriptions are typically delivered over WebSocket (`graphql-ws`). The
+  WebSocket proxy forwards the `Sec-WebSocket-Protocol` subprotocol, so a subscription
+  endpoint can be proxied as a normal WebSocket route. See
+  [WebSocket](/docs/protocols/websocket).
+</Callout>
+
+## Limitations
+
+- **No GraphQL federation or schema stitching.** Despite the term appearing in code
+  comments, the gateway does not federate GraphQL schemas. (The gateway's "federation"
+  machinery is part of [FARP](/docs/concepts/farp) service discovery, not GraphQL.)
+- **No query execution or upstream proxying** from the built-in `/graphql` handler.
+- **No real Playground/GraphiQL IDE** — only a placeholder page.
+- **No query-depth enforcement, batching, or persisted queries.**
+- The `/graphql` path is claimed by the stub handler when protocol handlers are enabled;
+  use a different path to proxy a real GraphQL backend.

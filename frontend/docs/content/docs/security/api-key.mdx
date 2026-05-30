@@ -1,0 +1,94 @@
+---
+title: API key
+description: The api_key auth provider — match a key from a header or query parameter against a static key list, attaching per-key scopes.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# API key provider
+
+`type: api_key` authenticates a request by matching a presented key against a **static** list of
+keys configured on the gateway. Each key entry carries a holder name and optional scopes.
+
+## How it works
+
+1. The key is read from `header_name` (default `X-API-Key`). If that header is absent and
+   `query_param` is configured, the key is read from that query-string parameter instead.
+2. If no key is found, the result is **Unauthenticated**.
+3. The key is looked up in the configured `keys` list. An unknown key yields **Failed**
+   (`Invalid API key`).
+4. On a match, the principal is built as:
+   - `id` = `apikey:<entry name>`
+   - `name` = the entry's `name`
+   - `roles` = `["api_consumer"]` (fixed)
+   - `scopes` = the entry's `scopes`
+   - if the entry has a `rate_limit`, it is attached as a principal attribute named `rate_limit`.
+
+<Callout type="info">
+  Every API-key principal is given the single role `api_consumer`. The `key` entries' `scopes` are
+  the lever for [authorization](/docs/security/authorization) (`require_scopes` and Rhai
+  `has_scope`), since per-key roles are not configurable.
+</Callout>
+
+## Configuration
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `header_name` | string | `X-API-Key` | Header to read the key from. |
+| `query_param` | string | none | Query-string parameter to read the key from when the header is absent. |
+| `keys` | list of [key entries](#key-entry) | `[]` | Accepted keys. |
+| `external_validator` | string | none | **Not wired** — see callout below. |
+
+### Key entry
+
+Each item in `keys`:
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `key` | string | — | The API key value. **Required.** |
+| `name` | string | — | Human-readable name for the key holder; used in the principal id and name. **Required.** |
+| `scopes` | list of strings | `[]` | Scopes granted to this key. |
+| `rate_limit` | integer | none | Per-key requests/minute. Surfaced as the principal attribute `rate_limit`. |
+
+<Callout type="warn">
+  `external_validator` is accepted by the configuration schema but is **not** currently used: keys
+  are only matched against the static `keys` list. There is no remote key-validation call. The
+  `rate_limit` value is exposed as a principal attribute but is not itself enforced by this
+  provider — wire it through a rate-limit middleware if you want enforcement (see
+  [Middleware](/docs/middleware)).
+</Callout>
+
+## Caching note
+
+A successful API-key match is cached by the auth-gateway only when the request also carries an
+`Authorization` header (or a TLS client CN). Keys presented solely in a custom header such as
+`X-API-Key`, or in a query parameter, are **not** cached and are re-validated on each request — a
+cheap in-memory lookup. See [token caching](/docs/security/authentication#token-caching).
+
+## Example
+
+```yaml
+auth_providers:
+  partner-keys:
+    type: api_key
+    header_name: X-API-Key
+    query_param: api_key
+    keys:
+      - key: "${PARTNER_A_KEY}"
+        name: partner-a
+        scopes: ["read", "write"]
+        rate_limit: 600
+      - key: "${PARTNER_B_KEY}"
+        name: partner-b
+        scopes: ["read"]
+
+auth:
+  default_provider: partner-keys
+  global_enforce: true
+```
+
+## See also
+
+- [Authentication flow](/docs/security/authentication).
+- [Authorization](/docs/security/authorization) — using key scopes in `require_scopes` and rules.
+- [Configuration reference](/docs/configuration/auth).

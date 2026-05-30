@@ -7,8 +7,17 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 # gRPC
 
-The `grpc` section configures gRPC proxying. The block is optional and gRPC proxying is **enabled
-by default**. For the protocol model, see the [Protocols](/docs/protocols) section.
+The `grpc` section configures gRPC proxying. For the protocol model, see the
+[Protocols](/docs/protocols) section.
+
+<Callout type="warn">
+  These keys are currently **display-only**. The live gRPC handler is constructed with built-in
+  defaults (`GrpcHandler::new()`) and does not read this block — `from_config` is never called — so
+  `enabled`, `max_message_size`, `enable_reflection`, `enable_grpc_web`, `deadline_propagation`, and
+  `services` are parsed and surfaced by the [admin API](/docs/observability/admin-api) but do **not**
+  yet affect proxying. gRPC requests are proxied transparently over HTTP/2 (h2c) regardless. See
+  [Protocols → gRPC](/docs/protocols/grpc).
+</Callout>
 
 ```yaml
 grpc:

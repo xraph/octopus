@@ -1,0 +1,93 @@
+---
+title: mTLS
+description: The mtls auth provider — derive the principal from a verified client certificate's Common Name and map CN patterns to roles.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# mTLS provider
+
+`type: mtls` authenticates a request from the client certificate presented during the TLS handshake.
+It is the bridge between transport-layer client-certificate verification and the gateway's principal
+model: it takes the Common Name (CN) of the already-verified certificate and turns it into a
+principal with roles.
+
+<Callout type="warn">
+  This provider does **not** verify the certificate itself. Certificate verification (chain
+  validation against a CA, and whether a client cert is required) happens at the TLS listener via
+  `gateway.tls.client_ca_file` and `gateway.tls.require_client_cert` — see
+  [TLS](/docs/security/tls). The provider only consumes the CN that the verified handshake produced.
+  Consequently the provider's own `client_ca_file` field is **not** used by the provider.
+</Callout>
+
+## How it works
+
+The auth-gateway makes the verified client certificate's CN available to the provider (extracted
+from the peer certificate after the TLS handshake). Then:
+
+1. **CN present and `extract_cn_as_principal` is true** → **Authenticated**. The principal is
+   `id` = `mtls:<cn>`, `name` = the CN, and roles derived from `cn_to_roles` (see below). Scopes are
+   empty.
+2. **CN present and `extract_cn_as_principal` is false** → **Authenticated** as a generic verified
+   client: `id` = `mtls:verified`, `name` = `Verified Client`, no roles, no scopes.
+3. **No CN and `require_client_cert` is true** → **Failed** (`Client certificate required`).
+4. **No CN and `require_client_cert` is false** → **Unauthenticated**.
+
+### CN-to-roles matching
+
+`cn_to_roles` maps a pattern to a list of roles. A pattern matches a CN when it is:
+
+- `*` (matches every CN), or
+- equal to the CN, or
+- a suffix of the CN (the CN `ends_with` the pattern).
+
+All matching patterns contribute their roles, so a CN can accumulate roles from several entries.
+
+## Configuration
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `client_ca_file` | string | — | **Not used by this provider.** CA verification is configured on the TLS listener instead (`gateway.tls.client_ca_file`). The field is required by the schema. |
+| `require_client_cert` | boolean | `true` | When true, a request without a client CN fails; when false, it is treated as unauthenticated. |
+| `extract_cn_as_principal` | boolean | `true` | When true, the CN becomes the principal id; when false, a generic verified-client principal is used. |
+| `cn_to_roles` | map of string → list of strings | `{}` | Maps CN patterns to roles (see matching rules above). |
+
+<Callout type="info">
+  To actually require and verify client certificates, set `require_client_cert: true` and
+  `client_ca_file` under `gateway.tls`. The mTLS auth provider then turns the verified identity into
+  a principal. Without TLS-level mTLS configured, there will be no client CN for this provider to
+  read.
+</Callout>
+
+## Example
+
+```yaml
+gateway:
+  listen: "0.0.0.0:8443"
+  tls:
+    cert_file: /etc/octopus/tls/server-cert.pem
+    key_file: /etc/octopus/tls/server-key.pem
+    client_ca_file: /etc/octopus/tls/client-ca.pem
+    require_client_cert: true
+
+auth_providers:
+  client-certs:
+    type: mtls
+    client_ca_file: /etc/octopus/tls/client-ca.pem
+    require_client_cert: true
+    extract_cn_as_principal: true
+    cn_to_roles:
+      "*": ["client"]
+      ".internal.example.com": ["internal-service"]
+      "admin.client.example.com": ["admin"]
+
+auth:
+  default_provider: client-certs
+  global_enforce: true
+```
+
+## See also
+
+- [TLS](/docs/security/tls) — terminating TLS and requiring/verifying client certificates.
+- [Authentication flow](/docs/security/authentication).
+- [Configuration reference](/docs/configuration/auth) and [TLS configuration](/docs/configuration/tls).

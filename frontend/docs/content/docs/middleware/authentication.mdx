@@ -1,0 +1,172 @@
+---
+title: Authentication gateway
+description: The global auth/authz middleware — when it activates, how it selects a provider, the headers it injects, and its error responses.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+# Authentication gateway
+
+The auth gateway (`AuthGatewayMiddleware`) is one of only two middleware Octopus
+adds to its global chain from configuration. When active, it runs on every
+request before proxying, authenticating the caller and enforcing authorization.
+
+This page focuses on the **middleware behavior**. Provider configuration
+(`auth_providers`) and authorization rules (`auth.authz`) are documented in full
+under [Authentication & authorization](/docs/configuration/auth); the overall
+trust model is in [Security](/docs/security).
+
+## When it is active
+
+The middleware is added to the chain **only when** at least one of these holds:
+
+- [`auth_providers`](/docs/configuration/auth) has one or more entries, **or**
+- [`auth.global_enforce`](/docs/configuration/auth) is `true`.
+
+If neither holds, no auth middleware is in the chain and all requests pass
+through unauthenticated.
+
+When active, the server also instantiates each configured provider (JWT, OIDC,
+API key, forward-auth, mTLS), builds the authorization evaluator from
+`auth.authz`, and spawns a background task that prunes the token cache every
+120 seconds.
+
+## Request flow
+
+For each request the middleware runs the following steps:
+
+<Steps>
+
+<Step>
+### Skip `OPTIONS`
+
+`OPTIONS` (CORS preflight) requests bypass auth entirely and pass through.
+</Step>
+
+<Step>
+### Skip configured paths
+
+If the request path matches any pattern in
+[`auth.skip_paths`](/docs/configuration/auth), auth is skipped. Patterns ending
+in `*` are treated as prefix matches; otherwise an exact match is required.
+</Step>
+
+<Step>
+### Honor per-route `skip_auth`
+
+If the matched route has `skip_auth: true`, auth is skipped. The route context
+is injected into request extensions by the handler before the chain runs.
+</Step>
+
+<Step>
+### Select a provider
+
+The provider is the route's `auth_provider` if set, otherwise
+`auth.default_provider`. If neither resolves to a provider:
+- with `global_enforce: true`, the request fails with `500 configuration_error`;
+- otherwise it passes through.
+</Step>
+
+<Step>
+### Authenticate
+
+The selected provider validates the request (bearer token, API key, client cert,
+or external subrequest). Validated tokens are cached for `auth.token_cache_ttl`.
+</Step>
+
+<Step>
+### Authorize
+
+On success, role/scope/`authz_rule` checks run against the matched route via the
+authorization evaluator (Rhai and/or OPA per `auth.authz.engine`). A deny
+produces `403 forbidden`.
+</Step>
+
+<Step>
+### Inject principal headers and proxy
+
+The authenticated principal's id, roles, and scopes are written to upstream
+request headers (see below), the principal is stored in request extensions, and
+the request continues to the proxy.
+</Step>
+
+</Steps>
+
+## Injected upstream headers
+
+On successful authentication the middleware adds these headers to the request
+forwarded upstream. The header names are configurable via `auth.*`:
+
+| Header (config key) | Default | Contents |
+| --- | --- | --- |
+| `auth.principal_header` | `X-Auth-Principal` | The principal id |
+| `auth.roles_header` | `X-Auth-Roles` | Comma-separated roles (omitted if empty) |
+| `auth.scopes_header` | `X-Auth-Scopes` | Comma-separated scopes (omitted if empty) |
+
+The middleware also stores an identity-based rate-limit key
+(`user:<principal-id>`) in request extensions for a downstream rate limiter.
+
+<Callout type="warn" title="The rate-limit key is set but not consumed today">
+  The auth gateway populates an `AuthRateLimitKey` extension, but the rate-limit
+  middleware that would read it is **not** in the runtime chain. So identity-based
+  rate limiting is plumbed but not active. See [Rate limiting](/docs/middleware/rate-limiting).
+</Callout>
+
+## Error responses
+
+Errors are returned as JSON with an `error` and `message` field (provider name
+included when known):
+
+| Status | `error` | Cause |
+| --- | --- | --- |
+| `401` | `unauthorized` | Failed credentials, or missing credentials while `global_enforce: true` |
+| `403` | `forbidden` | Authenticated but authorization denied (roles/scopes/rule) |
+| `500` | `auth_error` | The provider errored while validating |
+| `500` | `configuration_error` | `global_enforce` on, but no provider could be selected |
+
+For `401` responses, a `WWW-Authenticate` challenge is added based on the
+provider type: `Bearer` for JWT/OIDC/forward-auth, `ApiKey` for API-key
+providers, and none for mTLS.
+
+<Callout type="info" title="Behavior without enforcement">
+  With `global_enforce: false`, a request that presents *no* credentials passes
+  through unauthenticated (the upstream sees no principal headers). Only invalid
+  credentials produce `401`. Set `global_enforce: true` to require authentication
+  on every non-skipped route.
+</Callout>
+
+## Configuration
+
+The middleware is driven by the `auth` block and the `auth_providers` map. A
+minimal example that activates the gateway with global enforcement and a single
+JWT provider:
+
+```yaml
+auth_providers:
+  primary:
+    type: jwt
+    secret: ${JWT_SECRET}
+    algorithm: HS256
+    issuer: https://issuer.example.com
+    audience: octopus
+
+auth:
+  default_provider: primary
+  global_enforce: true
+  skip_paths:
+    - /health
+    - /public/*
+  token_cache_ttl: 60s
+```
+
+See [Authentication & authorization](/docs/configuration/auth) for the full
+schema of every provider type, the `authz` engine options, and per-route
+overrides on [Routes](/docs/configuration/routes).
+
+## Related
+
+- [Authentication & authorization](/docs/configuration/auth) — provider and authz schema.
+- [Routes](/docs/configuration/routes) — per-route `auth_provider`, `skip_auth`, roles/scopes.
+- [Security](/docs/security) — the overall security model.
+- [Middleware overview](/docs/middleware) — how this fits the global chain.

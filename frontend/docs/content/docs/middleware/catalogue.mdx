@@ -1,0 +1,72 @@
+---
+title: Catalogue
+description: Reference for every built-in middleware that is implemented but not exposed through gateway configuration today.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Middleware catalogue
+
+This page catalogues the `octopus-middleware` implementations that are **not**
+wired to gateway configuration or the runtime chain. They are complete, tested
+Rust middleware reachable only by embedding Octopus as a library — for example
+via `MiddlewareBuilder` or by constructing the type directly and adding it with
+`MiddlewareBuilder::with_middleware`.
+
+<Callout type="warn" title="None of these run from gateway YAML">
+  There is no config key that activates any middleware on this page. The standard
+  gateway binary's chain contains at most
+  [compression](/docs/middleware/compression) and the
+  [auth gateway](/docs/middleware/authentication). To use anything here you must
+  compose a chain in code — see
+  [Using middleware programmatically](/docs/middleware#using-middleware-programmatically).
+  [CORS](/docs/middleware/cors) and [rate limiting](/docs/middleware/rate-limiting)
+  have their own pages because they additionally have (unenforced) config schema.
+</Callout>
+
+## Request context & tracing
+
+| Middleware | Source | What it does |
+| --- | --- | --- |
+| Request ID | `request_id.rs` | Generates a request ID (UUID v4 by default) and writes it to a header (default `X-Request-ID`). Distinct from the proxy's always-on `X-Request-ID` injection toward upstreams. |
+| Logging | `logging.rs` | Structured request/response access logging. |
+| Audit logger | `audit_logger.rs` | Logs security-relevant events (auth, access) for compliance/forensics, with configurable output sinks. |
+
+## Resilience & flow control
+
+| Middleware | Source | What it does |
+| --- | --- | --- |
+| Timeout | `timeout.rs` | Cancels a request that exceeds the configured duration (default 30s) and returns `504 Gateway Timeout`. Note the live gateway timeout comes from `gateway.request_timeout`/`routes[].timeout` applied at the proxy/router, not this middleware. |
+| Retry | `retry.rs` | Re-runs the inner chain with exponential backoff on transient failures. The proxy also has its own retry path. |
+| Circuit breaker | `circuit_breaker.rs` | Per-upstream Closed → Open → Half-Open breaker using a lock-free map. See the [circuit breaker concept](/docs/concepts/circuit-breaker). |
+| Deduplication | `deduplication.rs` | Request idempotency / dedup of in-flight or repeated requests. |
+| Connection limits | `connection_limits.rs` | Caps concurrent connections to prevent resource exhaustion. |
+| Request limits | `request_limits.rs` | Caps request component sizes (body, headers, URI). |
+| Canary | `canary.rs` | Weighted traffic splitting between upstreams for canary/blue-green rollouts. |
+
+## Security
+
+| Middleware | Source | What it does |
+| --- | --- | --- |
+| Security headers | `security_headers.rs` | Adds hardening headers: `Strict-Transport-Security`, `Content-Security-Policy`, `X-Frame-Options`, `X-Content-Type-Options`, `X-XSS-Protection`, `Referrer-Policy`, `Permissions-Policy`. |
+| WAF | `waf.rs` | Web application firewall: detects SQL-injection and XSS patterns. Supports `Block` and `LogOnly` modes and configurable targets. |
+| IP filter | `ip_filter.rs` | Allowlist/blocklist by IP address or CIDR pattern. |
+| Bot detection | `bot_detection.rs` | Blocks or flags requests by `User-Agent` patterns. |
+| JWT | `jwt.rs` | Standalone JWT validation (RS256/HS256/etc.). For gateway auth, prefer the JWT [auth provider](/docs/configuration/auth) consumed by the [auth gateway](/docs/middleware/authentication) rather than this middleware. |
+| Forward auth | `forward_auth.rs` | Delegates auth to an external subrequest (200 = allow, 401/403 = deny). Also available as an [auth provider](/docs/configuration/auth). |
+
+## Transformation
+
+| Middleware | Source | What it does |
+| --- | --- | --- |
+| Header transform | `header_transform.rs` | Add / set / remove / rename headers on requests and responses. |
+| Body transform | `body_transform.rs` | Field-level JSON body transforms (remove / rename / set / redact) on JSON payloads. |
+| Redirect | `redirect.rs` | Regex path redirects, HTTPS enforcement, and trailing-slash normalization. |
+| Caching | `caching.rs` | In-memory response cache keyed by method/path/query/headers, with TTL expiry and FIFO eviction. |
+
+## Related
+
+- [Middleware overview](/docs/middleware) — the global chain and full status table.
+- [Middleware concept](/docs/concepts/middleware) — the architectural model.
+- [Authentication gateway](/docs/middleware/authentication) — the wired auth middleware.
+- [Compression](/docs/middleware/compression) — the wired compression middleware.

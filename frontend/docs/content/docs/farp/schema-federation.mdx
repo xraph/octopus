@@ -1,0 +1,165 @@
+---
+title: Schema federation
+description: How FARP turns published service schemas into gateway routes and a single federated API surface — which schema formats are supported, and how routes are reconciled on change.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tabs } from 'fumadocs-ui/components/tabs';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+import { Card, Cards } from 'fumadocs-ui/components/card';
+
+# Schema federation
+
+Once a [discovery backend](/docs/farp/backends) tells FARP where a service lives, FARP fetches that
+service's published schema and does two things with it:
+
+1. **Generates routes** so the gateway can proxy requests to the service.
+2. **Federates** it into a single, gateway-wide API surface that combines every registered service.
+
+There are two ways a schema reaches FARP, and they support different formats — so it is worth being
+precise about each.
+
+## Two registration paths
+
+<Tabs items={['Auto-discovery (pull)', 'Self-registration (push)']}>
+
+<div title="Auto-discovery (pull)">
+
+A discovery backend reports an instance; the gateway's discovery watcher fetches its schema and
+generates routes on every `farp.watch_interval` tick.
+
+This path fetches **OpenAPI only**. The watcher reads the OpenAPI path from the instance's
+`farp.openapi.path` metadata (default `/openapi.json`), retrieves the document over HTTP, stores it,
+and generates routes from its `paths`. AsyncAPI / gRPC / GraphQL endpoints can be *advertised* in
+metadata but are not turned into routes by this path.
+
+A FARP v1.1.0 manifest may also carry a pre-computed `route_table`; when present, the watcher uses
+those route descriptors directly instead of parsing the OpenAPI document.
+
+</div>
+
+<div title="Self-registration (push)">
+
+A service calls the gateway's FARP API (`POST /farp/register`) and supplies its schemas inline.
+
+This path runs the route generator over **each** schema it receives, so it additionally supports
+AsyncAPI and GraphQL route generation (see the table below). The same registration also feeds the
+federation engine.
+
+</div>
+
+</Tabs>
+
+<Callout type="warn">
+  Auto-discovery is the common case, and it generates routes from **OpenAPI** documents only. If
+  your services expose AsyncAPI/GraphQL and you want routes generated automatically, use the push
+  registration API (or supply a v1.1.0 `route_table`). Don't assume gRPC routes are generated — see
+  below.
+</Callout>
+
+## Supported schema formats
+
+FARP recognises five schema format tags: `openapi`, `asyncapi`, `grpc`, `graphql`, and `custom`.
+Support differs between route generation and federation:
+
+| Format | Auto-discovery routes | Push-registration routes | Federation (merge into unified surface) |
+| --- | --- | --- | --- |
+| **OpenAPI** | Yes — paths × methods become routes | Yes | Yes — true structural merge of paths/components |
+| **AsyncAPI** | No | Yes — channels become `GET /ws{channel}` routes | Yes — structural merge of channels |
+| **GraphQL** | No | Yes — `POST`/`GET /graphql` endpoint routes | Concatenation only (schemas are joined as text, not stitched) |
+| **gRPC** | No | No — returns an "unsupported format" error | Concatenation only (no real proto merge) |
+| **Custom** | No | No | Concatenation only |
+
+<Callout type="info">
+  "Concatenation only" means the federation engine joins the source documents into one text blob
+  with per-service comment headers; it does not perform a semantic merge. Only OpenAPI and AsyncAPI
+  go through real structural mergers.
+</Callout>
+
+## How OpenAPI routes are generated
+
+For each path in the OpenAPI document, FARP creates one route per HTTP method
+(`GET`/`POST`/`PUT`/`DELETE`/`PATCH`/`HEAD`/`OPTIONS`; other keys like `parameters` are skipped).
+Routes are mounted under a service prefix and the prefix is stripped before proxying upstream:
+
+- A path `/users/{id}` on service `orders` becomes a route at `/orders/users/{id}`.
+- The service prefix (`/orders`) is stripped, so the upstream still sees `/users/{id}`.
+- Routes are registered at priority `100` and point at an upstream cluster named after the service.
+
+If the service's manifest declares an `auth_config` (an auth provider, required roles, or required
+scopes), those settings are applied to every generated route.
+
+<Callout type="info">
+  Introspection endpoints are filtered out by default — paths like `/`, `/health`, `/docs*`,
+  `/openapi*`, `/asyncapi*`, and `/_farp/*` are excluded from both generated routes and the
+  federated spec. Set `FARP_INCLUDE_INTROSPECTION_ENDPOINTS=1` to keep them.
+</Callout>
+
+## The federated API surface
+
+As schemas are registered, FARP merges them per format and serves the combined results. The merged
+OpenAPI document rewrites its `servers` array to the gateway root (`/`) so "Try it out" requests in
+the docs UIs hit the gateway rather than the original fetch URL.
+
+The federation engine exposes these endpoints from the FARP API handler:
+
+| Endpoint | Serves |
+| --- | --- |
+| `GET /farp/openapi.json` | Merged OpenAPI spec (also at `/openapi.json`). |
+| `GET /farp/asyncapi.json` | Merged AsyncAPI spec (also at `/asyncapi.json`). |
+| `GET /farp/graphql` | Combined GraphQL schemas (also at `/graphql`). |
+| `GET /farp/grpc` | Combined gRPC/proto schemas (also at `/grpc`). |
+| `GET /farp/schemas` | Lists the federated formats currently available. |
+| `GET /farp/docs` | Swagger UI over the merged OpenAPI spec. |
+| `GET /farp/redoc` | Redoc UI over the merged OpenAPI spec. |
+
+<Callout type="info">
+  By default, service tags from each source spec are kept so operations stay grouped by service.
+  Set `FARP_COLLAPSE_SERVICE_TAGS=1` (or the per-service
+  `farp.collapse_service_tags = true` metadata) to collapse them into a single tag per service.
+</Callout>
+
+## How changes are reconciled
+
+FARP keeps the gateway in sync with the live fleet on every watch tick:
+
+<Steps>
+
+<Step>
+**New instance appears.** Once an instance advertises `farp.enabled = true`, FARP registers it,
+fetches its OpenAPI schema, registers an upstream cluster, and generates routes.
+</Step>
+
+<Step>
+**Instance disappears.** A missing instance is not removed immediately. FARP counts consecutive
+missed discovery cycles and only deregisters the service after a grace period (3 missed cycles by
+default — e.g. 15 seconds at a 5s `watch_interval`). This rides out transient blips.
+</Step>
+
+<Step>
+**Schema cache expires.** When a registration is older than `farp.schema_cache_ttl` (default 5m),
+the next discovery cycle re-fetches the service's schema, clears the stale schemas, and re-generates
+routes.
+</Step>
+
+<Step>
+**Routes change (v1.1.0).** Manifests can carry a `routes_checksum`. If the checksum is unchanged
+since the last sync, FARP skips route regeneration entirely; when it changes, routes are
+re-generated for an atomic swap.
+</Step>
+
+</Steps>
+
+<Callout type="info">
+  After the first full discovery pass completes, FARP flips a readiness flag so the gateway's
+  `/readyz` probe only reports ready once discovery has converged. See
+  [Kubernetes probes & drain](/docs/kubernetes/probes-and-drain).
+</Callout>
+
+## Where to go next
+
+<Cards>
+  <Card title="Discovery backends" description="Configure where FARP finds your services." href="/docs/farp/backends" />
+  <Card title="FARP concept" description="The conceptual model behind discovery and auto-routing." href="/docs/concepts/farp" />
+  <Card title="Routing" description="How generated routes fit into the gateway's routing model." href="/docs/concepts/routing" />
+</Cards>

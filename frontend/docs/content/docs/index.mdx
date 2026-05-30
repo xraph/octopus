@@ -25,22 +25,22 @@ Octopus is maintained by [Xraph](https://github.com/xraph) and is part of the
   <Card title="⚡ Fast by default" description="An async core built on Tokio and Hyper, a trie-based router, connection pooling, and Rhai scripts that run in microseconds." />
   <Card title="🔄 Schema-driven discovery" description="FARP watches services and generates routes from their published schemas — no hand-written route tables required." />
   <Card title="☸️ Kubernetes-first" description="An in-process operator programs the router from the Gateway API and Octopus CRDs, with probes, graceful drain, EndpointSlice discovery, and cert-manager TLS." />
-  <Card title="🧩 Extensible" description="An ordered middleware chain, a plugin system, and inline/file Rhai scripting for custom request and response logic." />
-  <Card title="🌐 Multi-protocol" description="HTTP/1.1 and HTTP/2 reverse proxying with WebSocket upgrades, plus gRPC, Server-Sent Events, and GraphQL." />
-  <Card title="📊 Observable" description="Prometheus metrics, OpenTelemetry/Jaeger tracing, structured JSON logging, and a built-in admin dashboard and API." />
+  <Card title="🧩 Extensible" description="A middleware chain, an embedded Rhai scripting engine, and a plugin SDK for custom behaviour." />
+  <Card title="🌐 Multi-protocol" description="HTTP/1.1 and HTTP/2 reverse proxying with WebSocket upgrades, plus gRPC and Server-Sent Events." />
+  <Card title="📊 Observable" description="Prometheus metrics, structured logging, and a built-in admin dashboard and REST API." />
 </Cards>
 
 ## Capabilities
 
 - **Reverse proxy** — HTTP/1.1 and HTTP/2 with connection pooling, configurable timeouts, and WebSocket upgrades.
 - **Routing** — a trie-based router with wildcard path matching, method filtering, prefix rewriting, and per-route priorities.
-- **Load balancing & resilience** — round-robin and weighted policies with active health checks, circuit breaking, and bulkheads.
-- **Service discovery** — FARP-driven discovery with backends for mDNS, Consul, etcd, DNS, and Kubernetes (EndpointSlice).
-- **Middleware** — a request/response chain: request IDs, CORS, authentication, rate limiting, compression (brotli, zstd, gzip), transformations, caching, and more.
-- **Security** — JWT, OIDC, API-key, forward-auth, and mTLS authentication; role/scope and Rhai/OPA authorization; TLS termination with hot certificate reloading.
-- **Scripting & plugins** — inline or file-based [Rhai](https://rhai.rs) scripts, plus a static/dynamic plugin system.
+- **Load balancing & resilience** — round-robin and weighted load balancing, active health checks, and circuit breaking.
+- **Service discovery** — FARP-driven discovery with backends for mDNS, Consul, DNS, and Kubernetes (EndpointSlice).
+- **Middleware** — compression and authentication run in the request chain today; the `octopus-middleware` crate also provides CORS, rate limiting, transformations, caching, a WAF, and more (see [Middleware](/docs/middleware) for what's currently wired).
+- **Security** — JWT, OIDC, API-key, forward-auth, and mTLS authentication; role/scope and Rhai/OPA authorization; TLS termination with mutual TLS (certificate hot-reload on the Kubernetes path).
+- **Scripting & plugins** — an embedded [Rhai](https://rhai.rs) scripting engine and a plugin SDK (`octopus-plugin-api`) for custom behaviour.
 - **Kubernetes** — an operator for the Gateway API (`HTTPRoute`/`GRPCRoute`) and Octopus CRDs, health probes, graceful drain, and a Helm chart.
-- **Observability** — Prometheus metrics, OpenTelemetry/Jaeger tracing, and structured JSON logging.
+- **Observability** — Prometheus metrics, structured logging, and a built-in admin dashboard and REST API (distributed tracing is planned).
 - **Configuration** — layered YAML, JSON, or TOML with `${VAR}` / `${VAR:-default}` environment substitution and multi-file merging.
 
 ## Protocol support
@@ -49,10 +49,10 @@ Octopus is maintained by [Xraph](https://github.com/xraph) and is part of the
 |----------|:------:|-------|
 | HTTP/1.1 | ✅ | Reverse proxy with connection pooling |
 | HTTP/2 | ✅ | Multiplexing |
-| gRPC | ✅ | Proxying over HTTP/2 |
+| gRPC | ✅ | Transparent HTTP/2 (h2c) proxy; no reflection or transcoding |
 | WebSocket | ✅ | Bidirectional upgrade proxying |
 | Server-Sent Events | ✅ | Streaming responses |
-| GraphQL | ✅ | Routing to GraphQL upstreams |
+| GraphQL | 🚧 | Endpoint stub — not yet proxied or federated |
 | HTTP/3 (QUIC) | 🚧 | Planned |
 
 ## Quick example

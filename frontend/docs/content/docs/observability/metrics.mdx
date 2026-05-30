@@ -1,0 +1,135 @@
+---
+title: Metrics
+description: The Prometheus /metrics endpoint, the exact metric names Octopus emits, and how to scrape them.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+# Metrics
+
+Octopus exposes gateway metrics in Prometheus text format. The endpoint is
+served directly on the gateway listen port, so a Prometheus scrape, a
+`ServiceMonitor`, or a `prometheus.io/scrape` pod annotation can reach it without
+a sidecar or a second port.
+
+## The endpoint
+
+The metrics handler answers on two fixed paths on the gateway listener:
+
+```bash
+curl http://localhost:8080/metrics
+# alias:
+curl http://localhost:8080/__metrics
+```
+
+The response is served with `Content-Type: text/plain; version=0.0.4` — the
+Prometheus exposition format.
+
+<Callout type="warn">
+  The path is **fixed** to `/metrics` (and its `/__metrics` alias). The
+  [`observability.metrics.endpoint`](/docs/configuration/observability) field is
+  part of the config schema but does not currently re-route the metrics handler,
+  and `observability.metrics.enabled` does not gate it — the endpoint responds
+  regardless. Treat those fields as informational for now and scrape `/metrics`.
+</Callout>
+
+## Metrics emitted
+
+The Prometheus exporter writes the following series. These are the names and
+types declared in the exporter's header and emitted in its body.
+
+| Metric | Type | Labels | Meaning |
+| --- | --- | --- | --- |
+| `octopus_requests_total` | counter | none | Total HTTP requests handled by the gateway. |
+| `octopus_active_connections` | gauge | none | Current number of active connections. |
+| `octopus_requests_duration_seconds` | histogram | none | Request duration. Emitted as `_sum`, `_count`, and `_bucket{le=...}` series. |
+
+A typical scrape looks like:
+
+```text
+# HELP octopus_requests_total Total number of HTTP requests
+# TYPE octopus_requests_total counter
+octopus_requests_total {} 1024
+# HELP octopus_active_connections Current number of active connections
+# TYPE octopus_active_connections gauge
+octopus_active_connections {} 7
+# HELP octopus_requests_duration_seconds HTTP request duration in seconds
+# TYPE octopus_requests_duration_seconds histogram
+octopus_requests_duration_seconds_sum {} 12.288000
+octopus_requests_duration_seconds_count {} 1024
+octopus_requests_duration_seconds_bucket{le="0.005"} 0
+octopus_requests_duration_seconds_bucket{le="0.01"} 1024
+...
+octopus_requests_duration_seconds_bucket{le="+Inf"} 1024
+```
+
+<Callout type="info">
+  **Histogram fidelity.** The duration histogram is derived from the running
+  **average** latency rather than from per-request bucket counts. The buckets
+  use the standard Prometheus boundaries (`0.005 … 10.0` seconds), but the
+  bucket distribution is an approximation, not an exact per-request tally. Use it
+  for trends, not for precise percentile alerting.
+</Callout>
+
+### Per-route metrics
+
+The exporter declares HELP/TYPE headers for per-route series
+(`octopus_route_requests_total`, `octopus_route_errors_total`,
+`octopus_route_latency_seconds`), but the current exporter does **not** emit the
+per-route data lines — it writes only a comment with the route count. Rich
+per-route data (request count, error count, p50/p95/p99 latency, error rate) is
+collected internally and is available through the
+[Admin API](/docs/observability/admin-api) (for example `GET /admin/api/routes`
+and `GET /admin/api/analytics`), not yet through `/metrics`.
+
+### Fallback output
+
+If the gateway is running without a metrics collector wired in, the endpoint
+falls back to a two-metric body: `octopus_requests_total` (from a request
+counter) and `octopus_routes_total` (the number of configured routes). In a
+normal `octopus serve` deployment the full collector is wired, so you will see
+the table above.
+
+## Scraping with Prometheus
+
+<Steps>
+
+<Step>
+### Point Prometheus at the gateway
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: octopus-gateway
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['octopus-gateway:8080']
+```
+
+</Step>
+
+<Step>
+### Verify the scrape
+
+```bash
+curl -s http://octopus-gateway:8080/metrics | grep octopus_requests_total
+```
+
+</Step>
+
+</Steps>
+
+## Kubernetes ServiceMonitor
+
+In Kubernetes the metrics endpoint sits on the same container port as gateway
+traffic. The Helm chart documents how to expose it to the Prometheus Operator
+via a `ServiceMonitor`, and how to set scrape annotations. See
+[Kubernetes → Helm chart](/docs/kubernetes/helm-chart) for the chart values that
+control metrics scraping.
+
+## Related
+
+- [Configuration → Observability](/docs/configuration/observability) — the `metrics` block.
+- [Health probes](/docs/observability/health-probes) — liveness/readiness, also served on the listen port.
+- [Admin API](/docs/observability/admin-api) — per-route and analytics data not exposed via `/metrics`.

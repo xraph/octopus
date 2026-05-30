@@ -1,0 +1,274 @@
+---
+title: Admin API
+description: The /admin/api JSON REST reference, grounded in the Octopus admin route table and response models.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Admin API
+
+The admin dashboard is backed by a JSON REST API under `/admin/api`, served on
+the gateway listen port. Every endpoint below is taken from the admin router's
+route table; response shapes are taken from the admin response models.
+
+<Callout type="info">
+  The `/admin*` space — including this API — is protected by
+  `admin.auth_provider` when set, but **not** by `admin.allowed_ips` (which is
+  not enforced today). See [Admin dashboard](/docs/observability/admin-dashboard)
+  for how to lock it down.
+</Callout>
+
+<Callout type="warn">
+  **Write endpoints (`POST` / `PUT` / `DELETE`) cannot currently be driven
+  through the gateway listener.** The runtime bridges admin requests into the
+  internal router with an **empty body** and only the method and path. Handlers
+  that deserialize a JSON body (route create/update, config update, plugin
+  config) will not receive your payload over the gateway port. The endpoints are
+  documented here for completeness, but treat the API as effectively read-only
+  through the gateway today.
+</Callout>
+
+## Metrics & analytics
+
+| Method | Path | Returns |
+| --- | --- | --- |
+| `GET` | `/admin/api/stats` | `DashboardStats` — aggregate gateway stats. |
+| `GET` | `/admin/api/metrics/realtime` | `DashboardStats` — same shape, for live refresh. |
+| `GET` | `/admin/api/analytics?timeframe=24h` | `AnalyticsMetrics` — top routes, latency percentiles, traffic by method. |
+| `GET` | `/admin/api/metrics/timeseries?metric=requests&period=1h` | Array of `{ timestamp, value }`. `metric` is one of `requests`, `errors`, `latency`, `connections`. |
+| `GET` | `/admin/api/metrics/performance` | `PerformanceMetrics` — CPU/memory/connection figures. |
+
+`DashboardStats`:
+
+```json
+{
+  "total_requests": 0,
+  "active_routes": 0,
+  "avg_latency_ms": 0.0,
+  "health_status": "healthy",
+  "requests_per_second": 0.0,
+  "error_rate": 0.0,
+  "active_connections": 0,
+  "cpu_usage": 0.0,
+  "memory_usage": 0.0
+}
+```
+
+`AnalyticsMetrics`:
+
+```json
+{
+  "timeframe": "24h",
+  "request_volume": [],
+  "latency_percentiles": { "p50": 0.0, "p90": 0.0, "p95": 0.0, "p99": 0.0 },
+  "error_breakdown": {},
+  "top_routes": [
+    { "path": "/api/users", "requests": 0, "avg_latency": 0.0, "error_rate": 0.0 }
+  ],
+  "status_code_distribution": {},
+  "traffic_by_method": {}
+}
+```
+
+`PerformanceMetrics`:
+
+```json
+{
+  "cpu_usage": 0.0,
+  "memory_usage": 0.0,
+  "memory_total": 0,
+  "memory_available": 0,
+  "goroutines": 0,
+  "gc_count": 0,
+  "gc_pause_ms": 0.0
+}
+```
+
+<Callout type="info">
+  `goroutines`, `gc_count`, and `gc_pause_ms` are carry-over field names in the
+  model. Octopus is a Rust service; `goroutines` is populated with the active
+  connection count and the GC fields are always `0`.
+</Callout>
+
+## Routes (CRUD)
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/admin/api/routes` | List all routes — array of `RouteInfo`. |
+| `POST` | `/admin/api/routes` | Create a route from a `RouteConfig` body (see write caveat above). |
+| `GET` | `/admin/api/routes/:id` | A single `RouteInfo` by id, or `{ "error": "Route not found", "id": ... }`. |
+| `PUT` | `/admin/api/routes/:id` | Replace a route (remove + add) from a `RouteConfig` body. |
+| `DELETE` | `/admin/api/routes/:id` | Delete a route by id. |
+
+### `GET /admin/api/routes` — the route-config endpoint
+
+Returns an array of `RouteInfo`, combining each route's **operational metrics**
+with its **effective configuration**:
+
+```json
+[
+  {
+    "id": "route-0",
+    "path": "/api/users",
+    "method": "GET",
+    "upstream": "users-svc",
+    "request_count": 0,
+    "is_healthy": true,
+    "avg_latency_ms": 0.0,
+    "error_count": 0,
+    "last_accessed": null,
+
+    "priority": 0,
+    "strip_prefix": null,
+    "add_prefix": null,
+    "auth_provider": null,
+    "skip_auth": false,
+    "require_roles": [],
+    "require_scopes": [],
+    "authz_rule": null,
+    "timeout_ms": null,
+    "rate_limit": null
+  }
+]
+```
+
+Field meanings:
+
+| Field | Type | Source |
+| --- | --- | --- |
+| `id` | string | Synthetic id (`route-<index>`). |
+| `path` | string | Route match path. |
+| `method` | string | HTTP method. |
+| `upstream` | string | Target upstream name. |
+| `request_count` | integer | Requests recorded for this route. |
+| `is_healthy` | boolean | Upstream health (from the health tracker; `true` if no tracker). |
+| `avg_latency_ms` | number | Average latency for the route. |
+| `error_count` | integer | Errors recorded for this route. |
+| `last_accessed` | string \| null | Always `null` currently. |
+| `priority` | integer | Route match priority (higher wins). |
+| `strip_prefix` | string \| null | Prefix stripped before proxying. |
+| `add_prefix` | string \| null | Prefix added before proxying. |
+| `auth_provider` | string \| null | Auth provider enforced on the route. |
+| `skip_auth` | boolean | Whether auth is skipped. |
+| `require_roles` | string[] | Required roles. |
+| `require_scopes` | string[] | Required scopes. |
+| `authz_rule` | string \| null | Authorization rule expression. |
+| `timeout_ms` | integer \| null | Per-route timeout. |
+| `rate_limit` | object \| null | `{ "requests": <n>, "window_ms": <ms> }` if set. |
+
+`RouteConfig` (the `POST`/`PUT` body shape):
+
+```json
+{
+  "id": null,
+  "path": "/api/users",
+  "method": "GET",
+  "upstream": "users-svc",
+  "timeout_ms": null,
+  "retry_count": null,
+  "circuit_breaker": null,
+  "rate_limit": null
+}
+```
+
+## Plugins
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/admin/api/plugins` | List plugins (`PluginInfo`). |
+| `GET` | `/admin/api/plugins/:id` | Get one plugin. |
+| `POST` | `/admin/api/plugins/:id/toggle` | Enable/disable a plugin. |
+| `PUT` | `/admin/api/plugins/:id/config` | Update plugin config (body). |
+
+## Logs & monitoring
+
+| Method | Path | Returns |
+| --- | --- | --- |
+| `GET` | `/admin/api/logs` | Log entries (`ActivityLogEntry`). |
+| `GET` | `/admin/api/activity` | Recent activity (up to 50 entries) as `ActivityLogEntry`. |
+| `GET` | `/admin/api/health` | Health checks (`HealthCheckInfo`). |
+| `GET` | `/admin/api/security/events` | Security events (`SecurityEvent`). |
+
+## Configuration
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/admin/api/config` | List configuration items (`ConfigItem`). |
+| `PUT` | `/admin/api/config/:key` | Note a config update (does not mutate runtime). |
+
+`GET /admin/api/config` returns a curated list of `ConfigItem`s, each:
+
+```json
+{
+  "key": "server.listen",
+  "value": "0.0.0.0:8080",
+  "description": "Server listen address",
+  "editable": false
+}
+```
+
+Keys surfaced today include `server.listen`, `server.workers`,
+`server.request_timeout_ms`, `server.max_body_size`, `compression.enabled`,
+`farp.enabled`, `observability.logging.level`, and
+`observability.metrics.enabled`.
+
+<Callout type="warn">
+  Configuration is **immutable at runtime**. `PUT /admin/api/config/:key` only
+  logs the request and returns
+  `{ "success": true, "message": "... requires restart to take effect" }`;
+  it does not change the running configuration.
+</Callout>
+
+## Upstreams, services & circuits
+
+| Method | Path | Returns |
+| --- | --- | --- |
+| `GET` | `/admin/api/upstreams` | Upstream clusters with per-instance health (`UpstreamClusterInfo`). |
+| `GET` | `/admin/api/services` | Configured services. |
+| `GET` | `/admin/api/circuits` | Circuit-breaker state per upstream. |
+| `GET` | `/admin/api/health/checks` | Detailed health-check results. |
+| `GET` | `/admin/api/openapi.json` | Generated OpenAPI document for the gateway. |
+
+## FARP
+
+| Method | Path | Returns |
+| --- | --- | --- |
+| `GET` | `/admin/api/farp/services` | Registered FARP services (`FarpServiceInfo`). |
+| `GET` | `/admin/api/farp/services/:name` | Detail for one FARP service. |
+| `GET` | `/admin/api/farp/schema/openapi` | Federated OpenAPI schema across FARP services. |
+
+## System, auth & gRPC
+
+| Method | Path | Returns |
+| --- | --- | --- |
+| `GET` | `/admin/api/system/info` | `SystemInfo` — version, uptime, host, OS/arch, CPU count, memory. |
+| `GET` | `/admin/api/auth/providers` | Configured auth providers. |
+| `GET` | `/admin/api/auth/config` | Auth configuration. |
+| `GET` | `/admin/api/grpc/services` | gRPC service mappings. |
+
+`SystemInfo`:
+
+```json
+{
+  "version": "0.1.0",
+  "uptime_seconds": 0,
+  "start_time": "2026-01-01 00:00:00",
+  "hostname": "octopus-0",
+  "os": "linux",
+  "arch": "aarch64",
+  "num_cpus": 8,
+  "total_memory": 0
+}
+```
+
+## Real-time events
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/admin/ws` | WebSocket upgrade for live dashboard events. |
+
+## Related
+
+- [Admin dashboard](/docs/observability/admin-dashboard) — the UI and how to protect this API.
+- [Metrics](/docs/observability/metrics) — Prometheus endpoint (distinct from this JSON API).
+- [Configuration → Admin](/docs/configuration/admin) — the `admin` block.

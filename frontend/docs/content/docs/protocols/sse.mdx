@@ -1,0 +1,81 @@
+---
+title: Server-Sent Events (SSE)
+description: Streaming SSE responses proxied to the client without buffering.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+# Server-Sent Events (SSE)
+
+Octopus proxies Server-Sent Events as a **streaming** response. Unlike the buffered HTTP
+path, the upstream's event stream is forwarded to the client incrementally, so events
+arrive as the upstream emits them.
+
+## Detection
+
+A request is handled as SSE when its `Accept` header contains `text/event-stream`. This
+check runs before the body is buffered so the response can be streamed back.
+
+## How it is handled
+
+<Steps>
+<Step>
+**Route match.** The upstream is selected by the normal router from the request host,
+method, and path.
+</Step>
+<Step>
+**Build the upstream request.** The path is rewritten with the route's `strip_prefix` /
+`add_prefix`, and the query string is preserved. The request body is read and forwarded,
+so **POST-based SSE** works. A relevant set of headers is forwarded: `Accept`,
+`Last-Event-ID`, `Authorization`, `Cookie`, `Content-Type`, `Content-Length`,
+`X-Forwarded-For` / `X-Forwarded-Proto` / `X-Forwarded-Host`, `X-Real-IP`, `Host`,
+`User-Agent`, and `Cache-Control`. If the client sent no `Accept`, the gateway adds
+`Accept: text/event-stream`.
+</Step>
+<Step>
+**Connect with timeout.** The gateway connects to the upstream with a 10-second connect
+timeout. The connection to the upstream is plaintext HTTP.
+</Step>
+<Step>
+**Stream the response.** The upstream response body is streamed straight to the client —
+no buffering. If the upstream did not set them, the gateway ensures
+`Content-Type: text/event-stream` and `Cache-Control: no-cache` on the response.
+</Step>
+</Steps>
+
+`Last-Event-ID` is forwarded to the upstream, so clients that reconnect can resume from
+where they left off — provided the upstream implements resume.
+
+## Example route
+
+SSE needs no special route — point a path at an upstream that emits an event stream:
+
+```yaml
+upstreams:
+  - name: events-service
+    instances:
+      - address: 127.0.0.1
+        port: 8080
+
+routes:
+  - path: /events
+    upstream: events-service
+```
+
+The client requests it with `Accept: text/event-stream`; the gateway does the rest. See
+[Routes](/docs/configuration/routes) and [Routing](/docs/concepts/routing).
+
+<Callout type="info">
+  The same upstream and route can serve normal JSON responses too — the gateway only
+  switches to the streaming SSE path when the client asks for `text/event-stream`.
+</Callout>
+
+## Limitations
+
+- Detection is purely `Accept`-header based. An upstream that emits `text/event-stream`
+  but is requested without that `Accept` value will be proxied on the buffered HTTP path
+  instead of the streaming path.
+- The upstream connection on the SSE path is plaintext HTTP.
+- The gateway does not synthesize keepalive comments or `retry:` directives itself; it
+  forwards whatever the upstream sends.

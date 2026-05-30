@@ -26,8 +26,10 @@ admin:
 | `allowed_ips` | array of string | `[]` | IP allowlist for admin access. Empty means all IPs are allowed. |
 
 <Callout type="warn">
-  With no `auth_provider` and an empty `allowed_ips`, the admin dashboard is reachable without
-  authentication. Set at least one of these in any non-local deployment.
+  With no `auth_provider` the admin dashboard is reachable without authentication. Note that
+  `allowed_ips` is currently **parsed but not enforced** — only `auth_provider` gates access today
+  (and static assets bypass it). Protect the admin surface at the network layer and with an
+  `auth_provider` in any non-local deployment. See [Admin API](/docs/observability/admin-api).
 </Callout>
 
 The dashboard is served under the gateway's internal route prefix (see

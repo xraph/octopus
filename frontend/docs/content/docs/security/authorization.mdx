@@ -1,0 +1,182 @@
+---
+title: Authorization
+description: Role and scope checks, per-route Rhai expressions, and global authorization rules evaluated by the embedded Rhai engine or an external OPA server.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Authorization
+
+After a request is authenticated, the auth-gateway authorizes the principal against the matched
+route's requirements and any global rules. Authorization runs only when there is a matched route's
+auth context; if the route has no auth-related fields, the principal proceeds with no additional
+checks beyond authentication.
+
+A denial returns `403 forbidden` with the reason and the principal's roles and scopes in the JSON
+body.
+
+## Evaluation order
+
+The `AuthzEvaluator` runs these steps in sequence and returns **deny** on the first failure:
+
+1. **Required roles** (`require_roles`) — if non-empty, the principal must have **at least one** of
+   the listed roles (any-of). Otherwise: deny.
+2. **Required scopes** (`require_scopes`) — if non-empty, the principal must have **all** of the
+   listed scopes (all-of). Otherwise: deny.
+3. **Route Rhai rule** (`authz_rule`) — if set, the expression is evaluated; if it denies, the
+   request is denied. (A rule that allows does not short-circuit — evaluation continues to global
+   rules.)
+4. **Global rules** (`auth.authz.global_rules`) — each rule is evaluated in order and may deny.
+
+If all steps pass, the request is **allowed**.
+
+<Callout type="info">
+  Steps 1 and 2 are plain Rust comparisons against the principal's roles/scopes — no scripting
+  engine is involved, so they are cheap and always available. A principal authenticated with empty
+  roles (for example a standard JWT without a `roles` claim) will fail any non-empty `require_roles`.
+</Callout>
+
+## Roles and scopes
+
+These come from the principal that the provider produced:
+
+- **JWT / OIDC** — roles from the `roles` claim, scopes from the whitespace-split `scope` claim.
+- **API key** — roles are always `["api_consumer"]`; scopes are the matched key entry's `scopes`.
+- **Forward auth** — roles and scopes from the auth service's `X-Auth-Role` / `X-Auth-Scopes`.
+- **mTLS** — roles from `cn_to_roles`; no scopes.
+
+Set them per route:
+
+```yaml
+routes:
+  - path: /admin/*
+    upstream: backend
+    require_roles: ["admin", "superadmin"]   # any-of
+    require_scopes: ["write"]                # all-of
+```
+
+## Rhai rules
+
+A Rhai expression evaluates to a boolean: **true means allow, false means deny**. If evaluation
+errors (syntax, runtime, or a non-boolean result), the rule is treated as **deny**. The engine is
+sandboxed with limits — max expression depth 25/10, max 10,000 operations, and max string size 4096
+bytes — so a runaway script is denied rather than hanging the request.
+
+Rules run with these variables and helper functions in scope:
+
+- `principal` — a map with `id`, `name`, `roles` (array), `scopes` (array), and `attributes` (map).
+- `request` — a map with `method` and `path`.
+- `has_role(role)` — true if the principal has `role`.
+- `has_scope(scope)` — true if the principal has `scope`.
+- `has_any_role(roles)` — true if the principal has any role in the array.
+- `has_all_roles(roles)` — true if the principal has every role in the array.
+
+```yaml
+routes:
+  - path: /reports/*
+    upstream: analytics
+    # Allow admins, or anyone with the reports scope doing a GET.
+    authz_rule: 'has_role("admin") || (has_scope("reports") && request.method == "GET")'
+```
+
+<Callout type="info">
+  The Rhai context exposes `request.method` and `request.path` (and the principal), but not request
+  headers or route metadata — those are only available to OPA (below).
+</Callout>
+
+## Global rules and the engine
+
+`auth.authz` configures the authorization engine and a list of global rules applied to every
+authenticated request after the per-route checks.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `engine` | `rhai` \| `opa` \| `both` | `rhai` | Default engine used to evaluate global rules. |
+| `global_rules` | list of [rules](#a-global-rule) | `[]` | Rules applied to all authenticated requests. |
+| `opa` | object | none | OPA connection settings (see [OPA](#opa)). |
+
+### A global rule
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `name` | string | — | Rule name, surfaced in deny reasons. **Required.** |
+| `description` | string | none | Free-text description. |
+| `engine` | `rhai` \| `opa` \| `both` | inherits `engine` | Override the engine for this rule. |
+| `rule` | string | — | A Rhai expression, or (for OPA) the policy is evaluated remotely. **Required.** |
+| `action` | `allow` \| `deny` | `allow` | How the rule's boolean outcome is interpreted (see below). |
+
+How `action` combines with a rule's boolean outcome:
+
+| `action` | Rule evaluates to allow (true) | Rule evaluates to deny (false) |
+| --- | --- | --- |
+| `allow` | continue (request stays allowed) | **deny** — "Not allowed by rule" |
+| `deny` | continue | **deny** — "Denied by rule" |
+
+In other words: with `action: allow`, the rule expresses a condition that *must hold* (a false
+result denies); with `action: deny`, the rule expresses a forbidden condition (a true/deny result
+denies). Any rule can short-circuit to a denial; rules never override an earlier denial.
+
+<Callout type="info">
+  Each global rule's effective engine is its own `engine` if set, else the top-level
+  `auth.authz.engine`. When a rule's engine is `opa` or `both` but no `opa` block is configured, the
+  rule silently falls back to evaluating its `rule` string as **Rhai**.
+</Callout>
+
+## OPA
+
+When `engine` is `opa` (or `both`) and an `opa` block is configured, global rules are decided by an
+external [Open Policy Agent](https://www.openpolicyagent.org/) server. The gateway POSTs an `input`
+document to the configured `endpoint` and reads a boolean `result`: `true` allows, anything else (or
+a missing result) denies.
+
+The `input.input` document sent to OPA contains:
+
+- `principal` — `id`, `name`, `roles`, `scopes`, `attributes`.
+- `request` — `method`, `path`, and the request `headers`.
+- `route` — `upstream`, `path`, and route `metadata`.
+
+| `opa` key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `endpoint` | string | — | OPA data API URL that returns `{ "result": <bool> }`. **Required.** |
+| `timeout` | duration | `100ms` | Per-request timeout to OPA. |
+| `cache_ttl` | duration | `300s` | How long an OPA decision is cached (keyed by principal id, method, path, and a hash of headers). |
+| `fail_open` | boolean | `false` | When OPA is unreachable or errors: `true` allows the request, `false` denies it. |
+
+<Callout type="warn">
+  `fail_open: true` means an OPA outage causes requests to be **allowed** rather than blocked. Use it
+  only when availability outweighs policy enforcement, and prefer `false` for sensitive routes.
+</Callout>
+
+```yaml
+auth:
+  default_provider: primary-jwt
+  global_enforce: true
+  authz:
+    engine: both
+    global_rules:
+      # Rhai: block a path outright (deny when the expression is true)
+      - name: block-internal
+        engine: rhai
+        rule: 'request.path == "/internal"'
+        action: deny
+      # OPA: defer the decision to a policy server
+      - name: opa-policy
+        engine: opa
+        rule: "data.octopus.allow"
+        action: allow
+    opa:
+      endpoint: http://opa:8181/v1/data/octopus/allow
+      timeout: 100ms
+      cache_ttl: 30s
+      fail_open: false
+```
+
+<Callout type="info">
+  For Rhai rules the `rule` string is the expression itself. For OPA the decision comes from the
+  `opa.endpoint` response; the rule's `rule` string is not evaluated locally when OPA handles it.
+</Callout>
+
+## See also
+
+- [Authentication](/docs/security/authentication) — producing the principal that gets authorized.
+- [Configuration reference](/docs/configuration/auth).

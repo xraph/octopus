@@ -1,70 +1,189 @@
 ---
-title: Plugins
-description: Extend Octopus with plugins
+title: Plugins & Scripting
+description: How the Octopus plugin system is structured — the plugin trait and lifecycle hooks, static vs dynamic loading, the PluginConfig array, priority ordering, and the honest status of how plugins integrate into request handling today.
 ---
 
 import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Callout } from 'fumadocs-ui/components/callout';
 
-# Plugins
+# Plugins & Scripting
 
-Extend Octopus functionality with built-in and custom plugins.
+Octopus ships a plugin **SDK** and a plugin **runtime** for extending the gateway with custom
+request/response logic, authentication schemes, transformations, and protocol handlers. It also
+embeds a [Rhai](https://rhai.rs) scripting engine for lightweight, config-driven logic.
 
-## Built-in Plugins
+<Callout type="warn">
+**Implementation status.** The plugin SDK, lifecycle runtime, and dynamic loader are all
+implemented and tested. However, the gateway server does **not yet load plugins from your
+configuration** — the `plugins:` array is parsed and validated but never wired into the request
+path. Treat the plugin system as a stable foundation for authoring plugins, not as a feature you
+can enable end-to-end in production today. The one scripting integration that *is* wired live is
+convention host-resolution (see [Scripting](/docs/plugins/scripting)). Each page below is explicit
+about what is real versus planned.
+</Callout>
 
 <Cards>
   <Card
-    title="JWT Authentication"
-    description="JWT validation and claims extraction"
-    href="/docs/plugins/jwt-auth"
+    title="Writing a Plugin"
+    description="Implement the Plugin trait and interceptor hooks against octopus-plugin-api."
+    href="/docs/plugins/writing-plugins"
   />
   <Card
-    title="Redis Cache"
-    description="Response caching with Redis"
-    href="/docs/plugins/redis-cache"
+    title="Built-in Plugins"
+    description="What ships in the box today (spoiler: no bundled plugins yet) and what to expect."
+    href="/docs/plugins/built-in"
   />
   <Card
-    title="Rate Limiter"
-    description="Distributed rate limiting with Redis"
-    href="/docs/plugins/rate-limiter"
-  />
-  <Card
-    title="Kafka Producer"
-    description="Event logging to Kafka"
-    href="/docs/plugins/kafka-producer"
+    title="Scripting"
+    description="The embedded Rhai engine — how scripts attach, the context API, timeouts, and AST caching."
+    href="/docs/plugins/scripting"
   />
 </Cards>
 
-## Using Plugins
+## Two plugin layers
+
+Octopus has two distinct plugin abstractions in the codebase. Knowing which is which avoids
+confusion.
+
+| Crate | Trait | Purpose |
+| --- | --- | --- |
+| `octopus-plugin-api` | `Plugin` (+ `RequestInterceptor`, `ResponseInterceptor`, `AuthProvider`, `TransformPlugin`, `ProtocolHandler`, `ScriptInterceptorPlugin`) | The rich SDK plugin authors target. Lifecycle hooks plus capability-specific traits. |
+| `octopus-plugin-runtime` | — | Loads, registers, and manages the lifecycle of `octopus-plugin-api` plugins (`PluginRegistry`, `PluginManager`, hot reload). |
+| `octopus-plugins` | `Plugin` (a *different*, simpler trait) | A separate, lighter abstraction tied to `octopus_core::Middleware`, plus the dynamic shared-library loader and the `octopus_declare_plugin!` ABI macro. |
+
+The [Writing a Plugin](/docs/plugins/writing-plugins) page targets the **`octopus-plugin-api`** SDK,
+which is the richer and primary surface. The dynamic-loading ABI lives in `octopus-plugins` and is
+covered there as well.
+
+## The core `Plugin` trait
+
+Every plugin in the SDK implements `octopus_plugin_api::Plugin`. The trait combines identity,
+metadata, and lifecycle hooks:
+
+```rust
+#[async_trait]
+pub trait Plugin: Send + Sync + fmt::Debug {
+    fn name(&self) -> &str;                 // unique
+    fn version(&self) -> &str;              // semver
+
+    fn description(&self) -> &str { "" }
+    fn author(&self) -> &str { "Unknown" }
+    fn homepage(&self) -> Option<&str> { None }
+    fn dependencies(&self) -> Vec<PluginDependency> { vec![] }
+
+    async fn init(&mut self, config: serde_json::Value) -> Result<()>;
+    async fn start(&mut self) -> Result<()>;
+    async fn stop(&mut self) -> Result<()>;
+
+    async fn health_check(&self) -> Result<HealthStatus> { Ok(HealthStatus::Healthy) }
+    async fn reload(&mut self, config: serde_json::Value) -> Result<()> { /* stop; init; start */ }
+    fn metadata(&self) -> PluginMetadata { /* derived from the accessors above */ }
+}
+```
+
+A plugin gains capabilities by *also* implementing one or more capability traits — for example
+`RequestInterceptor` to inspect or rewrite requests. Those are covered in
+[Writing a Plugin](/docs/plugins/writing-plugins).
+
+## Lifecycle
+
+The runtime moves each plugin through a small state machine, enforced by `PluginRegistry`:
+
+```
+register → initialize(config) → start → (running) → stop
+                                            ↑           ↓
+                                            └── reload ─┘
+```
+
+- **`register`** — adds the plugin to the registry, validates required dependencies exist, and
+  checks for dependency cycles. State becomes `Registered`.
+- **`initialize(config)`** — calls `Plugin::init` with the plugin's JSON config. State becomes
+  `Initialized`. Only valid from `Registered`.
+- **`start`** — starts dependencies first (recursively), then calls `Plugin::start`. State becomes
+  `Started`. Valid from `Initialized` or `Stopped`.
+- **`stop`** — calls `Plugin::stop`. State becomes `Stopped`. Valid only from `Started`.
+- **`reload`** — calls `Plugin::reload` (default: stop → init → start) with new config.
+
+Any hook returning an error transitions the plugin to `Failed(reason)`. `start_all` / `stop_all`
+iterate every registered plugin and log (rather than abort) on individual failures.
+
+### Health and hot reload
+
+Each plugin exposes `health_check() -> HealthStatus` (`Healthy` / `Degraded(msg)` /
+`Unhealthy(msg)`). The runtime also provides a `HotReloadWatcher` that watches a configuration
+directory and calls `reload` when a matching `*.json` / `*.yaml` / `*.toml` file changes (debounced,
+plugin name derived from the file stem).
+
+## Static vs dynamic plugins
+
+Octopus distinguishes two delivery models:
+
+- **Static** — the plugin is compiled into the gateway binary and registered programmatically at
+  startup. This is the `default` (`plugin_type: "static"`) and the model the SDK examples use.
+- **Dynamic** — the plugin is built as a shared library (`.so` / `.dylib` / `.dll`) and loaded at
+  runtime by `octopus-plugins`' `PluginLoader` via `libloading`. Dynamic plugins must export the
+  C-ABI symbols emitted by the `octopus_declare_plugin!` macro, and the loader rejects any library
+  whose `PLUGIN_ABI_VERSION` does not match (current ABI version: `1`).
+
+<Callout type="info">
+Dynamic loading is implemented in the `octopus-plugins` crate, but it targets that crate's simpler
+`Plugin` trait — not the full `octopus-plugin-api` SDK trait set. The two systems are not yet
+unified.
+</Callout>
+
+## The `plugins` configuration array
+
+The gateway configuration accepts a top-level `plugins:` array. Each entry deserializes into
+`PluginConfig` (`octopus-config`):
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `name` | string | — (required) | Plugin name. |
+| `plugin_type` | string | `"static"` | Delivery model: `static` or `dynamic`. |
+| `enabled` | bool | `true` | Whether the plugin is active. |
+| `priority` | i32 | `0` | Ordering hint; higher runs first. |
+| `config` | map&lt;string, any&gt; | `{}` | Arbitrary JSON passed to the plugin's `init`. |
 
 ```yaml
 plugins:
-  - name: jwt-auth
-    builtin: true
+  - name: my-plugin
+    plugin_type: static
+    enabled: true
+    priority: 100
     config:
-      secret: ${JWT_SECRET}
-      algorithm: HS256
-  
-  - name: redis-cache
-    path: /plugins/redis-cache.so
-    config:
-      url: redis://localhost:6379
-      ttl: 300
+      some_key: some_value
 ```
 
-## Developing Plugins
+<Callout type="warn">
+**This array is not consumed yet.** When plugins are enabled, the server constructs an empty
+`PluginManager::new()` and carries a `TODO: Load plugins from config.plugins`. No entry in the
+`plugins:` array is registered, initialized, or invoked during request handling. The schema is
+stable, but configuring a plugin here has no runtime effect today.
+</Callout>
 
-Create custom plugins to extend Octopus:
+### Priority ordering
 
-<Cards>
-  <Card
-    title="Plugin Development"
-    description="Learn how to create custom plugins"
-    href="/docs/plugins/development"
-  />
-</Cards>
+`priority` is defined as an ordering hint (higher = runs first) and is part of the stable schema.
+Because the array is not yet wired into the request path, priority has no observable effect at
+runtime today; it documents intended ordering for when plugin execution lands.
 
-## Next Steps
+## How plugins integrate with request handling (the honest version)
 
-- [JWT Authentication](/docs/plugins/jwt-auth)
-- [Plugin Development](/docs/plugins/development)
-- [Plugin API Reference](/docs/api/plugins)
+- The capability traits (`RequestInterceptor`, etc.) define `intercept_request` /
+  `intercept_response`, which return an `InterceptorAction`: `Continue`, `Return(response)`
+  (short-circuit), or `Abort(error)`. This is the intended execution model.
+- `PluginManager` exposes accessors like `get_request_interceptors()` — but these currently
+  **return empty vectors**. There is no downcast/type-registry wiring that surfaces a registered
+  plugin as a typed interceptor.
+- The runtime request handler does not call into the plugin manager for interception.
+
+In other words: the SDK, lifecycle management, and dynamic loader are real and tested, but the
+"plugin runs on every request" path is not connected. If you need request/response logic today, use
+[middleware](/docs/middleware) (many capabilities exist as first-class middleware) or
+[scripting](/docs/plugins/scripting) for the one wired use case.
+
+## Related
+
+- [Configuration](/docs/configuration) — where the `plugins:` array and `PluginConfig` live.
+- [Concepts: Plugins](/docs/concepts/plugins) — conceptual overview of the plugin model.
+- [Middleware](/docs/middleware) — the wired-up extension point for cross-cutting request logic.

@@ -57,6 +57,12 @@ routes:
 
 ## Rate limit
 
+<Callout type="warn">
+  Per-route `rate_limit` and `cors` are currently **parsed and stored on the route** (and surfaced
+  via the admin API) but **not enforced at request time** — no rate-limit or CORS middleware reads
+  them in the live chain. See [Middleware](/docs/middleware) for what is wired today.
+</Callout>
+
 The per-route `rate_limit` object uses a fixed window: a number of requests allowed per window
 duration.
 
