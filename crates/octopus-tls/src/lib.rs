@@ -20,11 +20,15 @@ pub mod acceptor;
 pub mod config;
 pub mod loader;
 pub mod mtls;
+pub mod reloadable;
+pub mod sni;
 
 pub use acceptor::{extract_client_cn, TlsAcceptor, TlsClientCn};
 pub use config::TlsConfig;
 pub use loader::{load_certificates, load_private_key, CertificateReloader};
 pub use mtls::{MtlsConfig, TargetTlsConfig};
+pub use reloadable::{build_server_config_from_pem, SwappableTlsAcceptor};
+pub use sni::SniCertResolver;
 
 /// Ensure a process-wide rustls [`CryptoProvider`] is installed.
 ///

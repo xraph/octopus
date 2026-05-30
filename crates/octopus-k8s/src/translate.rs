@@ -1,7 +1,7 @@
 //! Translate Gateway API resources into the intermediate routing representation.
 
 use crate::crds::{OctopusRouteSpec, OctopusUpstreamSpec};
-use crate::gateway_api::{HTTPRouteSpec, HttpRouteRule};
+use crate::gateway_api::{GRPCRouteSpec, GrpcMethodMatch, HTTPRouteSpec, HttpBackendRef};
 use crate::ir::{IntermediateRoute, RateLimit, RouteSource};
 use http::Method;
 use octopus_core::types::LoadBalanceStrategy;
@@ -35,7 +35,7 @@ pub fn httproute_to_route(
 
         // One upstream cluster per rule (instances = its backends).
         let cluster_name = format!("{namespace}/{name}-r{idx}");
-        let cluster = build_cluster(&cluster_name, namespace, rule);
+        let cluster = build_cluster(&cluster_name, namespace, &rule.backend_refs);
         upstreams.push(cluster);
 
         // ReplacePrefixMatch URL rewrite → strip the matched prefix, add the new one.
@@ -100,17 +100,17 @@ pub fn httproute_to_route(
     (routes, upstreams)
 }
 
-/// Build an upstream cluster from a rule's backend references.
+/// Build an upstream cluster from a set of backend references.
 fn build_cluster(
     cluster_name: &str,
     route_namespace: &str,
-    rule: &HttpRouteRule,
+    backends: &[HttpBackendRef],
 ) -> UpstreamCluster {
     let mut cluster = UpstreamCluster::new(cluster_name);
-    if rule.backend_refs.len() > 1 {
+    if backends.len() > 1 {
         cluster.strategy = LoadBalanceStrategy::WeightedRoundRobin;
     }
-    for backend in &rule.backend_refs {
+    for backend in backends {
         let backend_ns = backend.namespace.as_deref().unwrap_or(route_namespace);
         let host = format!("{}.{}.svc", backend.name, backend_ns);
         let port = backend.port.unwrap_or(80);
@@ -213,6 +213,57 @@ pub fn octopus_upstream_to_cluster(
         cluster.add_instance(instance);
     }
     cluster
+}
+
+/// Translate a `GRPCRoute` into intermediate routes + upstream clusters. gRPC
+/// requests are HTTP/2 POSTs to `/{service}/{method}`.
+pub fn grpcroute_to_route(
+    name: &str,
+    namespace: &str,
+    spec: &GRPCRouteSpec,
+) -> (Vec<IntermediateRoute>, Vec<UpstreamCluster>) {
+    let mut routes = Vec::new();
+    let mut upstreams = Vec::new();
+    let source_id = format!("{namespace}/{name}");
+
+    for (idx, rule) in spec.rules.iter().enumerate() {
+        if rule.backend_refs.is_empty() {
+            tracing::warn!(route = %name, rule = idx, "GRPCRoute rule has no backendRefs; skipping");
+            continue;
+        }
+        let cluster_name = format!("{namespace}/{name}-grpc-r{idx}");
+        upstreams.push(build_cluster(&cluster_name, namespace, &rule.backend_refs));
+
+        let matches = if rule.matches.is_empty() {
+            vec![Default::default()]
+        } else {
+            rule.matches.clone()
+        };
+        for m in &matches {
+            let mut route = IntermediateRoute::new(
+                Method::POST,
+                grpc_path(m.method.as_ref()),
+                &cluster_name,
+                RouteSource::GatewayApi,
+            );
+            route.source_id = source_id.clone();
+            routes.push(route);
+        }
+    }
+
+    (routes, upstreams)
+}
+
+/// Build the router path for a gRPC method match.
+fn grpc_path(method: Option<&GrpcMethodMatch>) -> String {
+    match method {
+        Some(m) => match (&m.service, &m.method) {
+            (Some(service), Some(method)) => format!("/{service}/{method}"),
+            (Some(service), None) => format!("/{service}/*{PREFIX_WILDCARD}"),
+            _ => format!("/*{PREFIX_WILDCARD}"),
+        },
+        None => format!("/*{PREFIX_WILDCARD}"),
+    }
 }
 
 /// Map an `OctopusUpstream.lbStrategy` string to a [`LoadBalanceStrategy`].
@@ -476,5 +527,65 @@ mod tests {
             .unwrap();
         assert_eq!(i1.weight, 3);
         assert_eq!(i2.weight, 1, "missing weight defaults to 1");
+    }
+
+    fn grpc_spec(matches: Vec<crate::gateway_api::GrpcRouteMatch>) -> GRPCRouteSpec {
+        GRPCRouteSpec {
+            parent_refs: vec![],
+            hostnames: vec![],
+            rules: vec![crate::gateway_api::GrpcRouteRule {
+                matches,
+                filters: vec![],
+                backend_refs: vec![backend("grpc-svc", 50051, None)],
+            }],
+        }
+    }
+
+    fn grpc_match(
+        service: Option<&str>,
+        method: Option<&str>,
+    ) -> crate::gateway_api::GrpcRouteMatch {
+        crate::gateway_api::GrpcRouteMatch {
+            method: Some(GrpcMethodMatch {
+                match_type: None,
+                service: service.map(|s| s.into()),
+                method: method.map(|m| m.into()),
+            }),
+            headers: vec![],
+        }
+    }
+
+    #[test]
+    fn grpc_full_method_maps_to_path() {
+        let (routes, upstreams) = grpcroute_to_route(
+            "echo",
+            "default",
+            &grpc_spec(vec![grpc_match(Some("echo.Echo"), Some("Ping"))]),
+        );
+        assert_eq!(upstreams.len(), 1);
+        assert_eq!(upstreams[0].instances[0].address, "grpc-svc.default.svc");
+        assert_eq!(routes.len(), 1);
+        assert_eq!(routes[0].path, "/echo.Echo/Ping");
+        assert_eq!(routes[0].method, Method::POST);
+        assert_eq!(routes[0].source, RouteSource::GatewayApi);
+        assert_eq!(routes[0].source_id, "default/echo");
+    }
+
+    #[test]
+    fn grpc_service_only_uses_wildcard() {
+        let (routes, _) = grpcroute_to_route(
+            "echo",
+            "default",
+            &grpc_spec(vec![grpc_match(Some("echo.Echo"), None)]),
+        );
+        assert_eq!(routes[0].path, "/echo.Echo/*octopus_prefix");
+    }
+
+    #[test]
+    fn grpc_empty_matches_is_catch_all() {
+        let (routes, _) = grpcroute_to_route("echo", "default", &grpc_spec(vec![]));
+        assert_eq!(routes.len(), 1);
+        assert_eq!(routes[0].path, "/*octopus_prefix");
+        assert_eq!(routes[0].method, Method::POST);
     }
 }

@@ -172,6 +172,69 @@ pub struct HTTPRouteSpec {
     pub rules: Vec<HttpRouteRule>,
 }
 
+/// A gRPC method match (`service` and `method` are both optional).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GrpcMethodMatch {
+    /// `Exact` (default) or `RegularExpression`.
+    #[serde(rename = "type", default, skip_serializing_if = "Option::is_none")]
+    pub match_type: Option<String>,
+    /// gRPC service name (e.g. `my.package.Service`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service: Option<String>,
+    /// gRPC method name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
+}
+
+/// A `GRPCRoute` match (method + headers).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GrpcRouteMatch {
+    /// Method match.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<GrpcMethodMatch>,
+    /// Header matches.
+    #[serde(default)]
+    pub headers: Vec<HttpHeaderMatch>,
+}
+
+/// One `GRPCRoute` rule.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GrpcRouteRule {
+    /// Matches (empty = match all methods).
+    #[serde(default)]
+    pub matches: Vec<GrpcRouteMatch>,
+    /// Filters.
+    #[serde(default)]
+    pub filters: Vec<HttpRouteFilter>,
+    /// Backend references (reuses the HTTP backend shape).
+    #[serde(default)]
+    pub backend_refs: Vec<HttpBackendRef>,
+}
+
+/// `GRPCRoute` spec.
+#[derive(CustomResource, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[kube(
+    group = "gateway.networking.k8s.io",
+    version = "v1",
+    kind = "GRPCRoute",
+    namespaced
+)]
+#[serde(rename_all = "camelCase")]
+pub struct GRPCRouteSpec {
+    /// Parent gateways.
+    #[serde(default)]
+    pub parent_refs: Vec<ParentRef>,
+    /// Hostnames.
+    #[serde(default)]
+    pub hostnames: Vec<String>,
+    /// Routing rules.
+    #[serde(default)]
+    pub rules: Vec<GrpcRouteRule>,
+}
+
 /// `Gateway` spec (minimal — listeners are honored in a later phase).
 #[derive(CustomResource, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[kube(

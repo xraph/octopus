@@ -10,10 +10,12 @@ use crate::crds::{
     OctopusPolicy, OctopusPolicySpec, OctopusRoute, OctopusRouteSpec, OctopusUpstream,
     OctopusUpstreamSpec,
 };
-use crate::gateway_api::{HTTPRoute, HTTPRouteSpec};
+use crate::gateway_api::{GRPCRoute, GRPCRouteSpec, HTTPRoute, HTTPRouteSpec};
 use crate::ir::{IntermediateRoute, RouteSource, RouteStore, SourceKey};
 use crate::policy::{apply_overlays, PolicyOverlay};
-use crate::translate::{httproute_to_route, octopus_route_to_route, octopus_upstream_to_cluster};
+use crate::translate::{
+    grpcroute_to_route, httproute_to_route, octopus_route_to_route, octopus_upstream_to_cluster,
+};
 use futures::TryStreamExt;
 use kube::{
     api::Api,
@@ -81,6 +83,30 @@ impl RouteReconciler {
             store.remove(&SourceKey::new(
                 RouteSource::GatewayApi,
                 format!("{namespace}/{name}"),
+            ));
+        }
+        self.reapply();
+    }
+
+    /// Upsert a `GRPCRoute` and re-apply the merged routing table.
+    pub fn upsert_grpcroute(&self, name: &str, namespace: &str, spec: &GRPCRouteSpec) {
+        let (routes, upstreams) = grpcroute_to_route(name, namespace, spec);
+        if let Ok(mut store) = self.store.lock() {
+            store.insert(
+                SourceKey::new(RouteSource::GatewayApi, format!("grpc/{namespace}/{name}")),
+                routes,
+                upstreams,
+            );
+        }
+        self.reapply();
+    }
+
+    /// Remove a `GRPCRoute` and re-apply the merged routing table.
+    pub fn remove_grpcroute(&self, name: &str, namespace: &str) {
+        if let Ok(mut store) = self.store.lock() {
+            store.remove(&SourceKey::new(
+                RouteSource::GatewayApi,
+                format!("grpc/{namespace}/{name}"),
             ));
         }
         self.reapply();
@@ -230,6 +256,13 @@ fn spawn_watchers(client: Client, reconciler: Arc<RouteReconciler>, namespace: O
     });
     tokio::spawn({
         let (api, rec) = (
+            api::<GRPCRoute>(&client, &namespace),
+            Arc::clone(&reconciler),
+        );
+        async move { run_watcher(api, rec, "GRPCRoute", on_grpcroute).await }
+    });
+    tokio::spawn({
+        let (api, rec) = (
             api::<OctopusRoute>(&client, &namespace),
             Arc::clone(&reconciler),
         );
@@ -292,6 +325,22 @@ fn on_http_route(rec: &RouteReconciler, event: watcher::Event<HTTPRoute>) {
         watcher::Event::Delete(o) => {
             if let Some((name, ns)) = ident(&o) {
                 rec.remove_httproute(&name, &ns);
+            }
+        }
+        watcher::Event::Init | watcher::Event::InitDone => {}
+    }
+}
+
+fn on_grpcroute(rec: &RouteReconciler, event: watcher::Event<GRPCRoute>) {
+    match event {
+        watcher::Event::Apply(o) | watcher::Event::InitApply(o) => {
+            if let Some((name, ns)) = ident(&o) {
+                rec.upsert_grpcroute(&name, &ns, &o.spec);
+            }
+        }
+        watcher::Event::Delete(o) => {
+            if let Some((name, ns)) = ident(&o) {
+                rec.remove_grpcroute(&name, &ns);
             }
         }
         watcher::Event::Init | watcher::Event::InitDone => {}

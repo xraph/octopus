@@ -87,6 +87,15 @@ impl TlsAcceptor {
         })
     }
 
+    /// Create an acceptor from a prebuilt rustls [`ServerConfig`] (e.g. one
+    /// built in memory from a Kubernetes TLS Secret). No file-based reloader.
+    pub fn from_server_config(config: Arc<ServerConfig>) -> Self {
+        Self {
+            inner: RustlsAcceptor::from(config),
+            _reloader: None,
+        }
+    }
+
     /// Accept a TLS connection
     pub async fn accept<IO>(&self, stream: IO) -> Result<tokio_rustls::server::TlsStream<IO>>
     where
