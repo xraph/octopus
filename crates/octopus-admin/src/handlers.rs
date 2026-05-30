@@ -10,7 +10,8 @@ use axum::{
 use std::sync::Arc;
 
 use crate::models::{
-    ActivityLogEntry, DashboardStats, HealthCheckInfo, PluginInfo, PluginStatsCard, RouteInfo,
+    ActivityLogEntry, DashboardStats, HealthCheckInfo, PluginInfo, PluginStatsCard, RateLimitInfo,
+    RouteInfo,
 };
 
 /// Shared application state holding references to all real gateway data sources
@@ -543,19 +544,55 @@ pub(crate) fn build_routes_from_state(state: &AppState) -> Vec<RouteInfo> {
                 .as_ref()
                 .map_or(true, |ht| ht.is_healthy(&route.upstream_name, 0.5));
 
-            RouteInfo {
-                id: format!("route-{i}"),
-                path: route.path.clone(),
-                method: route.method.to_string(),
-                upstream: route.upstream_name,
+            route_to_info(
+                format!("route-{i}"),
+                &route,
                 request_count,
-                is_healthy,
-                avg_latency_ms,
                 error_count,
-                last_accessed: None,
-            }
+                avg_latency_ms,
+                is_healthy,
+            )
         })
         .collect()
+}
+
+/// Map a router [`octopus_router::Route`] plus operational metrics into a
+/// [`RouteInfo`] that exposes the route's effective configuration.
+pub(crate) fn route_to_info(
+    id: String,
+    route: &octopus_router::Route,
+    request_count: u64,
+    error_count: u64,
+    avg_latency_ms: f64,
+    is_healthy: bool,
+) -> RouteInfo {
+    RouteInfo {
+        id,
+        path: route.path.clone(),
+        method: route.method.to_string(),
+        upstream: route.upstream_name.clone(),
+        request_count,
+        is_healthy,
+        avg_latency_ms,
+        error_count,
+        last_accessed: None,
+        priority: route.priority,
+        strip_prefix: route.strip_prefix.clone(),
+        add_prefix: route.add_prefix.clone(),
+        auth_provider: route.auth_provider.clone(),
+        skip_auth: route.skip_auth,
+        require_roles: route.require_roles.clone(),
+        require_scopes: route.require_scopes.clone(),
+        authz_rule: route.authz_rule.clone(),
+        timeout_ms: route.timeout.map(|d| d.as_millis() as u64),
+        rate_limit: route
+            .rate_limit
+            .as_ref()
+            .map(|(requests, window)| RateLimitInfo {
+                requests: *requests,
+                window_ms: window.as_millis() as u64,
+            }),
+    }
 }
 
 /// Build health checks from health tracker + upstreams
@@ -671,5 +708,61 @@ mod tests {
         let state = Arc::new(AppState::new());
         let response = routes_handler(State(state)).await.into_response();
         assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[test]
+    fn route_to_info_exposes_route_config() {
+        use octopus_router::RouteBuilder;
+        use std::time::Duration;
+
+        let roles = vec!["admin".to_string()];
+        let route = RouteBuilder::new()
+            .method(http::Method::GET)
+            .path("/api")
+            .upstream_name("backend")
+            .priority(7)
+            .auth_provider(Some("jwt"))
+            .strip_prefix("/api")
+            .require_roles(&roles)
+            .rate_limit(100, Duration::from_secs(60))
+            .timeout(Some(Duration::from_secs(30)))
+            .build()
+            .unwrap();
+
+        let info = route_to_info("route-0".to_string(), &route, 5, 1, 12.5, true);
+
+        // Config fields are now exposed.
+        assert_eq!(info.priority, 7);
+        assert_eq!(info.auth_provider.as_deref(), Some("jwt"));
+        assert_eq!(info.strip_prefix.as_deref(), Some("/api"));
+        assert_eq!(info.require_roles, vec!["admin".to_string()]);
+        assert_eq!(info.timeout_ms, Some(30_000));
+        let rl = info.rate_limit.expect("rate limit present");
+        assert_eq!(rl.requests, 100);
+        assert_eq!(rl.window_ms, 60_000);
+
+        // Operational fields still carried through.
+        assert_eq!(info.upstream, "backend");
+        assert_eq!(info.request_count, 5);
+        assert_eq!(info.error_count, 1);
+        assert!(info.is_healthy);
+    }
+
+    #[test]
+    fn route_to_info_defaults_when_unset() {
+        use octopus_router::RouteBuilder;
+        let route = RouteBuilder::new()
+            .method(http::Method::POST)
+            .path("/x")
+            .upstream_name("up")
+            .build()
+            .unwrap();
+        let info = route_to_info("route-0".to_string(), &route, 0, 0, 0.0, true);
+        assert_eq!(info.auth_provider, None);
+        assert_eq!(info.strip_prefix, None);
+        assert!(!info.skip_auth);
+        assert!(info.require_roles.is_empty());
+        assert_eq!(info.rate_limit, None);
+        assert_eq!(info.timeout_ms, None);
     }
 }

@@ -115,6 +115,7 @@ pub async fn octopus_ui_dashboard_handler(
             avg_latency_ms: 23.5,
             error_count: 12,
             last_accessed: Some("2024-01-15 10:30:00".to_string()),
+            ..Default::default()
         },
         RouteInfo {
             id: "route2".to_string(),
@@ -126,6 +127,7 @@ pub async fn octopus_ui_dashboard_handler(
             avg_latency_ms: 34.2,
             error_count: 8,
             last_accessed: Some("2024-01-15 10:25:00".to_string()),
+            ..Default::default()
         },
         RouteInfo {
             id: "route3".to_string(),
@@ -137,6 +139,7 @@ pub async fn octopus_ui_dashboard_handler(
             avg_latency_ms: 28.7,
             error_count: 5,
             last_accessed: Some("2024-01-15 10:28:00".to_string()),
+            ..Default::default()
         },
     ];
 
@@ -230,6 +233,7 @@ pub async fn octopus_ui_routes_handler(State(_state): State<Arc<AppState>>) -> i
             avg_latency_ms: 23.5,
             error_count: 12,
             last_accessed: Some("2024-01-15 10:30:00".to_string()),
+            ..Default::default()
         },
         RouteInfo {
             id: "route2".to_string(),
@@ -241,6 +245,7 @@ pub async fn octopus_ui_routes_handler(State(_state): State<Arc<AppState>>) -> i
             avg_latency_ms: 34.2,
             error_count: 8,
             last_accessed: Some("2024-01-15 10:25:00".to_string()),
+            ..Default::default()
         },
     ];
 

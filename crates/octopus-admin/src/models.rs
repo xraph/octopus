@@ -54,8 +54,17 @@ pub struct RouteMetric {
     pub error_rate: f64,
 }
 
-/// Route information
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Per-route rate limit, as exposed to the admin API.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RateLimitInfo {
+    /// Requests allowed per window.
+    pub requests: u32,
+    /// Window length in milliseconds.
+    pub window_ms: u64,
+}
+
+/// Route information (operational metrics + effective configuration).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RouteInfo {
     pub id: String,
     pub path: String,
@@ -66,6 +75,38 @@ pub struct RouteInfo {
     pub avg_latency_ms: f64,
     pub error_count: u64,
     pub last_accessed: Option<String>,
+
+    // ── Effective route configuration ──────────────────────────────────
+    /// Match priority (higher wins).
+    #[serde(default)]
+    pub priority: i32,
+    /// Prefix stripped before proxying.
+    #[serde(default)]
+    pub strip_prefix: Option<String>,
+    /// Prefix added before proxying.
+    #[serde(default)]
+    pub add_prefix: Option<String>,
+    /// Auth provider enforced on this route.
+    #[serde(default)]
+    pub auth_provider: Option<String>,
+    /// Whether authentication is skipped.
+    #[serde(default)]
+    pub skip_auth: bool,
+    /// Required roles.
+    #[serde(default)]
+    pub require_roles: Vec<String>,
+    /// Required scopes.
+    #[serde(default)]
+    pub require_scopes: Vec<String>,
+    /// Authorization rule expression.
+    #[serde(default)]
+    pub authz_rule: Option<String>,
+    /// Per-route timeout in milliseconds.
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
+    /// Per-route rate limit.
+    #[serde(default)]
+    pub rate_limit: Option<RateLimitInfo>,
 }
 
 /// Route configuration for CRUD operations

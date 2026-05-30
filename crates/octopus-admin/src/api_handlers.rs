@@ -271,6 +271,7 @@ pub async fn api_route_create_handler(
         avg_latency_ms: 0.0,
         error_count: 0,
         last_accessed: None,
+        ..Default::default()
     };
 
     (
@@ -343,6 +344,7 @@ pub async fn api_route_update_handler(
         avg_latency_ms: 0.0,
         error_count: 0,
         last_accessed: None,
+        ..Default::default()
     };
 
     Json(serde_json::to_value(info).unwrap())

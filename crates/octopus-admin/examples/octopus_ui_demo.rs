@@ -44,6 +44,7 @@ fn main() {
         avg_latency_ms: 23.5,
         error_count: 12,
         last_accessed: Some("2024-01-15 10:30:00".to_string()),
+        ..Default::default()
     };
     let route_card = ui_components::route_card(&route);
     println!("{route_card}\n");
@@ -207,6 +208,7 @@ fn main() {
             avg_latency_ms: 23.5,
             error_count: 12,
             last_accessed: Some("2024-01-15 10:30:00".to_string()),
+            ..Default::default()
         },
         RouteInfo {
             id: "route2".to_string(),
@@ -218,6 +220,7 @@ fn main() {
             avg_latency_ms: 34.2,
             error_count: 8,
             last_accessed: Some("2024-01-15 10:25:00".to_string()),
+            ..Default::default()
         },
     ];
     let table = ui_components::routes_table(&routes);
