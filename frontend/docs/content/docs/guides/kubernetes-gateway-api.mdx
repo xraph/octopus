@@ -1,0 +1,203 @@
+---
+title: Route with the Gateway API
+description: Run the in-process operator and route traffic through standard Kubernetes Gateway API resources — GatewayClass, Gateway, and HTTPRoute — using only the fields Octopus actually honors.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+# Route with the Gateway API
+
+Octopus has a built-in Kubernetes operator that reconciles a subset of the
+standard [Gateway API](/docs/kubernetes/gateway-api)
+(`gateway.networking.k8s.io/v1`) into its router. This guide gets you from an
+installed gateway to traffic flowing through a `GatewayClass`, a `Gateway`, and an
+`HTTPRoute`. Everything here uses **only fields the translators honor** — see the
+[Gateway API reference](/docs/kubernetes/gateway-api) for the field-by-field
+breakdown.
+
+<Callout type="info">
+  Octopus does **not** ship the upstream Gateway API CRDs. Install them from the
+  Gateway API release before applying any `Gateway`/`HTTPRoute` — see
+  [Install](/docs/kubernetes/install).
+</Callout>
+
+<Steps>
+
+<Step>
+## Install the gateway and the Gateway API CRDs
+
+Install Octopus (Helm or raw manifests) and the upstream Gateway API CRDs:
+
+```bash
+helm install octopus oci://ghcr.io/xraph/charts/octopus \
+  --namespace octopus --create-namespace
+
+kubectl apply -f \
+  https://github.com/kubernetes-sigs/gateway-api/releases/download/<version>/standard-install.yaml
+```
+
+Full options, including the raw-manifest path and the Octopus CRDs, are on the
+[Install](/docs/kubernetes/install) page.
+</Step>
+
+<Step>
+## Enable the operator
+
+Installing the gateway does not start the operator. Turn it on in the gateway
+config (the chart's `config` block, or the mounted `config.yaml`). The
+`gateway_class` is a **selector**: this instance only serves the `GatewayClass`
+of that name.
+
+```yaml title="config.yaml"
+gateway:
+  listen: "0.0.0.0:8080"
+
+kubernetes:
+  enabled: true
+  gateway_class: octopus
+```
+
+See [Operator](/docs/kubernetes/operator) for what it watches and how
+reconciliation merges into the live router.
+</Step>
+
+<Step>
+## Create a GatewayClass
+
+Octopus claims the controller name
+`gateway.octopus.io/gateway-controller`. Create a `GatewayClass` pointing at it,
+named to match the `gateway_class` you set above.
+
+```yaml title="gatewayclass.yaml"
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: octopus
+spec:
+  controllerName: gateway.octopus.io/gateway-controller
+```
+
+<Callout type="info">
+  The operator does not currently reconcile `GatewayClass` objects or write status
+  onto them; the name is purely the selector. The honored `GatewayClassSpec` field
+  is `controllerName`.
+</Callout>
+</Step>
+
+<Step>
+## Declare a Gateway with listeners
+
+A `Gateway` declares the listeners. Octopus reads each listener's `hostname` (to
+constrain attached routes) and, when TLS termination is enabled, its TLS config.
+
+```yaml title="gateway.yaml"
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: octopus-gateway
+  namespace: infra
+spec:
+  gatewayClassName: octopus
+  listeners:
+    - name: web
+      hostname: "*.example.com"
+      port: 8080
+      protocol: HTTP
+```
+
+Honored fields: `gatewayClassName`, and per-listener `name`, `hostname`, `port`,
+`protocol`, and `tls`. (For HTTPS termination, see
+[TLS with cert-manager](/docs/guides/cert-manager-tls).)
+</Step>
+
+<Step>
+## Attach an HTTPRoute
+
+An `HTTPRoute` attaches to the `Gateway` via `parentRefs` and declares routing
+rules. Each rule produces one upstream cluster (from `backendRefs`) and a set of
+routes. Stick to the honored match and filter types:
+
+- `matches[].path` — `Exact` and `PathPrefix` only (`RegularExpression` is
+  skipped with a warning).
+- `matches[].method` — an unset method expands to all standard methods.
+- `URLRewrite` with `path.type: ReplacePrefixMatch` — strips the matched prefix
+  and adds the replacement.
+
+```yaml title="httproute.yaml"
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: api-route
+  namespace: default
+spec:
+  parentRefs:
+    - name: octopus-gateway
+      namespace: infra
+  hostnames:
+    - api.example.com
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api
+          method: GET
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /v2
+      backendRefs:
+        - name: api-svc
+          port: 8080
+          weight: 100
+```
+
+A `backendRef` resolves to the in-cluster Service DNS name
+`<name>.<namespace>.svc` (the route's own namespace when `backendRef.namespace`
+is omitted). Multiple backends in a rule become a weighted round-robin cluster.
+
+<Callout type="warn">
+  `matches[].headers`, hostname rewrites, `ReplaceFullPath`, and non-`URLRewrite`
+  filters (`RequestRedirect`, `RequestHeaderModifier`) are **parsed but not
+  honored** — do not rely on them. A rule with no `backendRefs` is skipped with a
+  warning. See [Gateway API → Not honored](/docs/kubernetes/gateway-api).
+</Callout>
+</Step>
+
+<Step>
+## Apply and verify
+
+```bash
+kubectl apply -f gatewayclass.yaml
+kubectl apply -f gateway.yaml
+kubectl apply -f httproute.yaml
+
+# Watch the operator reconcile (logs in the octopus pod)
+kubectl -n octopus logs deploy/octopus -f
+```
+
+The effective hosts for the route are the **intersection** of its `hostnames`
+with the parent listener's `hostname` — so `api.example.com` attached to the
+`*.example.com` listener serves `api.example.com`.
+</Step>
+
+</Steps>
+
+## Layering Octopus behavior
+
+Gateway API resources are translated into the same intermediate route table as
+the Octopus CRDs and your static config. A common pattern is to define portable
+routing with `HTTPRoute`, then attach auth or rate-limit behavior with an
+`OctopusPolicy` (a GEP-713 policy overlay). gRPC works the same way via
+`GRPCRoute`. See [Octopus CRDs](/docs/kubernetes/octopus-crds) for the overlay
+model.
+
+## See also
+
+- [Gateway API](/docs/kubernetes/gateway-api) — the honored-field reference.
+- [Operator](/docs/kubernetes/operator) — the reconcile and merge pipeline.
+- [Octopus CRDs](/docs/kubernetes/octopus-crds) — `OctopusRoute`/`OctopusPolicy` for native features.
+- [TLS with cert-manager](/docs/guides/cert-manager-tls) — terminate HTTPS on listeners.
+- [Kubernetes configuration](/docs/configuration/kubernetes) — the `kubernetes` block schema.

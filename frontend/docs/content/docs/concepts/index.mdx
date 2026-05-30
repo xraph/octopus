@@ -4,6 +4,7 @@ description: Understand the fundamental concepts of Octopus API Gateway
 ---
 
 import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Callout } from 'fumadocs-ui/components/callout';
 
 # Core Concepts
 
@@ -18,6 +19,11 @@ Octopus is built on several key concepts that work together to provide a powerfu
     title="Architecture"
     description="Understand how Octopus components work together"
     href="/docs/concepts/architecture"
+  />
+  <Card
+    title="Request Lifecycle"
+    description="The path a request takes through the gateway"
+    href="/docs/concepts/request-lifecycle"
   />
   <Card
     title="Routing"
@@ -40,6 +46,11 @@ Octopus is built on several key concepts that work together to provide a powerfu
     href="/docs/concepts/farp"
   />
   <Card
+    title="Service Discovery"
+    description="How static and discovered upstreams come together"
+    href="/docs/concepts/service-discovery"
+  />
+  <Card
     title="Load Balancing"
     description="Distribute traffic across backend instances"
     href="/docs/concepts/load-balancing"
@@ -58,28 +69,34 @@ Octopus is built on several key concepts that work together to provide a powerfu
 
 ## Request Flow
 
-Understanding how a request flows through Octopus:
+Understanding how a request flows through Octopus. The live chain today is
+compression (optional) and the auth gateway (optional); see
+[Request Lifecycle](/docs/concepts/request-lifecycle) for the source-verified
+path and [Middleware](/docs/middleware) for which middleware are wired.
 
 ```mermaid
 graph TD
-    A[Client Request] --> B[Connection Handler]
+    A[Client Request] --> B[Listener / TLS]
     B --> C[Protocol Detection]
-    C --> D[Router]
+    C --> D[Route Pre-match + Auth Context]
     D --> E[Middleware Chain]
-    E --> F{Authentication}
-    F -->|Pass| G{Rate Limit}
-    F -->|Fail| H[401 Response]
-    G -->|Pass| I[Load Balancer]
-    G -->|Fail| J[429 Response]
-    I --> K{Health Check}
-    K -->|Healthy| L[Upstream Service]
-    K -->|Unhealthy| M{Circuit Breaker}
-    M -->|Open| N[503 Response]
-    M -->|Closed| L
+    E --> F{Auth Gateway}
+    F -->|Pass| G[Route Match + Prefix Rewrite]
+    F -->|Fail| H[401 / 403 Response]
+    G --> I[Load Balancer: select instance]
+    I --> L[Upstream Service]
     L --> O[Response]
-    O --> P[Response Middleware]
+    O --> P[Compression on the way out]
     P --> Q[Client Response]
 ```
+
+<Callout type="info" title="Not every box is enforced today">
+  The auth gateway runs only when auth providers are configured (or global
+  enforcement is on). Per-route rate limiting and CORS are parsed but not
+  enforced in the live chain, and load-balancing policy / health checks /
+  circuit breaking are wired on the Kubernetes operator path — see the notes on
+  each concept page below.
+</Callout>
 
 ## Key Components
 
@@ -103,49 +120,45 @@ Matches incoming requests to routes:
 
 ### 3. Middleware
 
-Processes requests and responses:
-
-- Ordered execution pipeline
-- Built-in middleware: auth, rate limit, CORS, compression
-- Custom middleware via plugins
-- Request and response transformation
+An ordered Rust chain that wraps the request/response path. The live chain today
+holds at most two entries — compression and the auth gateway — assembled in code
+(there is no `middleware:` config array). A larger catalogue of middleware exists
+in the `octopus-middleware` crate but is builder-only. See [Middleware](/docs/middleware).
 
 ### 4. Service Discovery
 
 Finds and tracks backend services:
 
-- Multiple backends: Kubernetes, Consul, etcd, Eureka
-- DNS SRV records
-- Static configuration
-- FARP protocol for auto-discovery
+- Discovery backends: Kubernetes (EndpointSlice), Consul, DNS, mDNS
+- Static configuration via `upstreams`
+- FARP protocol for schema-driven auto-routing
+
+See [Service Discovery](/docs/concepts/service-discovery) and [FARP](/docs/farp).
 
 ### 5. Load Balancer
 
-Distributes traffic across instances:
-
-- Round-robin
-- Least connections
-- Weighted round-robin
-- IP hash
-- Consistent hashing
+Selects an instance per request. Policies: round-robin, least-connections,
+weighted, random, and IP-hash. The policy and instance weights are honored on the
+Kubernetes/operator path; static-config upstreams currently balance round-robin
+regardless of `lb_policy`. See [Load Balancing](/docs/concepts/load-balancing).
 
 ### 6. Health Tracker
 
-Monitors upstream health:
-
-- Active health checks (HTTP, TCP, gRPC)
-- Passive health detection
-- Automatic instance removal/addition
-- Circuit breaker integration
+Monitors upstream health with active checks (HTTP, TCP, gRPC). Active health
+checking and circuit breaking are wired on the operator-driven path; on the
+static-config path they are parsed and validated but not yet enforced. See
+[Health Checks](/docs/concepts/health-checks) and [Circuit Breaker](/docs/concepts/circuit-breaker).
 
 ### 7. Plugin System
 
-Extends functionality:
+A plugin SDK plus lifecycle runtime and a dynamic shared-library loader:
 
-- Static plugins (compiled in)
-- Dynamic plugins (loaded at runtime)
-- Plugin capabilities: middleware, protocol handlers, admin UI
-- Type-safe Rust trait system
+- Static plugins (compiled in) and dynamic plugins (`.so`/`.dylib`/`.dll`)
+- Type-safe Rust trait system with lifecycle hooks
+- An embedded Rhai scripting engine
+
+The SDK and loader are implemented, but the `plugins:` config array is not yet
+consumed at request time. See [Plugins](/docs/concepts/plugins) and [Plugins & Scripting](/docs/plugins).
 
 ## Design Principles
 
@@ -219,8 +232,9 @@ routes:
 Dive deeper into specific concepts:
 
 - [Architecture](/docs/concepts/architecture) - System design and components
+- [Request Lifecycle](/docs/concepts/request-lifecycle) - The path of a request
 - [Routing](/docs/concepts/routing) - How routing works
-- [Middleware](/docs/concepts/middleware) - Request processing pipeline
+- [Middleware](/docs/concepts/middleware) - Request processing chain
 - [Plugins](/docs/concepts/plugins) - Extending Octopus
 - [FARP Protocol](/docs/concepts/farp) - Automatic service discovery
 
@@ -228,5 +242,5 @@ Or explore practical guides:
 
 - [Configuration Guide](/docs/configuration) - Configure Octopus
 - [Middleware Guide](/docs/middleware) - Use middleware
-- [Plugin Development](/docs/plugins/development) - Create plugins
+- [Writing Plugins](/docs/plugins/writing-plugins) - Create plugins
 

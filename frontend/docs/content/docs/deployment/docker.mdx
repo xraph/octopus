@@ -1,0 +1,192 @@
+---
+title: Docker
+description: Run the published Octopus container image, mount a configuration file, substitute environment variables at startup, and understand the container's ports and health check.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+# Docker
+
+Octopus is published as a multi-arch image at **`ghcr.io/xraph/octopus`**, built for
+`linux/amd64` and `linux/arm64` on every release. The image is a small Debian-based runtime
+containing only the `octopus` binary and its TLS/CA dependencies; it runs as a non-root user
+(`uid 1000`) and its entrypoint is the `octopus` binary.
+
+By default the container runs:
+
+```bash
+octopus serve --config /etc/octopus/config.yaml
+```
+
+So the one thing you must provide is a config file at `/etc/octopus/config.yaml`.
+
+## Run the image
+
+<Steps>
+
+<Step>
+
+### Write a config file
+
+Create a `config.yaml` on the host. The only required section is `gateway` with a `listen`
+address — bind to `0.0.0.0` inside the container, not `127.0.0.1`, or the port will not be
+reachable from outside:
+
+```yaml title="config.yaml"
+gateway:
+  listen: "0.0.0.0:8080"
+  workers: 0                 # 0 = one worker per CPU core
+
+upstreams:
+  - name: user-service
+    lb_policy: round_robin
+    instances:
+      - id: user-1
+        host: 10.0.0.5
+        port: 8081
+
+routes:
+  - path: /api/users/*
+    methods: [GET, POST, PUT, DELETE]
+    upstream: user-service
+    strip_prefix: /api
+```
+
+</Step>
+
+<Step>
+
+### Run the container
+
+Mount the config read-only and publish the listen port:
+
+```bash
+docker run --rm \
+  -p 8080:8080 \
+  -v "$(pwd)/config.yaml:/etc/octopus/config.yaml:ro" \
+  ghcr.io/xraph/octopus:latest
+```
+
+Pin a release tag (for example `:0.1.0`) instead of `:latest` for reproducible deployments.
+
+</Step>
+
+<Step>
+
+### Verify it is serving
+
+The gateway exposes Kubernetes-style probes and Prometheus metrics on the **same listen port**:
+
+```bash
+curl -fsS http://localhost:8080/livez     # liveness: 200 while the process is alive
+curl -fsS http://localhost:8080/readyz    # readiness: 200 only when ready to serve
+curl -s   http://localhost:8080/metrics   # Prometheus text-format metrics
+```
+
+</Step>
+
+</Steps>
+
+## Mounting configuration
+
+The container expects a single file at `/etc/octopus/config.yaml`. Mount yours there. The image
+also ships an annotated reference at `/etc/octopus/config.example.yaml` you can copy from.
+
+To split a config across several files (a base plus environment overrides), point `serve` at a
+directory — every `*.yaml`, `*.yml`, `*.json`, and `*.toml` file in it is merged in order:
+
+```bash
+docker run --rm \
+  -p 8080:8080 \
+  -v "$(pwd)/conf.d:/etc/octopus/conf.d:ro" \
+  ghcr.io/xraph/octopus:latest \
+  serve --config /etc/octopus/conf.d
+```
+
+The trailing `serve --config ...` overrides the image's default command. See
+[Configuration → loading and merging](/docs/configuration) for merge semantics.
+
+<Callout type="warn">
+  The container runs as `uid 1000` with no privileges. Mount config **read-only** (`:ro`); the
+  process only needs to read it.
+</Callout>
+
+## Environment-variable substitution
+
+Octopus expands `${VAR}` and `${VAR:-default}` in the config file at load time, so you can keep
+secrets and per-environment values out of the file and inject them via the container
+environment.
+
+<Tabs items={['config.yaml', 'docker run']}>
+
+<Tab value="config.yaml">
+
+```yaml
+gateway:
+  listen: "0.0.0.0:${PORT:-8080}"
+
+auth_providers:
+  internal-jwt:
+    type: jwt
+    secret: "${JWT_SECRET}"          # required — fails to load if unset and no default
+    algorithm: "${JWT_ALG:-HS256}"
+```
+
+</Tab>
+
+<Tab value="docker run">
+
+```bash
+docker run --rm \
+  -p 8080:8080 \
+  -e PORT=8080 \
+  -e JWT_SECRET="$JWT_SECRET" \
+  -v "$(pwd)/config.yaml:/etc/octopus/config.yaml:ro" \
+  ghcr.io/xraph/octopus:latest
+```
+
+</Tab>
+
+</Tabs>
+
+Set the log level with the `RUST_LOG` environment variable (for example `RUST_LOG=info`). See
+[Environment variable substitution](/docs/configuration) for the full syntax.
+
+## Ports
+
+Octopus serves **everything on one listener** — proxied traffic, the `/livez`, `/readyz`, and
+`/startupz` probes, and the `/metrics` endpoint all share the gateway's `listen` address
+(default `0.0.0.0:8080`). Publishing `8080` is all you need.
+
+The image declares `EXPOSE 8080 9090`, and you may see older examples publish `-p 9090:9090`.
+That second port is reserved for an **admin** surface — the manifests label it `admin`, and the
+default `observability.metrics.endpoint` in the example config is `0.0.0.0:9090`. **Nothing
+binds a second listener on `9090` today:**
+
+- The admin dashboard the `9090` port is named for is not fully wired yet.
+- `observability.metrics.endpoint` is **inert** — metrics are served at the fixed `/metrics`
+  path on the gateway listen port regardless of that value (and `observability.metrics.enabled`
+  does not gate it). See the [metrics endpoint](/docs/observability/metrics) and the
+  [configuration implementation status](/docs/configuration).
+
+So mapping `9090` is harmless but unnecessary; scrape `/metrics` on `8080`.
+
+| Port | What it is | What to do |
+|------|------------|------------|
+| `8080` | Gateway listener: traffic, probes, `/metrics`. | Publish it. The exact number follows `gateway.listen`. |
+| `9090` | Reserved `admin` port (admin dashboard / inert metrics-endpoint default). | No active listener today; you can omit it. |
+
+## Health check
+
+The image defines a Docker `HEALTHCHECK` that polls `http://127.0.0.1:8080/livez` every 30s. If
+you change `gateway.listen` to a different port, override or disable the built-in health check
+(`--health-cmd` / `--no-healthcheck`) so it targets the right address.
+
+## Next steps
+
+- [Kubernetes deployment](/docs/deployment/kubernetes) — the recommended way to run in a cluster.
+- [Production checklist](/docs/deployment/production-checklist) — before you go live.
+- [Graceful shutdown](/docs/deployment/graceful-shutdown) — send SIGTERM, don't kill the container.
+- [TLS configuration](/docs/configuration/tls) — terminate HTTPS on the gateway.

@@ -1,0 +1,58 @@
+---
+title: Kubernetes
+description: Deploying Octopus to Kubernetes — a short overview that points to the full Kubernetes section for install, the in-process operator, Helm, probes, and EndpointSlice discovery.
+---
+
+import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Kubernetes
+
+Octopus is **Kubernetes-first**. The same binary you run with Docker can also run an
+**in-process operator** that watches the cluster and programs its own router — no sidecar and no
+separate control plane. It exposes dedicated health probes, drains gracefully on rolling
+updates, and discovers upstream Pods through the EndpointSlice API.
+
+<Callout type="info">
+  This page is a pointer. The full, maintained reference lives in the
+  **[Kubernetes section](/docs/kubernetes)** — install, operator, Helm, probes, discovery, and
+  cert-manager TLS. Start there.
+</Callout>
+
+## Two ways to install
+
+Both are documented under [Kubernetes → Install](/docs/kubernetes/install).
+
+- **Helm (recommended)** — a parameterized, upgradable install with RBAC, probes, autoscaling,
+  a `PodDisruptionBudget`, and an optional `ServiceMonitor`:
+
+  ```sh
+  helm install octopus deploy/helm/octopus \
+    --namespace octopus --create-namespace
+  ```
+
+- **Raw manifests** — a single `kubectl apply` for a Helm-free install, using the bundled
+  `deploy/kubernetes/octopus.yaml`.
+
+Routes, upstreams, plugins, and auth go under the chart's `config` value, which is rendered into
+a ConfigMap and mounted at `/etc/octopus/config.yaml` — the same file the
+[container image](/docs/deployment/docker) expects.
+
+## What the Kubernetes section covers
+
+<Cards>
+  <Card title="Install" description="Helm and raw manifests, CRD installation, and Gateway API prerequisites." href="/docs/kubernetes/install" />
+  <Card title="Operator" description="The in-process controller: watchers, reconcile pipeline, precedence, and leader election." href="/docs/kubernetes/operator" />
+  <Card title="Helm chart" description="The values reference — replicas, RBAC, HPA, PDB, and ServiceMonitor." href="/docs/kubernetes/helm-chart" />
+  <Card title="Probes & drain" description="liveness / readiness / startup semantics and graceful-shutdown tuning." href="/docs/kubernetes/probes-and-drain" />
+  <Card title="Discovery" description="EndpointSlice-based service discovery inside the cluster." href="/docs/kubernetes/discovery" />
+  <Card title="TLS & cert-manager" description="Terminate TLS from Gateway listener Secrets, hot-reloaded as they rotate." href="/docs/kubernetes/tls-cert-manager" />
+</Cards>
+
+## Deployment topics that apply in-cluster
+
+<Cards>
+  <Card title="Scaling" description="gateway.workers, replica counts, the HPA, and shared state across replicas." href="/docs/deployment/scaling" />
+  <Card title="Graceful shutdown" description="SIGTERM → readiness 503 → pre_stop_delay → drain, and sizing terminationGracePeriodSeconds." href="/docs/deployment/graceful-shutdown" />
+  <Card title="Production checklist" description="TLS, auth, probes, resource limits, and metrics scraping before you go live." href="/docs/deployment/production-checklist" />
+</Cards>

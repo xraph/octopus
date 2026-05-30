@@ -45,7 +45,8 @@ does not hit the stub handler) at your GraphQL upstream:
 upstreams:
   - name: graphql-api
     instances:
-      - address: 127.0.0.1
+      - id: graphql-1
+        host: 127.0.0.1
         port: 4000
 
 routes:

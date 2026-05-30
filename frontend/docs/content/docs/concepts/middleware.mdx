@@ -11,35 +11,68 @@ Middleware processes requests before they reach upstreams and responses before t
 
 ## Overview
 
-Middleware in Octopus forms an ordered pipeline that executes for each request:
+Middleware in Octopus is Rust code that wraps the request/response path. Each
+middleware runs in registration order on the way in and reverse order on the way
+out:
 
 ```
 Request → M1 → M2 → M3 → Upstream → M3 → M2 → M1 → Response
 ```
 
+<Callout type="warn" title="What actually runs today">
+  There is **no** `middleware:` configuration array. The global chain is
+  assembled in code (`crates/octopus-runtime/src/server.rs`) and contains at most
+  two entries: **compression** (when `gateway.compression.enabled`, the default)
+  and the **auth gateway** (when auth providers are configured or
+  `auth.global_enforce` is on). Compression is registered first, so it is the
+  outermost wrapper and compresses the response on the way out. The
+  `octopus-middleware` crate ships many more middleware (CORS, rate limiting,
+  caching, security headers, WAF, …), but they are **builder-only** — not wired
+  to gateway config. Per-route `rate_limit` and `cors` are parsed and stored but
+  not enforced in the live chain. See [Middleware reference](/docs/middleware) for
+  the full catalogue and wiring status.
+</Callout>
+
 ## How Middleware Works
 
 ### Execution Order
 
-```yaml
-middleware:
-  - auth          # 1. Authenticate first
-  - rate_limit    # 2. Then rate limit
-  - cors          # 3. Then CORS
-  - compression   # 4. Finally compress
+The chain is built in code, not from config. The live order is:
+
+```text
+Request
+  → [Compression]        (if gateway.compression.enabled)
+    → [Auth gateway]     (if auth_providers non-empty OR auth.global_enforce)
+      → Route match → Upstream proxy
+    ← Auth gateway (pass-through on the way out)
+  ← Compression (compresses the response body)
+Response
 ```
+
+Each middleware is configured through its own config block (`gateway.compression`
+and `auth` / `auth_providers`), not through a `middleware:` list.
 
 ### Short-Circuiting
 
-Middleware can stop the pipeline early:
+Middleware can stop the chain early — for example, the auth gateway returns
+`401`/`403` without proxying:
 
 ```
-Request → Auth (401) ──┐
-                        ↓
-                      Response
+Request → Auth gateway (401/403) ──┐
+                                    ↓
+                                  Response
 ```
 
 ## Built-in Middleware
+
+<Callout type="info">
+  Of the middleware below, only **authentication** (via the auth gateway and
+  `auth_providers`) and **compression** (via `gateway.compression`) run in the
+  live chain today. **Rate limiting** and **CORS** are implemented but
+  builder-only — their config is parsed but not enforced at request time. The
+  YAML examples here are illustrative; see the linked reference pages for the
+  exact, source-verified schema.
+</Callout>
 
 ### Authentication
 
@@ -141,7 +174,7 @@ impl Middleware for CustomMiddleware {
 }
 ```
 
-See [Plugin Development](/docs/plugins/development) for details.
+See [Writing a Plugin](/docs/plugins/writing-plugins) for details.
 
 ## Request Context
 
@@ -159,10 +192,10 @@ let user_id = req.extensions().get::<UserId>();
 
 Learn about specific middleware:
 
+- [Middleware reference](/docs/middleware) - The real chain and full catalogue
 - [Authentication](/docs/middleware/authentication)
 - [Rate Limiting](/docs/middleware/rate-limiting)
 - [CORS](/docs/middleware/cors)
 - [Compression](/docs/middleware/compression)
-- [Request Transformation](/docs/middleware/transformation)
-- [Caching](/docs/middleware/caching)
+- [Catalogue](/docs/middleware/catalogue) - Transformation, caching, and the rest
 

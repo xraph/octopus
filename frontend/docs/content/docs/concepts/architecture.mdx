@@ -220,13 +220,14 @@ Protocol-specific handlers:
 
 #### octopus-middleware
 
-Core middleware:
+The middleware catalogue — roughly two dozen implementations. Two are wired into
+the live gateway chain today (the auth gateway and compression); the rest are
+builder-only (CORS, rate limiting, security headers, WAF, caching, etc.). See
+[Middleware](/docs/middleware) for the full catalogue and wiring status:
 
-- **Auth**: JWT, OAuth2, API keys
-- **Rate limiting**: Token bucket, leaky bucket
-- **CORS**: Cross-origin resource sharing
-- **Compression**: gzip, brotli, zstd
-- **Scripting**: Request/response transformation
+- **Auth gateway**: JWT, OIDC, API key, mTLS, forward-auth (via providers)
+- **Compression**: gzip, brotli, zstd (the wired global response compressor)
+- **Builder-only**: rate limiting, CORS, caching, retries, circuit breaker, and more
 
 #### octopus-plugins
 
@@ -242,32 +243,40 @@ Plugin system:
 
 ### Request Path
 
+The live request path runs the global middleware chain (today: optional
+compression, then the optional auth gateway), matches a route, selects an
+upstream instance, and proxies. For the source-verified step-by-step flow see
+[Request Lifecycle](/docs/concepts/request-lifecycle).
+
 ```mermaid
 sequenceDiagram
     participant C as Client
     participant S as Server
+    participant M as Middleware Chain
     participant R as Router
-    participant M as Middleware
     participant LB as Load Balancer
-    participant H as Health Check
     participant U as Upstream
 
-    C->>S: HTTP Request
-    S->>R: Route Request
-    R->>M: Execute Middleware
-    M->>M: Auth
-    M->>M: Rate Limit
-    M->>M: CORS
-    M->>LB: Select Upstream
-    LB->>H: Check Health
-    H-->>LB: Healthy Instance
+    C->>S: HTTP Request (listener / TLS)
+    S->>R: Pre-match route, inject auth context
+    S->>M: Run chain (compression, auth gateway)
+    M->>R: Match route + rewrite prefix
+    R->>LB: Select instance for upstream
     LB->>U: Forward Request
     U-->>LB: Response
     LB-->>M: Response
-    M->>M: Response Middleware
-    M-->>S: Final Response
+    M-->>S: Compress on the way out
     S-->>C: HTTP Response
 ```
+
+<Callout type="info" title="What actually runs">
+  The chain is assembled in code in
+  `crates/octopus-runtime/src/server.rs` and applied in `handler.rs`. It holds
+  at most two entries — compression (when `gateway.compression.enabled`) and the
+  auth gateway (when auth providers are configured or `auth.global_enforce`).
+  There is no `middleware:` array, and rate-limit / CORS are not in the live
+  chain. See [Middleware](/docs/middleware).
+</Callout>
 
 ### Service Discovery Flow
 
@@ -394,6 +403,7 @@ sequenceDiagram
 
 ## Next Steps
 
+- [Request Lifecycle](/docs/concepts/request-lifecycle) - How a request is handled
 - [Routing](/docs/concepts/routing) - Understand routing
 - [Middleware](/docs/concepts/middleware) - Learn about middleware
 - [Plugins](/docs/concepts/plugins) - Extend with plugins

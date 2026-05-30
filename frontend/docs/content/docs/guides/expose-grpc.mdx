@@ -1,0 +1,142 @@
+---
+title: Expose a gRPC service
+description: Proxy a gRPC backend transparently over HTTP/2 with a normal Octopus route — no proto files, no transcoding, just a route pointed at your service.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+# Expose a gRPC service
+
+Octopus proxies gRPC **transparently** over HTTP/2. It does not parse your
+`.proto` files — it forwards the gRPC framing, metadata, and trailers between the
+client and the upstream. A gRPC upstream is therefore just an HTTP/2 upstream,
+and a gRPC route is just a normal route whose path is the gRPC service. There is
+no protocol flag: a request is treated as gRPC when its `Content-Type` begins
+with `application/grpc`.
+
+<Callout type="info">
+  The upstream connection is **plaintext HTTP/2 (h2c)** — the gateway opens a TCP
+  connection and performs an HTTP/2 handshake directly. Your gRPC server must
+  accept h2c (no TLS between gateway and upstream).
+</Callout>
+
+<Steps>
+
+<Step>
+## Point a route at your gRPC upstream
+
+Declare the backend as an upstream and add a route whose `path` is the fully
+qualified service, `/{package.Service}`. gRPC calls are HTTP/2 `POST`s to
+`/{package.Service}/{Method}`, so a path of `/users.UserService` matches every
+method on that service.
+
+```yaml title="gateway.yaml"
+upstreams:
+  - name: users-grpc
+    instances:
+      - id: users-grpc-1
+        host: 127.0.0.1
+        port: 50051
+
+routes:
+  - path: /users.UserService
+    upstream: users-grpc
+```
+
+The router resolves the upstream from the request host and the gRPC path exactly
+like an HTTP route. To proxy several services, add one route per service.
+</Step>
+
+<Step>
+## (Optional) Acknowledge the gRPC config block
+
+A top-level `grpc` block exists. You can include it for documentation, but be
+aware of its current status.
+
+```yaml title="gateway.yaml"
+grpc:
+  enabled: true
+  deadline_propagation: true
+```
+
+<Callout type="warn">
+  In the current build the live gRPC proxy path does **not** read this block — it
+  uses built-in defaults, routes via the normal router (not the `services` map),
+  and always propagates `grpc-timeout` when present. So `enable_reflection`,
+  `enable_grpc_web`, `max_message_size`, and `services` are **parsed but not yet
+  wired into the proxy**. The block is safe to omit entirely; deadline
+  propagation happens regardless. See [gRPC configuration](/docs/configuration/grpc).
+</Callout>
+</Step>
+
+<Step>
+## Validate and run
+
+```bash
+octopus validate -c gateway.yaml
+octopus serve -c gateway.yaml
+```
+
+The complete, validated configuration:
+
+```yaml title="gateway.yaml"
+gateway:
+  listen: "0.0.0.0:8080"
+
+grpc:
+  enabled: true
+  deadline_propagation: true
+
+upstreams:
+  - name: users-grpc
+    instances:
+      - id: users-grpc-1
+        host: 127.0.0.1
+        port: 50051
+
+routes:
+  - path: /users.UserService
+    upstream: users-grpc
+```
+</Step>
+
+<Step>
+## Call it
+
+Use any gRPC client through the gateway. Deadlines propagate: a `grpc-timeout`
+header on the request becomes the upstream call timeout (default 30s when
+absent), and `authorization`/`grpc-*` metadata passes straight through.
+
+```bash
+# grpcurl, plaintext, through the gateway on :8080
+grpcurl -plaintext \
+  -d '{"id": "42"}' \
+  localhost:8080 users.UserService/GetUser
+```
+
+If the upstream cannot be reached the gateway returns gRPC `UNAVAILABLE`; on
+timeout it returns `DEADLINE_EXCEEDED` (as HTTP 200 with the gRPC status in
+trailers, per the gRPC spec).
+</Step>
+
+</Steps>
+
+## Known limitations
+
+These are properties of the current transparent proxy — see
+[Protocols → gRPC](/docs/protocols/grpc) for the details:
+
+- **Unary and server-streaming work.** Client-streaming and bidirectional
+  streaming are **buffered on the request side**, not truly streamed, because the
+  request body is collected in full before forwarding.
+- **No reflection proxy** and **no JSON↔gRPC transcoding**.
+- **gRPC-Web content types are detected but not translated** in the proxy path.
+- **Plaintext (h2c) upstream only** — no TLS to the upstream.
+
+## See also
+
+- [Protocols → gRPC](/docs/protocols/grpc) — how detection, forwarding, and deadlines work.
+- [gRPC configuration](/docs/configuration/grpc) — the `grpc` block (currently display-only).
+- [Upstreams](/docs/configuration/upstreams) and [Routes](/docs/configuration/routes).
+- [Route with the Gateway API](/docs/guides/kubernetes-gateway-api) — `GRPCRoute` on Kubernetes.

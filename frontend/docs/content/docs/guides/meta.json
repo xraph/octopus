@@ -5,14 +5,13 @@
   "pages": [
     "index",
     "secure-api-jwt",
-    "per-tenant-rate-limiting",
-    "canary-release",
-    "expose-grpc",
+    "protect-admin",
     "enable-mtls",
+    "expose-grpc",
     "kubernetes-gateway-api",
     "cert-manager-tls",
-    "observability-setup",
     "farp-auto-discovery",
-    "generate-typescript-client"
+    "generate-typescript-client",
+    "observability-setup"
   ]
 }

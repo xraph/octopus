@@ -1,100 +1,99 @@
 ---
 title: Deployment
-description: Deploy Octopus to production
+description: Ways to run Octopus in production — the published container image, Kubernetes, or a binary built from source — and the operational topics that matter once it is live.
 ---
 
 import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Callout } from 'fumadocs-ui/components/callout';
 
 # Deployment
 
-Learn how to deploy Octopus API Gateway to production.
+Octopus ships as a single self-contained binary (`octopus`) and a multi-arch container
+image. There is no separate control plane to run: the gateway, its health probes, its
+Prometheus `/metrics` endpoint, and — when enabled — the in-process Kubernetes operator all
+live in the same process, listening on one port.
 
-## Deployment Options
+<Callout type="info">
+  The gateway serves everything on its **listen port** (default `0.0.0.0:8080`): proxied
+  traffic, the `/livez` / `/readyz` / `/startupz` probes, and `/metrics`. There is no second
+  listener to expose. See [Ports](/docs/deployment/docker#ports) for what the `9090` you may
+  have seen in older examples actually refers to.
+</Callout>
+
+## Deployment options
 
 <Cards>
   <Card
     title="Docker"
-    description="Deploy with Docker and Docker Compose"
+    description="Run the published ghcr.io/xraph/octopus image, mount a config file, and substitute environment variables."
     href="/docs/deployment/docker"
   />
   <Card
     title="Kubernetes"
-    description="Deploy to Kubernetes with Helm"
+    description="Helm chart and raw manifests, the in-process operator, and EndpointSlice discovery — covered in the Kubernetes section."
     href="/docs/deployment/kubernetes"
   />
   <Card
-    title="systemd"
-    description="Run as a systemd service"
-    href="/docs/deployment/systemd"
-  />
-  <Card
-    title="Production Checklist"
-    description="Production readiness checklist"
-    href="/docs/deployment/production"
+    title="From source"
+    description="Build an optimized binary with make release and run it directly or under a process supervisor."
+    href="#from-source"
   />
 </Cards>
 
-## Quick Deploy
+## From source
 
-### Docker
-
-```bash
-docker run -d \
-  --name octopus \
-  -p 8080:8080 \
-  -p 9090:9090 \
-  -v $(pwd)/config.yaml:/etc/octopus/config.yaml \
-  octopus/octopus:latest
-```
-
-### Kubernetes
+If you do not want the container image, build the binary yourself. Building requires **Rust
+1.75 or newer** and `protoc` (the Protocol Buffers compiler, used by the gRPC code paths); on
+Linux you also need `pkg-config` and `libssl-dev`.
 
 ```bash
-helm install my-gateway octopus/octopus \
-  --set discovery.backend=kubernetes \
-  --set farp.enabled=true
+git clone https://github.com/xraph/octopus.git
+cd octopus
+make release
 ```
 
-### Binary
+The optimized binary is written to `target/release/octopus`. Run it against a config file:
 
 ```bash
-octopus --config /etc/octopus/config.yaml
+target/release/octopus serve --config /etc/octopus/config.yaml
 ```
 
-## Production Considerations
+`octopus serve` accepts multiple `-c`/`--config` flags or a directory; files are merged in
+order so base settings and environment overrides can live separately. Validate a config before
+rolling it out:
 
-### High Availability
+```bash
+octopus validate -c /etc/octopus/config.yaml
+```
 
-- Run multiple instances behind a load balancer
-- Use horizontal pod autoscaling in Kubernetes
-- Deploy across multiple availability zones
+When supervising the binary (systemd, a process manager, or any orchestrator), send **SIGTERM**
+to trigger graceful shutdown rather than killing it — see [Graceful shutdown](/docs/deployment/graceful-shutdown).
+For installation methods and platform notes, see [Installation](/docs/installation).
 
-### Security
+## Operating Octopus
 
-- Enable TLS/HTTPS
-- Use secrets management (Vault, K8s Secrets)
-- Enable authentication on admin endpoints
-- Restrict network access
-- Regular security updates
+<Cards>
+  <Card
+    title="Production checklist"
+    description="A grounded pre-flight list: TLS, auth, probes, resource limits, graceful drain, and metrics scraping — with honest notes on what is and isn't wired."
+    href="/docs/deployment/production-checklist"
+  />
+  <Card
+    title="Scaling"
+    description="Worker threads (gateway.workers), running multiple replicas, autoscaling, and what shared state requires across replicas."
+    href="/docs/deployment/scaling"
+  />
+  <Card
+    title="Graceful shutdown"
+    description="The SIGTERM → readiness 503 → pre_stop_delay → drain sequence, and how to size terminationGracePeriodSeconds."
+    href="/docs/deployment/graceful-shutdown"
+  />
+</Cards>
 
-### Monitoring
+## Related
 
-- Set up Prometheus and Grafana
-- Configure alerting
-- Enable distributed tracing
-- Aggregate logs
-
-### Performance
-
-- Tune worker count based on CPU cores
-- Configure connection pooling
-- Enable compression
-- Use HTTP/2 where possible
-
-## Next Steps
-
-- [Docker Deployment](/docs/deployment/docker)
-- [Kubernetes Deployment](/docs/deployment/kubernetes)
-- [Production Checklist](/docs/deployment/production)
-- [Performance Tuning](/docs/guides/performance)
-
+<Cards>
+  <Card title="Gateway configuration" description="listen, workers, timeouts, body limits, TLS, compression, probes." href="/docs/configuration/gateway" />
+  <Card title="Observability" description="The /metrics endpoint, tracing, and structured logging." href="/docs/observability" />
+  <Card title="Security" description="TLS, mTLS, and authentication for the gateway and its admin surface." href="/docs/security" />
+</Cards>

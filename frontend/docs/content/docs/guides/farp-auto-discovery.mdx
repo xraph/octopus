@@ -1,0 +1,163 @@
+---
+title: Auto-discover services with FARP
+description: Turn on FARP so services publish their own OpenAPI schemas and Octopus generates routes for them automatically — with a Kubernetes EndpointSlice backend (and a local mDNS option).
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+import { Tabs } from 'fumadocs-ui/components/tabs';
+
+# Auto-discover services with FARP
+
+[FARP](/docs/farp) — the Forge API Gateway Registration Protocol — flips
+hand-written routing around: a discovery backend reports live service instances,
+Octopus fetches each one's published **OpenAPI** document, and turns its paths and
+methods into routes. As services scale, appear, or disappear, the routes follow.
+Static `upstreams`/`routes` and FARP discovery coexist, so you can adopt it
+incrementally.
+
+<Steps>
+
+<Step>
+## Make services advertise themselves
+
+FARP only registers an instance — and generates routes for it — when its
+discovery metadata advertises `farp.enabled = true`. The OpenAPI document is then
+fetched from `farp.openapi.path` (default `/openapi.json`). How you set that
+metadata depends on the backend:
+
+- **Kubernetes** — carried on the Service/Pod metadata; filter with a
+  `label_selector`.
+- **Consul** — service `Meta`.
+- **mDNS** — TXT records.
+
+Instances without `farp.enabled` are discovered but skipped. See
+[what a backend reports](/docs/farp/backends#what-a-backend-reports).
+</Step>
+
+<Step>
+## Enable FARP and pick a backend
+
+Set `farp.enabled: true` and list one or more backends under
+`farp.discovery.backends`. Each entry is tagged by `type`
+(`mdns` | `dns` | `consul` | `kubernetes`), has an `enabled` flag, and a
+backend-specific `config`.
+
+<Tabs items={['Kubernetes', 'mDNS (local dev)']}>
+<div title="Kubernetes">
+
+```yaml title="gateway.yaml"
+farp:
+  enabled: true
+  watch_interval: 5s
+  schema_cache_ttl: 5m
+  discovery:
+    backends:
+      - type: kubernetes
+        enabled: true
+        config:
+          namespace: default
+          label_selector: "app.kubernetes.io/part-of=myapp"
+          watch_interval: 10s
+          use_endpoint_slices: true
+          include_not_ready: false
+```
+
+The Kubernetes backend discovers Pod endpoints via the `discovery.k8s.io/v1`
+EndpointSlice API (falling back to Endpoints), which reflects Pod scale up/down.
+See [Kubernetes discovery](/docs/kubernetes/discovery) for RBAC and cluster setup.
+
+</div>
+<div title="mDNS (local dev)">
+
+```yaml title="gateway.yaml"
+farp:
+  enabled: true
+  watch_interval: 5s
+  schema_cache_ttl: 5m
+  discovery:
+    backends:
+      - type: mdns
+        enabled: true
+        config:
+          service_type: _octopus._tcp
+          domain: local.
+          watch_interval: 30s
+          query_timeout: 5s
+          enable_ipv6: false
+```
+
+mDNS is zero-config discovery for local development; services advertise
+themselves with their own mDNS library.
+
+</div>
+</Tabs>
+
+<Callout type="info">
+  Each backend is gated behind a Cargo feature in the gateway build (`mdns`,
+  `dns`, `consul`, `kubernetes`); the default runtime build enables only `mdns`.
+  A configured-but-not-compiled backend is logged and skipped, not fatal. There
+  is no `type: etcd` backend. The DNS backend is experimental (only
+  `watch_interval` is applied) — prefer mDNS, Consul, or Kubernetes. See
+  [Discovery backends](/docs/farp/backends).
+</Callout>
+</Step>
+
+<Step>
+## Validate and run
+
+```bash
+octopus validate -c gateway.yaml
+octopus serve -c gateway.yaml
+```
+
+A complete, validated configuration (Kubernetes backend):
+
+```yaml title="gateway.yaml"
+gateway:
+  listen: "0.0.0.0:8080"
+
+farp:
+  enabled: true
+  watch_interval: 5s
+  schema_cache_ttl: 5m
+  discovery:
+    backends:
+      - type: kubernetes
+        enabled: true
+        config:
+          namespace: default
+          label_selector: "app.kubernetes.io/part-of=myapp"
+          watch_interval: 10s
+          use_endpoint_slices: true
+          include_not_ready: false
+```
+</Step>
+
+<Step>
+## Watch routes appear
+
+On each tick of `watch_interval`, Octopus polls every enabled backend, fetches
+the OpenAPI document of any newly advertised instance, and generates routes from
+it. Inspect the live route table through the
+[admin dashboard](/docs/observability/admin-dashboard) (`/admin/routes`) or the
+[Admin API](/docs/observability/admin-api). Scale a discovered Deployment up or
+down and the routes reconcile to match.
+</Step>
+
+</Steps>
+
+## Readiness and discovery
+
+If you also run on Kubernetes with probes, `/readyz` can wait for the first
+discovery sync before reporting ready — `gateway.probes.require_discovery_sync`
+(default `true`) keeps a freshly started pod out of the Service EndpointSlice
+until it knows where its upstreams are. See [Probes & drain](/docs/kubernetes/probes-and-drain)
+and the [observability guide](/docs/guides/observability-setup).
+
+## See also
+
+- [Service Discovery & FARP](/docs/farp) — the discovery and auto-routing model.
+- [Discovery backends](/docs/farp/backends) — every backend's fields and honest status.
+- [Schema federation](/docs/farp/schema-federation) — how published schemas become a unified API surface.
+- [FARP configuration](/docs/configuration/farp) and [Kubernetes discovery](/docs/kubernetes/discovery).

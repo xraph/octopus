@@ -1,0 +1,196 @@
+---
+title: Enable mutual TLS
+description: Terminate TLS with client-certificate verification at the listener, then turn the verified certificate CN into an authenticated principal with roles.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+# Enable mutual TLS
+
+Mutual TLS (mTLS) lets only clients holding a certificate signed by a CA you
+trust reach the gateway, and turns the certificate's identity into a principal
+with roles. There are two distinct layers, and you need both:
+
+1. **The TLS listener** verifies the client certificate cryptographically
+   (chain validation against a CA). This is [`gateway.tls`](/docs/security/tls).
+2. **The `mtls` auth provider** reads the verified certificate's Common Name (CN)
+   and maps it to a [principal and roles](/docs/security/mtls). It does **not**
+   re-verify the certificate.
+
+<Callout type="info">
+  Without TLS-level mTLS configured there is no verified client CN for the auth
+  provider to read, so configure both layers together.
+</Callout>
+
+<Steps>
+
+<Step>
+## Have a server cert, key, and client CA ready
+
+You need three PEM files on the gateway host:
+
+- a server certificate and private key (to terminate TLS), and
+- the CA certificate that signed the client certificates you will accept.
+
+For a quick local test you can self-sign them with `openssl`; in production these
+come from your PKI. Point the gateway at their paths in the next step.
+</Step>
+
+<Step>
+## Configure the TLS listener for client certs
+
+Under `gateway.tls`, set the server `cert_file`/`key_file`, then add
+`client_ca_file` and `require_client_cert: true` to require and verify client
+certificates during the handshake.
+
+```yaml title="gateway.yaml"
+gateway:
+  listen: "0.0.0.0:8443"
+  tls:
+    cert_file: /etc/octopus/tls/server-cert.pem
+    key_file: /etc/octopus/tls/server-key.pem
+    client_ca_file: /etc/octopus/tls/client-ca.pem
+    require_client_cert: true
+    min_tls_version: "1.2"
+```
+
+With `require_client_cert: true`, a client that does not present a certificate
+chaining to `client_ca_file` fails the handshake. Set it to `false` to make the
+certificate optional (verified if presented). See [TLS](/docs/security/tls) for
+the full listener behavior.
+
+<Callout type="warn">
+  `min_tls_version` is validated and logged but the file-based acceptor does not
+  yet pin the protocol version, so it does **not** disable TLS 1.2 at the
+  protocol level today — treat it as advisory. File-based certificate hot-reload
+  is also not swapped into the live acceptor; plan a restart to pick up rotated
+  file certs. (On Kubernetes the operator path **does** hot-swap — see
+  [TLS with cert-manager](/docs/guides/cert-manager-tls).)
+</Callout>
+</Step>
+
+<Step>
+## Add the mTLS auth provider
+
+The `mtls` provider consumes the verified CN. `extract_cn_as_principal: true`
+makes the CN the principal id and derives roles from `cn_to_roles`. A pattern
+matches a CN when it is `*` (any CN), equals the CN, or is a **suffix** of the CN
+— so all matching entries contribute their roles.
+
+```yaml title="gateway.yaml"
+auth_providers:
+  client-certs:
+    type: mtls
+    client_ca_file: /etc/octopus/tls/client-ca.pem
+    require_client_cert: true
+    extract_cn_as_principal: true
+    cn_to_roles:
+      "*": ["client"]                          # every verified client
+      ".internal.example.com": ["internal-service"]  # CN suffix match
+      "admin.client.example.com": ["admin"]    # exact CN
+```
+
+<Callout type="warn">
+  The provider's own `client_ca_file` field is **required by the schema but not
+  used by the provider** — the actual CA verification is the
+  `gateway.tls.client_ca_file` from the previous step. Set both to the same file
+  to avoid confusion.
+</Callout>
+</Step>
+
+<Step>
+## Enforce auth and authorize routes
+
+Make the provider the default, enforce globally, and gate sensitive routes by the
+roles you derived from the CN.
+
+```yaml title="gateway.yaml"
+auth:
+  default_provider: client-certs
+  global_enforce: true
+
+routes:
+  - path: /internal/*
+    upstream: internal-api
+    require_roles: ["internal-service", "admin"]   # any-of
+```
+
+Note there is no `WWW-Authenticate` challenge for mTLS — the identity comes from
+the handshake, not a header. See [Authorization](/docs/security/authorization).
+</Step>
+
+<Step>
+## Validate and run
+
+```bash
+octopus validate -c gateway.yaml
+octopus serve -c gateway.yaml
+```
+
+The complete, validated configuration:
+
+```yaml title="gateway.yaml"
+gateway:
+  listen: "0.0.0.0:8443"
+  tls:
+    cert_file: /etc/octopus/tls/server-cert.pem
+    key_file: /etc/octopus/tls/server-key.pem
+    client_ca_file: /etc/octopus/tls/client-ca.pem
+    require_client_cert: true
+    min_tls_version: "1.2"
+
+upstreams:
+  - name: internal-api
+    instances:
+      - id: internal-1
+        host: 10.0.0.31
+        port: 8080
+
+auth_providers:
+  client-certs:
+    type: mtls
+    client_ca_file: /etc/octopus/tls/client-ca.pem
+    require_client_cert: true
+    extract_cn_as_principal: true
+    cn_to_roles:
+      "*": ["client"]
+      ".internal.example.com": ["internal-service"]
+      "admin.client.example.com": ["admin"]
+
+auth:
+  default_provider: client-certs
+  global_enforce: true
+
+routes:
+  - path: /internal/*
+    upstream: internal-api
+    require_roles: ["internal-service", "admin"]
+```
+</Step>
+
+<Step>
+## Try it
+
+```bash
+# No client cert -> TLS handshake fails
+curl -i https://localhost:8443/internal/status
+
+# With a client cert signed by client-ca.pem
+curl -i --cert client.pem --key client-key.pem \
+  https://localhost:8443/internal/status
+```
+
+A client whose CN ends with `.internal.example.com` is authenticated with roles
+`["client", "internal-service"]` and is allowed; an unrelated client gets
+`403 forbidden`.
+</Step>
+
+</Steps>
+
+## See also
+
+- [TLS](/docs/security/tls) and [TLS configuration](/docs/configuration/tls) — the listener layer.
+- [mTLS provider](/docs/security/mtls) — CN-to-roles matching and principal mapping.
+- [Authentication](/docs/security/authentication) and [Authorization](/docs/security/authorization).
+- [TLS with cert-manager](/docs/guides/cert-manager-tls) — operator-managed, hot-reloaded certs on Kubernetes.

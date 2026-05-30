@@ -69,7 +69,8 @@ A gRPC upstream is just an HTTP/2 upstream and a route whose path is the gRPC se
 upstreams:
   - name: users-grpc
     instances:
-      - address: 127.0.0.1
+      - id: users-grpc-1
+        host: 127.0.0.1
         port: 50051
 
 routes:

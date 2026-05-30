@@ -21,18 +21,25 @@ FARP eliminates manual route configuration by:
 
 ## Enabling FARP
 
-```yaml
-discovery:
-  backend: kubernetes
-  kubernetes:
-    namespace: default
-    label_selector: "app.kubernetes.io/part-of=myapp"
+Discovery backends are configured under `farp.discovery.backends`. For example, a
+Kubernetes backend:
 
+```yaml
 farp:
   enabled: true
-  watch_interval: 5s
-  schema_cache_ttl: 5m
+  discovery:
+    backends:
+      - type: kubernetes
+        enabled: true
+        config:
+          namespace: ""              # "" = all namespaces (cluster-scoped RBAC)
+          label_selector: "app.kubernetes.io/part-of=myapp"
+          watch_interval: 30s
 ```
+
+See [FARP configuration](/docs/configuration/farp) for the full schema and
+[Discovery backends](/docs/farp/backends) for the supported backends (mDNS,
+Consul, DNS, Kubernetes).
 
 ## Service Manifest
 
@@ -109,44 +116,16 @@ gRPC routes from service reflection.
 
 ## Discovery Backends
 
-### Kubernetes
+FARP can source instances from several backends, each configured under
+`farp.discovery.backends`: **Kubernetes** (EndpointSlice-based Pod discovery),
+**Consul**, **DNS**, and **mDNS/Bonjour** (zero-config, for local development).
 
-```yaml
-discovery:
-  backend: kubernetes
-  kubernetes:
-    namespace: default
-    label_selector: "farp.enabled=true"
-    annotation: "farp.manifest"
-```
-
-Services annotate pods with manifest URL:
-
-```yaml
-metadata:
-  annotations:
-    farp.manifest: "http://service:8080/.well-known/farp-manifest.json"
-```
-
-### Consul
-
-```yaml
-discovery:
-  backend: consul
-  consul:
-    address: consul:8500
-    service_tag: "farp"
-```
-
-### etcd
-
-```yaml
-discovery:
-  backend: etcd
-  etcd:
-    endpoints: ["etcd:2379"]
-    prefix: "/services"
-```
+<Callout type="info">
+  An etcd discovery backend exists in the source tree but is **not** selectable
+  from the gateway configuration today. See [Discovery backends](/docs/farp/backends)
+  for the source-verified breakdown and [Kubernetes discovery](/docs/kubernetes/discovery)
+  for in-cluster setup.
+</Callout>
 
 ## Route Generation
 
@@ -323,7 +302,8 @@ octopus_farp_parse_errors_total{service="user-service",type="openapi"}
 
 ## Next Steps
 
-- [Service Discovery](/docs/configuration/discovery) - Configure discovery
-- [OpenAPI Integration](/docs/guides/openapi) - Generate OpenAPI
+- [Service Discovery concept](/docs/concepts/service-discovery) - The discovery model
+- [FARP configuration](/docs/configuration/farp) - Configure discovery and caching
+- [Schema federation](/docs/farp/schema-federation) - OpenAPI/AsyncAPI/GraphQL merging
 - [gRPC Support](/docs/protocols/grpc) - gRPC services
 

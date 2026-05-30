@@ -4,7 +4,6 @@ description: How Octopus routes requests to upstream services
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
-import { Tabs } from 'fumadocs-ui/components/tabs';
 
 # Routing
 
@@ -12,7 +11,21 @@ Learn how Octopus routes incoming requests to upstream services.
 
 ## Overview
 
-Octopus uses a trie-based router for efficient path matching. Routes are defined in configuration and can be dynamically updated through FARP or the admin API.
+Octopus uses a trie-based router for efficient path matching. Routes are defined in configuration and can be dynamically updated through FARP, the Kubernetes operator, or the admin API.
+
+<Callout type="warn" title="This page is conceptual — see Routes for the real schema">
+  This page explains routing ideas (path matching, parameters, priority, prefix
+  rewriting). Some examples below show fields and routing modes that are **not**
+  part of the current configuration schema (for example `match_type`,
+  `conditions`, `route_groups`, route-level `retries`, and
+  `rate_limit.requests_per_second`). For the source-verified `routes[]` schema —
+  `path`, `methods`, `upstream`, `priority`, `strip_prefix`, `add_prefix`,
+  `auth_provider`/`skip_auth`/`require_roles`/`require_scopes`/`authz_rule`,
+  `timeout`, `rate_limit` (`requests_per_window` + `window_size`), and `cors` —
+  always defer to [Routes](/docs/configuration/routes). Note `rate_limit` and
+  `cors` are stored but not enforced in the live chain today (see
+  [Middleware](/docs/middleware)).
+</Callout>
 
 ## Basic Routing
 
@@ -242,41 +255,39 @@ routes:
 
 ## Path Manipulation
 
-### Strip Path Prefix
+Octopus rewrites the path before proxying using two fields: `strip_prefix`
+(removed from the front of the path) and `add_prefix` (prepended). When both are
+set, the prefix is stripped first and then the new prefix is added. This is the
+prefix rewriting applied in `handler.rs` for HTTP, WebSocket, SSE, and gRPC.
+
+### Strip Prefix
 
 ```yaml
 routes:
   - path: /api/v1/*
     upstream: user-service
-    strip_path: /api/v1  # Forward without prefix
+    strip_prefix: /api/v1   # Forward without the prefix
 ```
 
-Request: `/api/v1/users/123`  
+Request: `/api/v1/users/123`
 Forwarded: `/users/123`
 
-### Path Rewrite
-
-```yaml
-routes:
-  - path: /old-api/*
-    upstream: new-service
-    rewrite: /new-api/$1
-```
-
-Request: `/old-api/users/123`  
-Forwarded: `/new-api/users/123`
-
-### Add Path Prefix
+### Add Prefix
 
 ```yaml
 routes:
   - path: /*
     upstream: service
-    add_path: /v2
+    add_prefix: /v2
 ```
 
-Request: `/users/123`  
+Request: `/users/123`
 Forwarded: `/v2/users/123`
+
+<Callout type="info">
+  There is no regex-capture `rewrite` field. Path rewriting is limited to
+  `strip_prefix` and `add_prefix`. See [Routes](/docs/configuration/routes).
+</Callout>
 
 ## Timeout Configuration
 
@@ -289,51 +300,48 @@ routes:
     read_timeout: 20s     # Read timeout
 ```
 
-## Retry Configuration
+## Retries
+
+<Callout type="info">
+  Routes have **no** `retries`/`retry_on` fields. Retry behavior lives in the
+  proxy layer (`proxy.proxy_with_retry`), and load balancing, health checks, and
+  circuit breaking are configured per **upstream**, not per route. See
+  [Upstreams](/docs/configuration/upstreams).
+</Callout>
+
+## Load Balancing
+
+Load-balancing policy is set on the **upstream** via `lb_policy`, not on the
+route:
 
 ```yaml
-routes:
-  - path: /api/users
-    upstream: user-service
-    retries: 3
-    retry_on:
-      - 502  # Bad Gateway
-      - 503  # Service Unavailable
-      - 504  # Gateway Timeout
-    retry_delay: 1s
-    retry_backoff: exponential  # or 'fixed'
+upstreams:
+  - name: api-service
+    lb_policy: least_connections
+    instances:
+      - id: api-1
+        host: 10.0.0.11
+        port: 8080
 ```
 
-## Load Balancing Strategies
-
-```yaml
-routes:
-  - path: /api/*
-    upstream: api-service
-    load_balance: round-robin  # Default
-  
-  - path: /api/search
-    upstream: search-service
-    load_balance: least-connections
-  
-  - path: /api/users
-    upstream: user-service
-    load_balance: ip-hash  # Sticky sessions
-```
-
-See [Load Balancing](/docs/concepts/load-balancing) for details.
+See [Load Balancing](/docs/concepts/load-balancing) and
+[Upstreams](/docs/configuration/upstreams) for details.
 
 ## Circuit Breaker
 
+Circuit breakers are configured per **upstream**, not per route:
+
 ```yaml
-routes:
-  - path: /api/orders
-    upstream: order-service
+upstreams:
+  - name: order-service
     circuit_breaker:
-      enabled: true
-      failure_threshold: 5
-      timeout: 60s
-      half_open_requests: 3
+      error_threshold: 50.0
+      min_requests: 20
+      timeout: 30s
+    instances:
+      - id: order-1
+        host: 10.0.0.21
+        port: 8080
 ```
 
 See [Circuit Breaker](/docs/concepts/circuit-breaker) for details.
@@ -568,5 +576,5 @@ routes:
 - [Load Balancing](/docs/concepts/load-balancing) - Distribute traffic
 - [Health Checks](/docs/concepts/health-checks) - Monitor upstreams
 - [FARP Protocol](/docs/concepts/farp) - Auto-generate routes
-- [Configuration](/docs/configuration/routing) - Routing configuration
+- [Routes configuration](/docs/configuration/routes) - The real route schema
 

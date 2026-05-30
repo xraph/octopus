@@ -1,0 +1,101 @@
+---
+title: Scaling
+description: Scaling Octopus — vertical scaling with gateway.workers, horizontal scaling across replicas, the Helm HorizontalPodAutoscaler, and the shared state store you need when running more than one instance.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Scaling
+
+Octopus scales in two directions: **up** (more worker threads per process) and **out** (more
+replicas behind a load balancer). They're complementary — tune workers to use a node's cores,
+then add replicas for capacity and availability.
+
+## Vertical: `gateway.workers`
+
+Each Octopus process runs an async runtime with a pool of worker threads. `gateway.workers`
+controls the size of that pool:
+
+```yaml title="config.yaml"
+gateway:
+  listen: "0.0.0.0:8080"
+  workers: 0          # 0 = auto: one worker per available CPU core
+```
+
+- **`0` (default)** — auto: the runtime uses one worker per CPU core it can see.
+- **A fixed number** — pin the pool to exactly that many threads.
+
+<Callout type="info">
+  In Kubernetes, "available cores" depends on what the container can see, not on the CPU
+  *limit*. If you set a CPU limit, consider setting `workers` explicitly to match it (or set it
+  via the runtime's CPU detection) so the pool size lines up with the cores you've actually
+  allocated. The default `0` is the right starting point on bare hosts and VMs.
+</Callout>
+
+The Helm chart and bundled manifests ship `workers: 0`. See
+[Gateway configuration](/docs/configuration/gateway) for the field reference.
+
+## Horizontal: replicas
+
+Octopus instances are interchangeable — run several behind a load balancer (a Kubernetes
+Service, an external LB, or another ingress) and spread traffic across them. This is also how
+you get availability: a single replica is a single point of failure.
+
+In Kubernetes, set the replica count on the Deployment. The Helm chart defaults to **2**:
+
+```sh
+helm install octopus deploy/helm/octopus -n octopus --create-namespace \
+  --set replicaCount=3
+```
+
+For availability across nodes and zones, the chart also exposes `topologySpreadConstraints` and
+a `PodDisruptionBudget` (enabled by default, `minAvailable: 1`). See the
+[Helm chart reference](/docs/kubernetes/helm-chart).
+
+## Autoscaling (HPA)
+
+The Helm chart can render a `HorizontalPodAutoscaler`. It's **off by default**; enable it and the
+chart stops setting a static `replicaCount` (the HPA owns the replica count instead):
+
+```sh
+helm install octopus deploy/helm/octopus -n octopus --create-namespace \
+  --set autoscaling.enabled=true \
+  --set autoscaling.minReplicas=2 \
+  --set autoscaling.maxReplicas=10 \
+  --set autoscaling.targetCPUUtilizationPercentage=80
+```
+
+The chart's HPA scales on CPU utilization by default and optionally on memory
+(`autoscaling.targetMemoryUtilizationPercentage`). The HPA needs CPU/memory **resource
+requests** to compute utilization against — the chart sets those by default. Full values are in
+the [Helm chart reference](/docs/kubernetes/helm-chart).
+
+## Shared state across replicas
+
+Once you run **more than one replica**, any feature that remembers things between requests must
+share that state — otherwise each replica counts and caches independently. The features that
+need it include:
+
+- **Rate limiting** — counters must be shared so a limit means the same thing fleet-wide.
+- **Caching** — to avoid each replica caching the same upstream response separately.
+- **Circuit breakers** — shared failure counts so the breaker trips consistently.
+- **Sessions / auth caches** — shared so a session isn't tied to one replica.
+
+Octopus keeps this in a pluggable **state store**. The default in-memory backend is per-process
+and is fine for a single instance; for multiple replicas use a shared backend (Redis, Postgres,
+or hybrid).
+
+<Callout type="warn">
+  Multi-replica deployments that use rate limiting, shared caching, or circuit breaking should
+  configure a **shared state backend**. With the default in-memory store, those features are
+  scoped to each individual replica.
+</Callout>
+
+See [State](/docs/state) for the backends and how to select one.
+
+## Related
+
+- [Gateway configuration](/docs/configuration/gateway) — `workers` and the rest of the `gateway` block.
+- [Helm chart](/docs/kubernetes/helm-chart) — `replicaCount`, `autoscaling`, `topologySpreadConstraints`, PDB.
+- [State](/docs/state) — shared state backends for multi-replica deployments.
+- [Graceful shutdown](/docs/deployment/graceful-shutdown) — draining cleanly as replicas come and go.

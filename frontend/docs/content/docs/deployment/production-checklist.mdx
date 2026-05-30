@@ -1,0 +1,127 @@
+---
+title: Production checklist
+description: A practical pre-flight checklist for running Octopus in production — TLS, authentication, health probes, resource limits, graceful drain, and metrics scraping — grounded in features that actually work, with notes where configuration is known to be inert.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Production checklist
+
+A pre-flight list before you put Octopus in front of real traffic. Everything here maps to a
+feature that actually works today; where a config field exists but is **not yet wired**, it's
+called out rather than recommended. For the full picture of what's parsed versus enforced, see
+the [configuration implementation status](/docs/configuration).
+
+## Transport security (TLS)
+
+- [ ] **Terminate TLS** — either on the gateway itself (`gateway.tls` with `cert_file` /
+  `key_file`) or at a load balancer / ingress in front of it. Don't serve plaintext to the
+  internet. See [TLS configuration](/docs/configuration/tls).
+- [ ] **Enable certificate hot-reload** if you terminate on the gateway, so rotated certs are
+  picked up without a restart (`enable_cert_reload`).
+- [ ] **Consider mTLS** for service-to-service or zero-trust setups (`require_client_cert` plus a
+  `client_ca_file`). See [mTLS](/docs/security/mtls).
+- [ ] **Set a minimum TLS version** (`min_tls_version`, e.g. `1.3`) appropriate to your clients.
+- [ ] On Kubernetes, TLS via cert-manager and Gateway listener Secrets is supported when the
+  operator's `terminate_tls` is enabled — see [TLS & cert-manager](/docs/kubernetes/tls-cert-manager).
+
+<Callout type="info">
+  By default Octopus rejects requests whose `Host`/`:authority` disagrees with the negotiated TLS
+  SNI (`gateway.enforce_sni_check: true`). Only disable this if TLS is terminated by an upstream
+  proxy and `Host` legitimately differs from the SNI.
+</Callout>
+
+## Authentication & access control
+
+- [ ] **Protect routes that need it** with an auth provider — JWT, OIDC, API key, forward-auth,
+  or mTLS. See [Authentication](/docs/security/authentication).
+- [ ] **Protect the admin surface.** Set `admin.auth_provider` to an auth provider; with none
+  set, the admin dashboard is reachable **without authentication**.
+- [ ] **Keep secrets out of the config file.** Use `${VAR}` substitution and inject JWT secrets,
+  API keys, etc. from the environment (Kubernetes Secrets, your secret manager).
+
+<Callout type="warn">
+  Known-inert: `admin.allowed_ips` is **parsed but not enforced** — only `admin.auth_provider`
+  gates the admin surface today (and static assets bypass even that). Don't rely on the IP
+  allowlist; restrict admin access at the network layer as well. See
+  [Admin configuration](/docs/configuration/admin).
+</Callout>
+
+## Health probes
+
+- [ ] **Wire all three probes** to the gateway listen port. They're enabled by default and served
+  on the listen port:
+  - `startupProbe` → `/startupz` (200 once the listener has bound)
+  - `livenessProbe` → `/livez` (200 while the process is alive; stays 200 while draining)
+  - `readinessProbe` → `/readyz` (200 only when ready; flips to 503 on SIGTERM)
+- [ ] **Don't point liveness at `/readyz`** — a draining or not-yet-ready Pod would be killed
+  instead of drained. The Helm chart and bundled manifests already wire these correctly.
+
+See [Health probes](/docs/observability/health-probes) and, on Kubernetes,
+[Probes & drain](/docs/kubernetes/probes-and-drain).
+
+## Graceful shutdown
+
+- [ ] **Send SIGTERM**, never SIGKILL, to trigger draining.
+- [ ] **Tune `gateway.pre_stop_delay`** (default `5s`) so deregistration propagates before the
+  listener closes.
+- [ ] **Tune `gateway.shutdown_timeout`** (default `30s`) to cover your longest in-flight request.
+- [ ] On Kubernetes, keep `terminationGracePeriodSeconds >= pre_stop_delay + shutdown_timeout`
+  (the chart and manifests default to `45s`). Full detail in
+  [Graceful shutdown](/docs/deployment/graceful-shutdown).
+
+## Resource limits & runtime hardening
+
+- [ ] **Set CPU and memory requests and limits.** The Helm chart defaults to requests
+  `100m`/`128Mi` and limits `1`/`512Mi` — review these against your traffic.
+- [ ] **Run as non-root.** The image already runs as `uid 1000`; the chart sets
+  `runAsNonRoot`, drops all capabilities, disables privilege escalation, and uses a read-only
+  root filesystem.
+- [ ] **Set `gateway.workers`** to match the cores you've actually allocated when you impose a CPU
+  limit — see [Scaling](/docs/deployment/scaling).
+- [ ] **Set `gateway.max_body_size`** to bound request bodies (default 10 MB).
+
+## Availability
+
+- [ ] **Run at least two replicas** behind a load balancer (the chart defaults to 2). A single
+  instance is a single point of failure.
+- [ ] **Configure a shared state backend** if you use rate limiting, shared caching, or circuit
+  breaking across replicas — the default in-memory store is per-process. See
+  [State](/docs/state) and [Scaling](/docs/deployment/scaling).
+- [ ] On Kubernetes, keep the **PodDisruptionBudget** (enabled by default) and spread replicas
+  across nodes/zones with `topologySpreadConstraints`.
+- [ ] Consider the **HorizontalPodAutoscaler** for elastic capacity — see
+  [Scaling](/docs/deployment/scaling).
+
+## Observability
+
+- [ ] **Scrape `/metrics`** on the gateway **listen port** (e.g. `:8080/metrics`). On Kubernetes,
+  enable the chart's `ServiceMonitor` (`metrics.serviceMonitor.enabled=true`), which scrapes the
+  `http` port at `/metrics`.
+- [ ] **Configure structured logging** (`observability.logging`, JSON in production) and ship logs
+  to your aggregator. See [Logging](/docs/observability/logging).
+- [ ] **Enable tracing** if you run a Jaeger/OpenTelemetry collector
+  (`observability.tracing`). See [Tracing](/docs/observability/tracing).
+
+<Callout type="warn">
+  Known-inert: the `/metrics` path is **fixed** and served on the gateway listen port. The
+  `observability.metrics.endpoint` field (the `0.0.0.0:9090` you may see in examples) is **not
+  wired** — it does not move or open a second listener — and `observability.metrics.enabled` does
+  **not** gate the endpoint. Treat both as informational and scrape `/metrics` on the listen
+  port. See [Metrics](/docs/observability/metrics).
+</Callout>
+
+## Configuration hygiene
+
+- [ ] **Validate before rollout:** `octopus validate -c config.yaml`.
+- [ ] **Pin the image tag** (e.g. `ghcr.io/xraph/octopus:0.1.0`), not `:latest`.
+- [ ] **Mount config read-only** and roll Pods when it changes (the chart annotates Pods with a
+  config checksum so updates trigger a rollout automatically).
+
+## Related
+
+- [Docker deployment](/docs/deployment/docker)
+- [Kubernetes deployment](/docs/deployment/kubernetes)
+- [Scaling](/docs/deployment/scaling)
+- [Graceful shutdown](/docs/deployment/graceful-shutdown)
+- [Security](/docs/security)

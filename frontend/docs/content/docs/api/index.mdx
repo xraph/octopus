@@ -1,84 +1,74 @@
 ---
 title: API Reference
-description: API reference for Octopus API Gateway
+description: The HTTP APIs the Octopus gateway exposes — the Admin REST API, the FARP service-registration API, and the health and metrics endpoints.
 ---
 
 import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Callout } from 'fumadocs-ui/components/callout';
 
 # API Reference
 
-Complete API reference for Octopus.
+The Octopus gateway exposes a handful of HTTP APIs alongside the traffic it proxies. They fall
+into three groups:
 
 <Cards>
   <Card
-    title="Admin API"
-    description="Admin and management API endpoints"
-    href="/docs/api/admin-api"
+    title="Admin REST API"
+    description="Read and mutate gateway state — services, routes, upstreams, config, analytics."
+    href="/docs/observability/admin-api"
   />
   <Card
-    title="Plugin API"
-    description="API for developing plugins"
-    href="/docs/api/plugin-api"
-  />
-  <Card
-    title="Error Codes"
-    description="Error codes and handling"
-    href="/docs/api/errors"
+    title="FARP Registration API"
+    description="Services register, heartbeat, and deregister; the gateway serves the federated schemas."
+    href="/docs/api/farp"
   />
 </Cards>
 
-## Admin API Endpoints
+## Admin REST API
 
-### Health
+The Admin API (served by the `octopus-admin` crate) is the management surface: list and inspect
+discovered services, routes, and upstreams; read and reload configuration; and query analytics.
+It is documented in full — every endpoint, request, and response — on the Observability page.
 
-```bash
-GET /_/health
-```
+It is **not** repeated here. See **[Admin REST API](/docs/observability/admin-api)**.
 
-Returns gateway health status.
+## FARP Registration API
 
-### Metrics
+The FARP (Forge API Gateway Registration Protocol) API is how services tell the gateway they
+exist. Services push a manifest to register, send periodic heartbeats, and deregister on
+shutdown; the gateway fetches their schemas, generates routes, and serves a federated API surface
+(OpenAPI / AsyncAPI / GraphQL) plus Swagger UI and ReDoc.
 
-```bash
-GET /metrics
-```
+See the sibling page: **[FARP Registration API](/docs/api/farp)**. For the concepts behind it, see
+[Service Discovery & FARP](/docs/farp) and [Schema federation](/docs/farp/schema-federation).
 
-Returns Prometheus metrics.
+## Health and probe endpoints
 
-### Services
+The gateway serves Kubernetes-style process probes (`/livez`, `/readyz`, `/startz`, plus the
+back-compat aliases `/health` and `/healthz`) on the main listen port. These are for liveness,
+readiness, and connection-draining — not for management.
 
-```bash
-GET /_/services
-```
+See **[Health probes](/docs/observability/health-probes)** for the full path list, status-code
+semantics, and drain behaviour.
 
-Lists discovered services.
+## Metrics endpoint
 
-### Routes
-
-```bash
-GET /_/routes
-```
-
-Lists active routes.
-
-### Configuration
+Prometheus metrics are exposed in text format on the listen port at `/metrics` (with the
+`/__metrics` alias):
 
 ```bash
-GET /_/config
+curl http://localhost:8080/metrics
 ```
 
-Returns current configuration.
+<Callout type="info">
+  The metrics path is fixed to `/metrics` (and `/__metrics`). See
+  [Metrics](/docs/observability/metrics) for the exact metric names Octopus emits and how to
+  scrape them.
+</Callout>
 
-### Reload
+## Next steps
 
-```bash
-POST /_/reload
-```
-
-Reloads configuration.
-
-## Next Steps
-
-- [Admin API](/docs/api/admin-api) - Complete admin API reference
-- [Plugin API](/docs/api/plugin-api) - Plugin development API
-- [Error Codes](/docs/api/errors) - Error handling
+- [Admin REST API](/docs/observability/admin-api) — the management API, documented in full.
+- [FARP Registration API](/docs/api/farp) — service registration over HTTP.
+- [Health probes](/docs/observability/health-probes) — liveness, readiness, startup, and drain.
+- [Metrics](/docs/observability/metrics) — the Prometheus endpoint and metric reference.

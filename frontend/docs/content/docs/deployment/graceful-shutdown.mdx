@@ -1,0 +1,108 @@
+---
+title: Graceful shutdown
+description: How Octopus drains in-flight requests on SIGTERM — readiness flips to 503, it waits gateway.pre_stop_delay so deregistration propagates, then drains within gateway.shutdown_timeout — and how to size terminationGracePeriodSeconds in Kubernetes.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+# Graceful shutdown
+
+Octopus drains gracefully on **`SIGTERM`** so rolling updates and scale-downs don't drop
+in-flight requests. The behaviour is built into the binary and driven by two `gateway`
+settings — there is no special flag to enable it.
+
+<Callout type="warn">
+  Send **SIGTERM**, not SIGKILL. `docker stop`, Kubernetes pod termination, and most process
+  supervisors send SIGTERM by default. A hard kill (`docker kill`, `kill -9`) skips draining and
+  drops open connections.
+</Callout>
+
+## The shutdown sequence
+
+On `SIGTERM` the gateway runs this sequence:
+
+<Steps>
+
+<Step>
+
+### Readiness flips to 503
+
+`/readyz` returns **503** immediately. Liveness (`/livez`) stays **200** — the process is still
+alive and serving, it is just no longer advertising itself as ready. In Kubernetes this is what
+removes the Pod from the Service's EndpointSlice so new traffic stops being routed to it.
+
+</Step>
+
+<Step>
+
+### Wait `gateway.pre_stop_delay`
+
+The gateway keeps accepting and serving requests for `gateway.pre_stop_delay` (**default `5s`**).
+This window exists so the "not ready" signal can propagate — kube-proxy and the EndpointSlice
+controller need a moment to observe the Pod going NotReady and stop sending it new connections
+*before* the listener closes. Without it, requests can race in after the socket is gone.
+
+Set it to `0` to skip the delay — for example when a `preStop` hook owns the wait instead (see
+below).
+
+</Step>
+
+<Step>
+
+### Drain within `gateway.shutdown_timeout`
+
+The gateway stops accepting new connections and waits for in-flight requests to finish, up to
+`gateway.shutdown_timeout` (**default `30s`**). Requests still running when the timeout elapses
+are cut off and the process exits.
+
+</Step>
+
+</Steps>
+
+The total worst-case shutdown time is therefore roughly `pre_stop_delay + shutdown_timeout`.
+
+## Configuring the timing
+
+Both knobs live under `gateway` (durations use humantime strings like `5s`, `30s`):
+
+```yaml title="config.yaml"
+gateway:
+  listen: "0.0.0.0:8080"
+  pre_stop_delay: 5s         # wait after SIGTERM before we stop accepting
+  shutdown_timeout: 30s      # max time to drain in-flight requests
+```
+
+See [Gateway configuration](/docs/configuration/gateway) for the full set of `gateway` fields.
+
+## Kubernetes: size the grace period
+
+Kubernetes kills the Pod with SIGKILL once `terminationGracePeriodSeconds` elapses, regardless
+of whether Octopus is still draining. So the grace period **must cover the whole sequence**:
+
+```
+terminationGracePeriodSeconds >= pre_stop_delay + shutdown_timeout
+```
+
+With the defaults (`5s + 30s = 35s`), the bundled manifests and Helm chart set
+`terminationGracePeriodSeconds: 45s`, leaving headroom. If you raise either gateway timeout,
+raise the grace period to match.
+
+<Callout type="info">
+  Because Octopus handles the deregistration delay itself via `pre_stop_delay`, you usually do
+  **not** need a `preStop` `sleep` hook. The Helm chart's `preStopHook` is **disabled by
+  default**. If you do enable it, set `gateway.pre_stop_delay: 0` so the delay isn't counted
+  twice (once by the hook, once by the gateway).
+</Callout>
+
+The Helm chart also sets `publishNotReadyAddresses: false` on the Service, which is what lets the
+readiness flip actually remove a draining Pod from the EndpointSlice. The deeper Kubernetes
+mechanics — probe periods, EndpointSlice propagation, and `preStop` interplay — are covered in
+[Kubernetes → Probes & drain](/docs/kubernetes/probes-and-drain).
+
+## Related
+
+- [Probes & drain](/docs/kubernetes/probes-and-drain) — the Kubernetes-side detail.
+- [Gateway configuration](/docs/configuration/gateway) — `pre_stop_delay`, `shutdown_timeout`, `probes`.
+- [Health probes](/docs/observability/health-probes) — `/livez`, `/readyz`, `/startupz` semantics.
+- [Scaling](/docs/deployment/scaling) — rolling updates across replicas.

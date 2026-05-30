@@ -1,124 +1,245 @@
 ---
-title: FARP API Reference
-description: Complete API reference for FARP endpoints
+title: FARP Registration API
+description: The HTTP API services use to register with the Octopus gateway, send heartbeats, deregister, and read the federated schemas.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
 
-# FARP API Reference
+# FARP Registration API
 
-Complete reference for all FARP (Forge API Gateway Registration Protocol) API endpoints.
+This is the HTTP API exposed by the gateway's FARP handler (`octopus-farp`). Services use it to
+register themselves, keep their registration alive with heartbeats, and deregister on shutdown.
+The same handler serves the **federated schemas** (OpenAPI / AsyncAPI / GraphQL / gRPC) merged
+from every registered service, plus Swagger UI and ReDoc.
+
+For the concepts — how discovery, schema fetching, and route generation fit together — see
+[Service Discovery & FARP](/docs/farp) and [Schema federation](/docs/farp/schema-federation).
+
+## Path prefixes
+
+The handler answers the same set of endpoints under several prefixes. The gateway rewrites each
+prefix to a canonical `/farp/...` path before dispatching, so the endpoint behaviour is identical
+whichever prefix you use:
+
+| Prefix | Purpose |
+|--------|---------|
+| `/_farp/v1/...` | Canonical FARP v1 push protocol. Preferred for service self-registration. |
+| `/__/farp/...` and `/__farp/...` | Internal management prefix. |
+| `/farp/...` | Backwards-compatible legacy prefix. |
+
+In addition, the root paths `/docs`, `/swagger`, and `/redoc` are routed to the FARP
+documentation UIs.
 
 <Callout type="info">
-  All FARP endpoints are mounted under the `/__/farp/` prefix for internal API access.
+  The endpoint tables below are written with the canonical `/farp/...` paths. To call them over
+  the v1 push prefix, swap `/farp` for `/_farp/v1` — for example `POST /_farp/v1/register`.
 </Callout>
-
-## Base URL
-
-```
-http://gateway:3000/__/farp/
-```
 
 ## Authentication
 
-Currently, FARP endpoints are unauthenticated. In production, secure these endpoints with:
-- Network policies (firewall)
-- API keys
-- mTLS
-- IP whitelisting
+The FARP endpoints are not authenticated by the handler itself. Treat them as internal: restrict
+access with network policy, run them on a non-public listener, or front them with an auth
+middleware. Do not expose registration to untrusted clients.
 
 ---
 
-## Service Registration
+## Service registration
 
-### POST /register
+### POST /farp/register
 
-Register a new service with the gateway.
+Register a service instance. The endpoint accepts **two** request shapes and picks the right one
+by inspecting the JSON body: if it contains an `instance` field it is treated as a FARP v1 push
+registration, otherwise it falls back to the legacy manifest form.
 
-**Request:**
+<Tabs items={['FARP v1 push', 'Legacy']}>
+<Tab value="FARP v1 push">
 
-```bash
-curl -X POST http://gateway:3000/__/farp/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "manifest": {
-      "service": {
-        "name": "user-service",
-        "version": "1.0.0",
-        "description": "User management service",
-        "base_url": "http://user-service:8080",
-        "metadata": {}
-      },
-      "capabilities": {
-        "protocols": ["http"],
-        "auth_methods": ["jwt"]
-      },
-      "schemas": [
-        {
-          "format": "openapi",
-          "version": "3.0.0",
-          "location": {
-            "type": "http",
-            "url": "http://user-service:8080/openapi.json"
-          }
-        }
-      ]
-    }
-  }'
+The v1 push payload carries instance info and, optionally, the manifest. If `manifest` is
+omitted, the gateway fetches it from the instance's `/_farp/manifest` endpoint (resolved from the
+`farp.manifest` metadata URL, or built from the instance address). The gateway then fetches the
+schemas the manifest references, registers the upstream and routes, and federates.
+
+```http
+POST /farp/register
+Content-Type: application/json
 ```
 
-**Response:**
+```json
+{
+  "instance": {
+    "id": "user-service-7f9c",
+    "service_name": "user-service",
+    "service_version": "1.0.0",
+    "address": "10.0.0.12",
+    "port": 8080,
+    "tags": ["prod"],
+    "metadata": {
+      "farp.manifest": "http://10.0.0.12:8080/_farp/manifest"
+    },
+    "status": "up"
+  },
+  "manifest": null
+}
+```
+
+Only `id`, `service_name`, `address`, and `port` are required; `service_version`, `tags`,
+`metadata`, and `status` are optional. When `manifest` is `null` (or absent) the gateway fetches
+it from the service.
+
+**Response — `201 Created`** (a push registration acknowledgement):
+
+```json
+{
+  "status": "registered",
+  "routes_checksum": "a1b2c3d4...",
+  "schemas_applied": 2
+}
+```
+
+`routes_checksum` is the route-table checksum the gateway applied, and `schemas_applied` is the
+number of schemas it fetched and stored. Services compare `routes_checksum` against their own on
+heartbeat to detect drift.
+
+</Tab>
+<Tab value="Legacy">
+
+The legacy payload supplies the manifest directly, with optional inline schema descriptors. If
+schemas are supplied, the gateway federates them and generates routes immediately.
+
+```http
+POST /farp/register
+Content-Type: application/json
+```
+
+```json
+{
+  "manifest": {
+    "service_name": "user-service",
+    "service_version": "1.0.0",
+    "instance_id": "user-service-7f9c"
+  },
+  "schemas": [
+    {
+      "id": "user-service-openapi",
+      "service": "user-service",
+      "format": "openapi",
+      "version": "3.1.0",
+      "content": "{ ...openapi document... }"
+    }
+  ]
+}
+```
+
+`schemas` is optional. Each descriptor's `format` is one of `openapi`, `asyncapi`, `grpc`,
+`graphql`, or `custom`. Route generation runs for `openapi`, `asyncapi`, and `graphql`; `grpc`
+and `custom` are rejected with an "unsupported schema format" error (see
+[Schema federation](/docs/farp/schema-federation) for the full support matrix).
+
+**Response — `201 Created`**:
 
 ```json
 {
   "success": true,
   "message": "Service 'user-service' registered successfully",
   "routes": [
-    {
-      "method": "GET",
-      "path": "/users",
-      "upstream": "user-service"
-    },
-    {
-      "method": "POST",
-      "path": "/users",
-      "upstream": "user-service"
-    }
+    { "method": "GET", "path": "/users", "upstream_name": "user-service" }
   ]
 }
 ```
 
-**Status Codes:**
-- `201` - Service registered successfully
-- `400` - Invalid request body
-- `409` - Service already registered
-- `500` - Internal error
+</Tab>
+</Tabs>
+
+<Callout type="warn">
+  The manifest is validated against the FARP JSON schema before it is stored. An invalid manifest
+  (missing required fields, a bad schema checksum, an unrecognised format) is rejected.
+</Callout>
 
 ---
 
-### PUT /services/{service_name}
+### PUT /farp/heartbeat/\{instance_id\}
 
-Update an existing service registration.
+Keep a registered instance alive (FARP v1 push protocol). Send periodically from the service.
 
-**Request:**
-
-```bash
-curl -X PUT http://gateway:3000/__/farp/services/user-service \
-  -H "Content-Type: application/json" \
-  -d '{
-    "manifest": {
-      "service": {
-        "name": "user-service",
-        "version": "1.1.0",
-        "description": "User management service (updated)",
-        "base_url": "http://user-service:8080"
-      },
-      "schemas": [...]
-    }
-  }'
+```http
+PUT /farp/heartbeat/user-service-7f9c
+Content-Type: application/json
 ```
 
-**Response:**
+```json
+{
+  "status": "up",
+  "routes_checksum": "a1b2c3d4..."
+}
+```
+
+`routes_checksum` is optional. When present, the gateway compares it against its own copy; if
+they differ (or the gateway holds no schemas), it re-fetches the manifest so the two sides
+reconcile.
+
+**Response — `200 OK`**:
+
+```json
+{
+  "status": "ok",
+  "routes_checksum": "a1b2c3d4...",
+  "schemas_applied": 2
+}
+```
+
+If the gateway has no record of the instance — for example after a restart that lost in-memory
+state — it returns **`404 Not Found`** with a re-registration hint:
+
+```json
+{
+  "error": "instance not found",
+  "action": "re-register",
+  "message": "Gateway has no record of this instance. Please re-register with full manifest."
+}
+```
+
+---
+
+### DELETE /farp/deregister/\{instance_id\}
+
+Deregister a single instance by ID (FARP v1 push protocol). Send on graceful shutdown.
+
+```http
+DELETE /farp/deregister/user-service-7f9c
+```
+
+**Response — `200 OK`**:
+
+```json
+{ "status": "deregistered" }
+```
+
+Returns **`404 Not Found`** (`{"error": "instance not found"}`) if the instance is unknown.
+
+---
+
+### PUT /farp/services/\{service_name\}
+
+Update an existing service registration with a new manifest (legacy form). The body is a
+manifest registration request; the manifest is validated before it replaces the stored one.
+
+```http
+PUT /farp/services/user-service
+Content-Type: application/json
+```
+
+```json
+{
+  "manifest": {
+    "service_name": "user-service",
+    "service_version": "1.1.0",
+    "instance_id": "user-service-7f9c"
+  }
+}
+```
+
+**Response — `200 OK`**:
 
 ```json
 {
@@ -127,25 +248,17 @@ curl -X PUT http://gateway:3000/__/farp/services/user-service \
 }
 ```
 
-**Status Codes:**
-- `200` - Service updated successfully
-- `400` - Invalid request body
-- `404` - Service not found
-- `500` - Internal error
-
 ---
 
-### DELETE /services/{service_name}
+### DELETE /farp/services/\{service_name\}
 
-Deregister a service from the gateway.
+Deregister a service by name (removes the whole service, not a single instance).
 
-**Request:**
-
-```bash
-curl -X DELETE http://gateway:3000/__/farp/services/user-service
+```http
+DELETE /farp/services/user-service
 ```
 
-**Response:**
+**Response — `200 OK`**:
 
 ```json
 {
@@ -154,26 +267,19 @@ curl -X DELETE http://gateway:3000/__/farp/services/user-service
 }
 ```
 
-**Status Codes:**
-- `200` - Service deregistered successfully
-- `404` - Service not found
-- `500` - Internal error
-
 ---
 
-## Service Discovery
+## Service discovery
 
-### GET /services
+### GET /farp/services
 
 List all registered services.
 
-**Request:**
-
 ```bash
-curl http://gateway:3000/__/farp/services
+curl http://gateway:8080/__/farp/services
 ```
 
-**Response:**
+**Response — `200 OK`**:
 
 ```json
 {
@@ -183,233 +289,72 @@ curl http://gateway:3000/__/farp/services
       "version": "1.0.0",
       "schema_count": 1,
       "updated_at": "1699123456"
-    },
-    {
-      "name": "post-service",
-      "version": "2.0.0",
-      "schema_count": 2,
-      "updated_at": "1699123789"
     }
   ]
 }
 ```
 
-**Status Codes:**
-- `200` - Success
+`updated_at` is a Unix timestamp (seconds) as a string, and is omitted when unavailable.
 
 ---
 
-### GET /services/{service_name}
+### GET /farp/services/\{service_name\}
 
-Get detailed information about a specific service.
-
-**Request:**
+Get the full record for one service — its manifest, stored schemas, and timestamps.
 
 ```bash
-curl http://gateway:3000/__/farp/services/user-service
+curl http://gateway:8080/__/farp/services/user-service
 ```
 
-**Response:**
+**Response — `200 OK`**:
 
 ```json
 {
   "service_name": "user-service",
-  "manifest": {
-    "service": {
-      "name": "user-service",
-      "version": "1.0.0",
-      "description": "User management service",
-      "base_url": "http://user-service:8080"
-    },
-    "capabilities": {
-      "protocols": ["http"],
-      "auth_methods": ["jwt"]
-    },
-    "schemas": [
-      {
-        "format": "openapi",
-        "version": "3.0.0",
-        "location": {
-          "type": "http",
-          "url": "http://user-service:8080/openapi.json"
-        },
-        "checksum": "sha256:abc123..."
-      }
-    ]
-  },
-  "schemas": [...],
+  "manifest": { "service_name": "user-service", "service_version": "1.0.0" },
+  "schemas": [],
   "registered_at": 1699123456,
   "updated_at": 1699123789
 }
 ```
 
-**Status Codes:**
-- `200` - Success
-- `404` - Service not found
+Returns **`404 Not Found`** if the service is not registered.
 
 ---
 
-## Federated Schemas
+## Federated schemas
 
-### GET /openapi.json
+The gateway merges the schemas of all registered services into a single federated document per
+format. Structural merging applies to OpenAPI and AsyncAPI; GraphQL and gRPC are concatenated.
+See [Schema federation](/docs/farp/schema-federation) for the merge behaviour and limits.
 
-Get the merged OpenAPI schema from all registered services.
+All of these read endpoints respond `200 OK`. When no services are registered they return a valid
+empty document rather than an error.
 
-**Request:**
+### GET /farp/openapi.json
 
-```bash
-curl http://gateway:3000/__/farp/openapi.json
-```
-
-**Response:**
-
-```json
-{
-  "openapi": "3.0.0",
-  "info": {
-    "title": "Federated API",
-    "version": "1.0.0",
-    "description": "Auto-generated federated API from FARP"
-  },
-  "servers": [
-    {
-      "url": "http://gateway:3000"
-    }
-  ],
-  "paths": {
-    "/user-service/users": {
-      "get": {
-        "summary": "Get all users",
-        "tags": ["user-service"],
-        "responses": {...}
-      }
-    },
-    "/post-service/posts": {
-      "get": {
-        "summary": "Get all posts",
-        "tags": ["post-service"],
-        "responses": {...}
-      }
-    }
-  }
-}
-```
-
-**Status Codes:**
-- `200` - Success (even if no services registered, returns empty schema)
-
----
-
-### GET /asyncapi.json
-
-Get the merged AsyncAPI schema from all registered services.
-
-**Request:**
+The merged OpenAPI document (`application/json`). When a router is wired in, gateway routes that
+are missing from the federated spec are supplemented into it.
 
 ```bash
-curl http://gateway:3000/__/farp/asyncapi.json
+curl http://gateway:8080/__/farp/openapi.json
 ```
 
-**Response:**
+### GET /farp/asyncapi.json
 
-```json
-{
-  "asyncapi": "2.6.0",
-  "info": {
-    "title": "Federated Async API",
-    "version": "1.0.0"
-  },
-  "channels": {
-    "chat-service/messages": {
-      "subscribe": {...}
-    }
-  }
-}
-```
+The merged AsyncAPI document (`application/json`).
 
-**Status Codes:**
-- `200` - Success
+### GET /farp/graphql
 
----
+The merged GraphQL schema (`text/plain`).
 
-### GET /graphql
+### GET /farp/grpc
 
-Get the merged GraphQL schema from all registered services.
+The merged gRPC protobuf (`text/plain`).
 
-**Request:**
+### GET /farp/schemas
 
-```bash
-curl http://gateway:3000/__/farp/graphql
-```
-
-**Response:**
-
-```graphql
-# Federated GraphQL Schema
-type Query {
-  users: [User]
-  posts: [Post]
-}
-
-type User {
-  id: ID!
-  name: String!
-}
-
-type Post {
-  id: ID!
-  title: String!
-}
-```
-
-**Status Codes:**
-- `200` - Success
-
----
-
-### GET /grpc
-
-Get the merged gRPC protobuf schema from all registered services.
-
-**Request:**
-
-```bash
-curl http://gateway:3000/__/farp/grpc
-```
-
-**Response:**
-
-```protobuf
-syntax = "proto3";
-
-package federated;
-
-service UserService {
-  rpc GetUser(GetUserRequest) returns (User);
-}
-
-message User {
-  string id = 1;
-  string name = 2;
-}
-```
-
-**Status Codes:**
-- `200` - Success
-
----
-
-### GET /schemas
-
-List all available federated schemas.
-
-**Request:**
-
-```bash
-curl http://gateway:3000/__/farp/schemas
-```
-
-**Response:**
+List which federated formats are currently available and their source services.
 
 ```json
 {
@@ -418,176 +363,76 @@ curl http://gateway:3000/__/farp/schemas
       "format": "openapi",
       "sources": ["user-service", "post-service"],
       "updated_at": 1699123456
-    },
-    {
-      "format": "asyncapi",
-      "sources": ["chat-service"],
-      "updated_at": 1699123789
     }
   ]
 }
 ```
 
-**Status Codes:**
-- `200` - Success
+### GET /farp/schema/\{format\}
 
----
+Fetch one federated schema by format. `{format}` is `openapi`, `asyncapi`, `graphql`, or `grpc`.
+OpenAPI and AsyncAPI return `application/json`; GraphQL and gRPC return `text/plain`.
 
-### GET /schema/{format}
+- `400 Bad Request` — `{"error": "invalid_format", ...}` for an unknown format.
+- `404 Not Found` — `{"error": "not_found", ...}` if that format has not been federated.
 
-Get a specific federated schema by format.
-
-**Parameters:**
-- `format` - Schema format: `openapi`, `asyncapi`, `graphql`, or `grpc`
-
-**Request:**
-
-```bash
-curl http://gateway:3000/__/farp/schema/openapi
-```
-
-**Response:**
-
-Returns the schema in the appropriate format (JSON for OpenAPI/AsyncAPI, text for GraphQL/gRPC).
-
-**Status Codes:**
-- `200` - Success
-- `400` - Invalid format
-- `404` - Schema not found
-
----
-
-### POST /federate
+### POST /farp/federate
 
 Manually trigger federation of all registered service schemas.
 
-**Request:**
-
 ```bash
-curl -X POST http://gateway:3000/__/farp/federate
+curl -X POST http://gateway:8080/__/farp/federate
 ```
 
-**Response:**
+**Response — `200 OK`**:
 
 ```json
 {
   "success": true,
   "message": "Schema federation completed",
-  "schemas_processed": 5,
+  "schemas_processed": 3,
   "formats_generated": ["openapi", "asyncapi"],
-  "services": ["user-service", "post-service", "chat-service"]
+  "services": ["user-service", "post-service"]
 }
 ```
 
-**Status Codes:**
-- `200` - Success
+When there is nothing to federate it returns `{"success": true, "message": "No schemas to federate", "schemas_processed": 0}`.
 
 ---
 
 ## Documentation UIs
 
-### GET /docs
+### GET /farp/docs
 
-View the Swagger UI for the federated OpenAPI schema.
+Serves a Swagger UI page (HTML) pointed at the federated `/farp/openapi.json`. Also reachable at
+the root path `/docs` (and `/swagger`).
 
-**Request:**
+### GET /farp/redoc
 
-```bash
-open http://gateway:3000/__/farp/docs
-```
-
-Returns an interactive HTML interface for exploring the federated API.
-
-**Status Codes:**
-- `200` - Success
+Serves a ReDoc page (HTML) for the federated OpenAPI document. Also reachable at the root path
+`/redoc`.
 
 ---
 
-### GET /redoc
+## Errors
 
-View the ReDoc UI for the federated OpenAPI schema.
-
-**Request:**
-
-```bash
-open http://gateway:3000/__/farp/redoc
-```
-
-Returns a beautiful, responsive documentation interface.
-
-**Status Codes:**
-- `200` - Success
-
----
-
-## Legacy Endpoints
-
-For backwards compatibility, these endpoints are also available without the `/farp` prefix:
-
-```
-/__/openapi.json  → /__/farp/openapi.json
-/__/asyncapi.json → /__/farp/asyncapi.json
-/__/graphql       → /__/farp/graphql
-/__/grpc          → /__/farp/grpc
-/__/docs          → /__/farp/docs
-/__/redoc         → /__/farp/redoc
-```
-
-<Callout type="warn">
-  Legacy endpoints are deprecated and will be removed in v2.0. Use the `/farp/` prefixed endpoints instead.
-</Callout>
-
----
-
-## Error Responses
-
-All errors follow this format:
+Unmatched routes return **`404 Not Found`**:
 
 ```json
 {
-  "error": "error_code",
-  "message": "Human-readable error message"
+  "error": "not_found",
+  "message": "Endpoint not found"
 }
 ```
 
-### Common Error Codes
-
-| Code | Description |
-|------|-------------|
-| `not_found` | Resource not found |
-| `invalid_format` | Invalid schema format |
-| `invalid_manifest` | Invalid service manifest |
-| `service_exists` | Service already registered |
-| `registration_failed` | Service registration failed |
-| `internal_error` | Internal server error |
+Other failures (malformed JSON, an invalid manifest, a failed registration) return an error
+status with a message describing the cause.
 
 ---
 
-## Rate Limiting
+## Next steps
 
-FARP endpoints are subject to the gateway's global rate limiting. Default limits:
-
-- **Service registration**: 10 requests/minute per IP
-- **Schema fetching**: 100 requests/minute per IP
-- **Discovery endpoints**: 1000 requests/minute per IP
-
-Configure rate limits in `config.yaml`:
-
-```yaml
-middleware:
-  - name: rate-limiter
-    config:
-      farp_endpoints:
-        registration: 10
-        discovery: 1000
-```
-
----
-
-## Next Steps
-
-- [FARP Protocol Overview](/docs/concepts/farp) - Learn about FARP
-- [Service Discovery](/docs/configuration/discovery) - Configure discovery backends
-- [mDNS Local Development](/docs/guides/mdns) - Use mDNS for local dev
-
-
+- [Service Discovery & FARP](/docs/farp) — the protocol and discovery backends.
+- [Schema federation](/docs/farp/schema-federation) — which formats generate routes and how merging works.
+- [FARP configuration](/docs/configuration/farp) — enabling FARP and configuring discovery.
+- [Admin REST API](/docs/observability/admin-api) — the gateway's management API.

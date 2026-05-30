@@ -1,0 +1,169 @@
+---
+title: TLS with cert-manager
+description: Terminate TLS on the operator path by sourcing certificates from your Gateway listeners' Secrets, issued and renewed by cert-manager and hot-swapped without a restart.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+# TLS with cert-manager
+
+On Kubernetes, Octopus can terminate TLS using certificates sourced from your
+`Gateway` listeners' TLS `Secret`s — selected per connection by SNI and
+hot-reloaded as they rotate. Pair that with cert-manager: point a `Certificate`
+at the Secret a listener references, and when cert-manager renews it the operator
+swaps in the new certificate **without a pod restart**. This is the operator path
+described in [Kubernetes TLS & cert-manager](/docs/kubernetes/tls-cert-manager);
+unlike the [file-based listener](/docs/security/tls), it truly hot-swaps.
+
+<Callout type="info">
+  Prerequisites: the Octopus operator running (see
+  [Route with the Gateway API](/docs/guides/kubernetes-gateway-api)), the
+  [Gateway API CRDs](/docs/kubernetes/install) installed, and
+  [cert-manager](https://cert-manager.io) installed with a working `Issuer` or
+  `ClusterIssuer`.
+</Callout>
+
+<Steps>
+
+<Step>
+## Enable operator TLS termination
+
+Turn on `kubernetes.terminate_tls`. With it enabled the listen port serves
+**HTTPS (SNI)**, not plain HTTP.
+
+```yaml title="config.yaml"
+gateway:
+  listen: "0.0.0.0:8443"
+
+kubernetes:
+  enabled: true
+  terminate_tls: true
+```
+
+<Callout type="warn">
+  `terminate_tls` is **ignored if static `gateway.tls` is configured** — file-based
+  TLS takes precedence. Use one or the other, not both. The operator also needs
+  RBAC to read `Secret`s and `ReferenceGrant`s; the Helm chart grants this.
+</Callout>
+</Step>
+
+<Step>
+## Reference a TLS Secret from an HTTPS listener
+
+On a terminating HTTPS listener, name the Secret that will hold the cert/key via
+`tls.certificateRefs`. The listener's `hostname` becomes the **SNI** key for that
+certificate; a listener with no hostname provides the default (catch-all) cert.
+
+```yaml title="gateway.yaml"
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: octopus-gateway
+  namespace: infra
+spec:
+  gatewayClassName: octopus
+  listeners:
+    - name: api
+      hostname: api.example.com
+      port: 443
+      protocol: HTTPS
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: api-tls       # kubernetes.io/tls Secret in this namespace
+```
+
+Octopus reads `tls.crt` / `tls.key` from a `kubernetes.io/tls` Secret. A
+`Passthrough` listener contributes no certificate, and plain `HTTP` listeners are
+ignored. See [Sourcing certificates from listeners](/docs/kubernetes/tls-cert-manager).
+</Step>
+
+<Step>
+## Issue the certificate with cert-manager
+
+Create a `Certificate` whose `secretName` is exactly the Secret the listener
+references. cert-manager writes the cert/key into that Secret and renews it on
+schedule.
+
+```yaml title="certificate.yaml"
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: api-tls
+  namespace: infra
+spec:
+  secretName: api-tls          # matches the listener's certificateRefs[].name
+  dnsNames:
+    - api.example.com
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+    group: cert-manager.io
+```
+
+<Callout type="info">
+  cert-manager resources belong to the `cert-manager.io` API group and are
+  reconciled by cert-manager, not Octopus. Octopus only consumes the resulting
+  `kubernetes.io/tls` Secret named by the listener.
+</Callout>
+</Step>
+
+<Step>
+## (If cross-namespace) grant Secret access
+
+If the Secret lives in a **different** namespace from the `Gateway`, the listener
+references it via `certificateRefs[].namespace`, and you must allow it with a
+`ReferenceGrant` **in the Secret's namespace** — from the Gateway's namespace to
+`kind: Secret`. Same-namespace refs (the step above) need no grant.
+
+```yaml title="referencegrant.yaml"
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-gateway-certs
+  namespace: certs            # lives in the SECRET's namespace
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      namespace: infra        # the Gateway's namespace
+  to:
+    - group: ""
+      kind: Secret
+```
+
+Without a matching grant the cert is denied (not loaded). See the
+[ReferenceGrant model](/docs/kubernetes/gateway-api).
+</Step>
+
+<Step>
+## Apply and verify
+
+```bash
+kubectl apply -f gateway.yaml
+kubectl apply -f certificate.yaml
+
+# Wait for cert-manager to populate the Secret
+kubectl -n infra get certificate api-tls
+kubectl -n infra get secret api-tls
+
+# Verify TLS termination + SNI selection
+curl -iv https://api.example.com/ --resolve api.example.com:443:<gateway-ip>
+```
+
+A certificate is loaded only once its Secret actually exists; when cert-manager
+renews and rewrites the Secret, the operator's watch fires and the new
+certificate is hot-swapped into the live acceptor — no restart, and connections
+accepted afterward use the new cert.
+</Step>
+
+</Steps>
+
+## See also
+
+- [Kubernetes TLS & cert-manager](/docs/kubernetes/tls-cert-manager) — sourcing, SNI selection, and hot reload.
+- [TLS](/docs/security/tls) — the two TLS layers and the file-based vs. operator difference.
+- [Gateway API](/docs/kubernetes/gateway-api) — listeners and the ReferenceGrant model.
+- [Route with the Gateway API](/docs/guides/kubernetes-gateway-api) — enabling the operator and routing.

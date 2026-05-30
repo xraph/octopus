@@ -63,7 +63,8 @@ connections:
 upstreams:
   - name: ws-service
     instances:
-      - address: 127.0.0.1
+      - id: ws-1
+        host: 127.0.0.1
         port: 9001
 
 routes:

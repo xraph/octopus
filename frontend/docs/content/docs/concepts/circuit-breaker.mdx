@@ -3,6 +3,8 @@ title: Circuit Breaker
 description: Protect services from cascading failures
 ---
 
+import { Callout } from 'fumadocs-ui/components/callout';
+
 # Circuit Breaker
 
 Circuit breakers prevent cascading failures by stopping requests to failing upstreams.
@@ -23,32 +25,34 @@ Closed → Failures → Open → Timeout → Half-Open → Success → Closed
 
 ## Configuration
 
+Circuit breakers are configured per **upstream**, not per route. The breaker
+trips on a sustained error *rate* (not a raw failure count):
+
 ```yaml
-routes:
-  - path: /api/orders
-    upstream: order-service
+upstreams:
+  - name: order-service
     circuit_breaker:
-      enabled: true
-      failure_threshold: 5      # Open after 5 failures
-      timeout: 60s              # Stay open for 60s
-      half_open_requests: 3     # Allow 3 requests in half-open
-      success_threshold: 2      # Close after 2 successes
+      error_threshold: 50.0   # Open when ≥50% of requests error
+      min_requests: 20        # Minimum requests in the window before tripping
+      timeout: 30s            # Stay open this long before probing again
+    instances:
+      - id: order-1
+        host: 10.0.0.21
+        port: 8080
 ```
 
-## Failure Criteria
+| Key | Type | Description |
+| --- | --- | --- |
+| `error_threshold` | float | Error-rate percentage that opens the breaker. |
+| `min_requests` | integer | Minimum requests in the window before it can trip. |
+| `timeout` | duration | How long the breaker stays open before probing. |
 
-```yaml
-circuit_breaker:
-  enabled: true
-  failure_threshold: 5
-  failure_criteria:
-    - status: 500  # Internal Server Error
-    - status: 502  # Bad Gateway
-    - status: 503  # Service Unavailable
-    - status: 504  # Gateway Timeout
-    - timeout: true
-    - connection_error: true
-```
+<Callout type="warn" title="Wired on the operator path">
+  The `circuit_breaker` block is parsed and validated everywhere, but it is only
+  wired into a live breaker on the Kubernetes/operator-driven path. For upstreams
+  registered from a **static config file**, it is not yet enforced. See
+  [Upstreams](/docs/configuration/upstreams).
+</Callout>
 
 ## Monitoring
 
@@ -66,27 +70,29 @@ octopus_circuit_breaker_failures_total{upstream="order-service"}
 ```yaml
 upstreams:
   - name: payment-service
-    instances:
-      - address: payment-1
-        port: 8080
     circuit_breaker:
-      enabled: true
-      failure_threshold: 3
+      error_threshold: 50.0
+      min_requests: 20
       timeout: 30s
+    instances:
+      - id: payment-1
+        host: 10.0.0.31
+        port: 8080
 
 routes:
   - path: /api/payments/*
     upstream: payment-service
 ```
 
-When payment-service fails 3 times:
+Once payment-service exceeds a 50% error rate over at least 20 requests:
 - Circuit opens
-- Requests return 503 immediately
-- After 30s, circuit enters half-open
-- If requests succeed, circuit closes
+- Requests fail fast without hitting the upstream
+- After 30s, the circuit probes again (half-open)
+- If probes succeed, the circuit closes
 
 ## See Also
 
 - [Health Checks](/docs/concepts/health-checks)
-- [Retries](/docs/configuration/retries)
+- [Load Balancing](/docs/concepts/load-balancing)
+- [Upstreams configuration](/docs/configuration/upstreams)
 

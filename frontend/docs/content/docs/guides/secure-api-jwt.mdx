@@ -1,0 +1,236 @@
+---
+title: Secure an API with JWT
+description: An end-to-end walkthrough — declare a JWT auth provider, enforce authentication globally, exempt public paths, and gate routes by role and scope.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+import { Tabs } from 'fumadocs-ui/components/tabs';
+
+# Secure an API with JWT
+
+This guide takes an unauthenticated upstream and puts it behind JWT bearer-token
+authentication: every request must present a valid token, public paths stay
+open, and individual routes are gated by the caller's roles and scopes. The
+[`jwt` provider](/docs/security/jwt) validates tokens against a static key, which
+is the right choice when you control the signing secret (HMAC) or hold the
+issuer's public key (RSA/ECDSA). If your identity provider rotates keys via JWKS,
+use the [`oidc` provider](/docs/security/oidc) instead — the route wiring below is
+identical.
+
+<Steps>
+
+<Step>
+## Start from a working upstream
+
+Begin with a gateway that proxies a backend but enforces no auth. Everything in
+this file is required by the schema (`gateway.listen` and each upstream
+instance's `id`/`host`/`port`).
+
+```yaml title="gateway.yaml"
+gateway:
+  listen: "0.0.0.0:8080"
+
+upstreams:
+  - name: orders-api
+    instances:
+      - id: orders-1
+        host: 10.0.0.21
+        port: 8080
+
+routes:
+  - path: /orders/*
+    upstream: orders-api
+```
+</Step>
+
+<Step>
+## Declare a JWT provider
+
+Add an entry under `auth_providers`. The provider needs exactly one key source.
+Pick the form that matches how your tokens are signed.
+
+<Tabs items={['HMAC (shared secret)', 'RSA / ECDSA (public key)']}>
+<div title="HMAC (shared secret)">
+
+```yaml title="gateway.yaml"
+auth_providers:
+  primary-jwt:
+    type: jwt
+    secret: "${JWT_SECRET}"      # HS256/384/512 shared secret
+    algorithm: HS256
+    issuer: https://auth.example.com
+    audience: orders-api
+```
+
+</div>
+<div title="RSA / ECDSA (public key)">
+
+```yaml title="gateway.yaml"
+auth_providers:
+  primary-jwt:
+    type: jwt
+    public_key_file: /etc/octopus/keys/jwt-pub.pem   # PEM read at startup
+    algorithm: RS256
+    issuer: https://auth.example.com
+    audience: orders-api
+```
+
+</div>
+</Tabs>
+
+When set, `issuer` and `audience` are checked against the token's `iss`/`aud`
+claims; expiry (`exp`) is always checked. The full field list is on the
+[JWT provider](/docs/security/jwt) page.
+
+<Callout type="info">
+  `${JWT_SECRET}` is resolved from the environment at load time. `octopus
+  validate` and `octopus serve` both fail fast if the variable is unset, so
+  export it (or use a `${VAR:-default}` form) before running.
+</Callout>
+</Step>
+
+<Step>
+## Enforce authentication globally
+
+Set the provider as the default and turn on global enforcement so every route
+requires a valid token unless it opts out. Use `skip_paths` for unauthenticated
+endpoints (exact match, or a trailing `*` prefix).
+
+```yaml title="gateway.yaml"
+auth:
+  default_provider: primary-jwt
+  global_enforce: true
+  skip_paths:
+    - /health
+    - /public/*
+  token_cache_ttl: 60s
+```
+
+With `global_enforce: true`, a request with **no** credentials on an enforced
+route gets `401 unauthorized` with a `WWW-Authenticate: Bearer` challenge; a
+request with **invalid** credentials always gets `401` regardless of
+enforcement. Successful authentications are cached for `token_cache_ttl` (keyed
+by the bearer token), so keep it short relative to your token lifetimes. See the
+[authentication flow](/docs/security/authentication) for the full decision table
+and the [token cache](/docs/security/authentication#token-caching) details.
+</Step>
+
+<Step>
+## Gate routes by role and scope
+
+Authentication proves *who* the caller is; authorization decides *what* they may
+do. Roles come from the token's `roles` claim and scopes from the
+whitespace-split `scope` claim. On a route:
+
+- `require_roles` — the principal must have **at least one** (any-of).
+- `require_scopes` — the principal must have **all** (all-of).
+- `authz_rule` — a [Rhai expression](/docs/security/authorization#rhai-rules)
+  for finer control (`true` allows, `false` denies).
+
+```yaml title="gateway.yaml"
+routes:
+  - path: /health
+    upstream: orders-api
+    skip_auth: true                         # public, no token required
+
+  - path: /orders/*
+    upstream: orders-api
+    require_scopes: ["orders:read"]         # token must carry this scope
+
+  - path: /admin/*
+    upstream: orders-api
+    require_roles: ["admin"]                # any-of these roles
+    authz_rule: 'has_role("admin") && request.method != "DELETE"'
+```
+
+<Callout type="warn">
+  A standard JWT without a `roles` or `scope` claim authenticates with **empty**
+  roles and scopes, so it will fail any non-empty `require_roles` /
+  `require_scopes` with `403 forbidden`. Make sure your issuer emits the claims
+  you gate on. See [Authorization](/docs/security/authorization).
+</Callout>
+</Step>
+
+<Step>
+## Validate and run
+
+Assemble the file and validate it before serving:
+
+```bash
+export JWT_SECRET=change-me
+octopus validate -c gateway.yaml
+octopus serve -c gateway.yaml
+```
+
+The complete, validated configuration:
+
+```yaml title="gateway.yaml"
+gateway:
+  listen: "0.0.0.0:8080"
+
+upstreams:
+  - name: orders-api
+    instances:
+      - id: orders-1
+        host: 10.0.0.21
+        port: 8080
+
+auth_providers:
+  primary-jwt:
+    type: jwt
+    secret: "${JWT_SECRET}"
+    algorithm: HS256
+    issuer: https://auth.example.com
+    audience: orders-api
+
+auth:
+  default_provider: primary-jwt
+  global_enforce: true
+  skip_paths:
+    - /health
+    - /public/*
+  token_cache_ttl: 60s
+
+routes:
+  - path: /health
+    upstream: orders-api
+    skip_auth: true
+  - path: /orders/*
+    upstream: orders-api
+    require_scopes: ["orders:read"]
+  - path: /admin/*
+    upstream: orders-api
+    require_roles: ["admin"]
+    authz_rule: 'has_role("admin") && request.method != "DELETE"'
+```
+</Step>
+
+<Step>
+## Try it
+
+```bash
+# No token on an enforced route -> 401
+curl -i http://localhost:8080/orders/123
+
+# Public path is open
+curl -i http://localhost:8080/health
+
+# With a valid bearer token carrying the orders:read scope
+curl -i -H "Authorization: Bearer $TOKEN" http://localhost:8080/orders/123
+```
+
+The gateway injects the principal id, roles, and scopes onto the upstream
+request as `X-Auth-Principal`, `X-Auth-Roles`, and `X-Auth-Scopes` so your
+backend can trust them.
+</Step>
+
+</Steps>
+
+## See also
+
+- [JWT provider](/docs/security/jwt) and [OIDC provider](/docs/security/oidc) — the validation details.
+- [Authentication](/docs/security/authentication) — provider selection, enforcement, and caching.
+- [Authorization](/docs/security/authorization) — roles, scopes, Rhai rules, and global rules.
+- [Auth configuration reference](/docs/configuration/auth) and [routes reference](/docs/configuration/routes).
+- [Protect the admin dashboard](/docs/guides/protect-admin) — reuse a provider to lock down `/admin`.

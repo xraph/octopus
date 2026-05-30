@@ -1,0 +1,219 @@
+---
+title: Set up observability
+description: Wire the things that actually work today — Prometheus metrics, Kubernetes health probes, graceful drain, and structured logging — and understand why distributed tracing is left off.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+# Set up observability
+
+This guide wires the observability surface that is **live in the runtime today**:
+Prometheus metrics on the listen port, Kubernetes-style health probes, graceful
+drain on `SIGTERM`, and structured logging. Distributed tracing is configured but
+not wired, so this guide deliberately leaves it off and explains why.
+
+<Callout type="warn">
+  **Distributed tracing is not wired today.** The `observability.tracing` block
+  (`enabled`, `jaeger_endpoint`) is parsed but the gateway does not build a
+  tracer, start an exporter, or propagate trace context. Leave
+  `tracing.enabled: false` (the default). See [Tracing](/docs/observability/tracing).
+</Callout>
+
+<Steps>
+
+<Step>
+## Scrape Prometheus metrics
+
+Metrics are served on **fixed** paths on the gateway listen port — `/metrics`
+(and the `/__metrics` alias) — in Prometheus text format. No sidecar or second
+port is needed.
+
+```bash
+curl http://localhost:8080/metrics
+```
+
+You get `octopus_requests_total` (counter), `octopus_active_connections`
+(gauge), and `octopus_requests_duration_seconds` (histogram). Point Prometheus at
+the listen port:
+
+```yaml title="prometheus.yml"
+scrape_configs:
+  - job_name: octopus-gateway
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['octopus-gateway:8080']
+```
+
+<Callout type="warn">
+  The path is fixed: `observability.metrics.endpoint` does not re-route the
+  handler and `observability.metrics.enabled` does not gate it — the endpoint
+  responds regardless. Scrape `/metrics`. Rich per-route data (counts, error
+  rate, p50/p95/p99) is **not** in `/metrics` yet; it is available through the
+  [Admin API](/docs/observability/admin-api). See [Metrics](/docs/observability/metrics).
+</Callout>
+</Step>
+
+<Step>
+## Configure health probes
+
+Octopus serves `/livez`, `/readyz`, and `/startupz` on the listen port. Liveness
+stays `200` while draining; readiness flips to `503` the instant `SIGTERM`
+arrives; startup reports `200` once the listener has bound.
+
+```yaml title="gateway.yaml"
+gateway:
+  listen: "0.0.0.0:8080"
+  probes:
+    enabled: true
+    liveness_path: /livez
+    readiness_path: /readyz
+    startup_path: /startupz
+    require_discovery_sync: true
+```
+
+When service discovery is configured and `require_discovery_sync` is `true`,
+`/readyz` stays `503` until the first discovery sync completes — keeping a fresh
+pod out of the Service until it knows its upstreams. See
+[Health probes](/docs/observability/health-probes) and
+[Probes & drain](/docs/kubernetes/probes-and-drain).
+</Step>
+
+<Step>
+## Tune graceful drain
+
+On `SIGTERM`, Octopus flips readiness to `503` immediately, keeps accepting for
+`pre_stop_delay` (so in-flight routing settles), then stops accepting and drains
+in-flight requests up to `shutdown_timeout`.
+
+```yaml title="gateway.yaml"
+gateway:
+  pre_stop_delay: 5s       # keep accepting this long after SIGTERM (0 disables)
+  shutdown_timeout: 30s    # max wait for in-flight requests after we stop accepting
+```
+
+<Callout type="warn">
+  On Kubernetes, `terminationGracePeriodSeconds` must be **≥ `pre_stop_delay` +
+  `shutdown_timeout`** or the kubelet `SIGKILL`s the pod mid-drain. The Helm chart
+  defaults to `45` for a `5s` + `30s` budget. See
+  [Probes & drain](/docs/kubernetes/probes-and-drain).
+</Callout>
+</Step>
+
+<Step>
+## Set the log level (structured logging)
+
+Logging goes to stdout via the `tracing` subscriber. The effective level comes
+from the `--log-level` flag and `RUST_LOG` — **not** from
+`observability.logging.level`.
+
+```bash
+octopus serve -c gateway.yaml --log-level info
+
+# per-module overrides via RUST_LOG
+RUST_LOG=octopus_proxy=debug,info octopus serve -c gateway.yaml
+```
+
+<Callout type="warn">
+  `observability.logging.level` and `observability.logging.format` are parsed but
+  **not applied** by the runtime: the level comes from the flag/`RUST_LOG`, and
+  the formatter is always the human-readable text formatter — `format: json` does
+  not switch output to JSON yet. If you need JSON logs, structure the text output
+  in your log shipper. See [Logging](/docs/observability/logging).
+</Callout>
+</Step>
+
+<Step>
+## Validate and run
+
+```bash
+octopus validate -c gateway.yaml
+octopus serve -c gateway.yaml --log-level info
+```
+
+The complete, validated configuration:
+
+```yaml title="gateway.yaml"
+gateway:
+  listen: "0.0.0.0:8080"
+  probes:
+    enabled: true
+    liveness_path: /livez
+    readiness_path: /readyz
+    startup_path: /startupz
+    require_discovery_sync: true
+  shutdown_timeout: 30s
+  pre_stop_delay: 5s
+
+observability:
+  metrics:
+    enabled: true
+    endpoint: /metrics
+  logging:
+    level: info
+    format: text
+  tracing:
+    enabled: false
+
+upstreams:
+  - name: app
+    instances:
+      - id: app-1
+        host: 10.0.0.41
+        port: 8080
+
+routes:
+  - path: /*
+    upstream: app
+```
+</Step>
+
+<Step>
+## On Kubernetes: map probes and scrape
+
+Point all three Kubernetes probes at the listen port (the chart wires this
+automatically):
+
+```yaml title="deployment.yaml (excerpt)"
+startupProbe:
+  httpGet: { path: /startupz, port: http }
+  periodSeconds: 2
+  failureThreshold: 30
+livenessProbe:
+  httpGet: { path: /livez, port: http }
+  periodSeconds: 10
+  failureThreshold: 3
+readinessProbe:
+  httpGet: { path: /readyz, port: http }
+  periodSeconds: 5
+  failureThreshold: 2
+```
+
+For Prometheus Operator, expose `/metrics` with a `ServiceMonitor` (the Helm
+chart's `metrics.serviceMonitor.enabled` value). See
+[Metrics → ServiceMonitor](/docs/observability/metrics) and the
+[Helm chart](/docs/kubernetes/helm-chart) values.
+</Step>
+
+</Steps>
+
+## What is and isn't wired
+
+| Surface | Status |
+| --- | --- |
+| Prometheus `/metrics` (fixed path) | Works |
+| `/livez` · `/readyz` · `/startupz` probes | Works |
+| Graceful drain (`pre_stop_delay` + `shutdown_timeout`) | Works |
+| Structured logging via `--log-level` / `RUST_LOG` | Works |
+| Per-route analytics (counts, p50/p95/p99) | Via [Admin API](/docs/observability/admin-api), not `/metrics` |
+| `observability.metrics.endpoint` / `.enabled` | Parsed, not applied (path is fixed) |
+| `observability.logging.level` / `.format` (JSON) | Parsed, not applied |
+| Distributed tracing (`observability.tracing.*`) | Parsed, **not wired** — leave off |
+
+## See also
+
+- [Metrics](/docs/observability/metrics) — the exact series and how to scrape.
+- [Health probes](/docs/observability/health-probes) and [Probes & drain](/docs/kubernetes/probes-and-drain).
+- [Logging](/docs/observability/logging) and [Tracing](/docs/observability/tracing).
+- [Admin API](/docs/observability/admin-api) — per-route data not exposed via `/metrics`.
+- [Observability configuration](/docs/configuration/observability).

@@ -1,128 +1,90 @@
 ---
 title: Installation
-description: Install Octopus API Gateway on your system
+description: Install Octopus API Gateway with Docker, from source, or on Kubernetes.
 ---
 
 import { Tabs } from 'fumadocs-ui/components/tabs';
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Step, Steps } from 'fumadocs-ui/components/steps';
+import { Card, Cards } from 'fumadocs-ui/components/card';
 
 # Installation
 
-Learn how to install Octopus API Gateway on your system.
+Octopus ships as a single binary, `octopus`, and as a multi-arch container image. The same binary
+serves traffic, validates configuration, generates clients, and — when `kubernetes.enabled` is set —
+runs the in-process operator.
 
 ## Prerequisites
 
 <Callout title="Requirements">
-  - **Rust**: 1.75 or later (if building from source)
-  - **Operating System**: Linux, macOS, or Windows
-  - **Memory**: Minimum 512MB RAM
-  - **CPU**: 1+ cores (multi-core recommended)
+  - **Docker** (for the container image), or **Rust 1.75+** and a C toolchain (to build from source).
+  - **Operating system**: Linux or macOS. The container image targets `linux/amd64` and `linux/arm64`.
+  - For Kubernetes, a cluster with `kubectl` configured and Helm 3.8+.
 </Callout>
 
-## Installation Methods
+## Installation methods
 
-<Tabs items={['Binary', 'Cargo', 'Docker', 'Source']}>
-
-<div title="Binary">
-
-### Download Binary
-
-Download the latest pre-compiled binary for your platform:
-
-```bash
-# Linux (x86_64)
-curl -L https://github.com/xraph/octopus/releases/latest/download/octopus-linux-amd64 -o octopus
-chmod +x octopus
-sudo mv octopus /usr/local/bin/
-
-# macOS (Apple Silicon)
-curl -L https://github.com/xraph/octopus/releases/latest/download/octopus-darwin-arm64 -o octopus
-chmod +x octopus
-sudo mv octopus /usr/local/bin/
-
-# macOS (Intel)
-curl -L https://github.com/xraph/octopus/releases/latest/download/octopus-darwin-amd64 -o octopus
-chmod +x octopus
-sudo mv octopus /usr/local/bin/
-```
-
-Verify the installation:
-
-```bash
-octopus --version
-```
-
-</div>
-
-<div title="Cargo">
-
-### Install via Cargo
-
-If you have Rust installed, you can install Octopus using Cargo:
-
-```bash
-cargo install octopus-gateway
-```
-
-This will compile and install the latest version from crates.io.
-
-Verify the installation:
-
-```bash
-octopus --version
-```
-
-</div>
+<Tabs items={['Docker', 'From source', 'Kubernetes']}>
 
 <div title="Docker">
 
 ### Docker
 
-Pull the official Docker image:
+The image is published to `ghcr.io/xraph/octopus`, built for `linux/amd64` and `linux/arm64`. Its
+entrypoint is the `octopus` binary, and it expects a config file mounted at
+`/etc/octopus/config.yaml`.
+
+Pull the image:
 
 ```bash
-docker pull octopus/octopus:latest
+docker pull ghcr.io/xraph/octopus:latest
 ```
 
-Run Octopus in a container:
+Run it, mounting your config and exposing the listen port (`8080`) and the metrics port (`9090`):
 
 ```bash
-docker run -d \
+docker run --rm \
   --name octopus \
-  -p 8080:8080 \
-  -p 9090:9090 \
-  -v $(pwd)/config.yaml:/etc/octopus/config.yaml \
-  octopus/octopus:latest
+  -p 8080:8080 -p 9090:9090 \
+  -v "$(pwd)/config.yaml:/etc/octopus/config.yaml" \
+  ghcr.io/xraph/octopus:latest
 ```
 
-Check logs:
+<Callout type="info">
+  Bind the gateway to `0.0.0.0` inside the container (`gateway.listen: "0.0.0.0:8080"`), not
+  `127.0.0.1`, or the port will not be reachable from outside the container.
+</Callout>
+
+Check the logs:
 
 ```bash
 docker logs -f octopus
 ```
 
+See [Docker deployment](/docs/deployment/docker) for environment-variable substitution, the
+container health check, and Compose examples.
+
 </div>
 
-<div title="Source">
+<div title="From source">
 
-### Build from Source
+### Build from source
 
 <Steps>
 
 <Step>
 ### Install Rust
 
-If you don't have Rust installed:
+Octopus requires Rust 1.75 or later. If you don't have it:
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source $HOME/.cargo/env
+source "$HOME/.cargo/env"
 ```
 </Step>
 
 <Step>
-### Clone Repository
+### Clone the repository
 
 ```bash
 git clone https://github.com/xraph/octopus.git
@@ -131,26 +93,20 @@ cd octopus
 </Step>
 
 <Step>
-### Build
+### Build the release binary
 
 ```bash
-# Debug build
-cargo build
-
-# Release build (optimized)
-cargo build --release
+make release
 ```
+
+The optimized binary is written to `target/release/octopus`.
 </Step>
 
 <Step>
-### Install
+### Install it on your PATH (optional)
 
 ```bash
-# Install from local build
-cargo install --path octopus-cli
-
-# Or run directly
-./target/release/octopus --version
+sudo install -m 0755 target/release/octopus /usr/local/bin/octopus
 ```
 </Step>
 
@@ -158,219 +114,146 @@ cargo install --path octopus-cli
 
 </div>
 
-</Tabs>
+<div title="Kubernetes">
 
-## Development Tools
+### Kubernetes
 
-For development, install additional tools:
+On Kubernetes, install the Helm chart published to the OCI registry
+`oci://ghcr.io/xraph/charts` as chart `octopus`:
 
 ```bash
-# Hot reload
-cargo install cargo-watch
-
-# Testing framework
-cargo install cargo-nextest
-
-# Security auditing
-cargo install cargo-audit
-
-# Dependency checking
-cargo install cargo-deny
-
-# Benchmarking
-cargo install cargo-criterion
+helm install octopus oci://ghcr.io/xraph/charts/octopus \
+  --namespace octopus --create-namespace
 ```
 
-## Verify Installation
+This is only an outline — the [Kubernetes install guide](/docs/kubernetes/install) covers the CRDs,
+the Gateway API prerequisites, raw manifests, and the full Helm values reference.
 
-Check that Octopus is installed correctly:
+</div>
+
+</Tabs>
+
+## Verify the installation
 
 ```bash
-# Check version
-octopus --version
+# Print version information
+octopus version
 
 # View help
 octopus --help
-
-# Validate configuration
-octopus validate --config config.yaml
 ```
 
-## Configuration Setup
+## Create a configuration file
 
-Create a basic configuration file:
+The only required section is `gateway` with a `listen` address. A minimal static config — one
+upstream and one route:
 
-```bash
-# Download example configuration
-curl -L https://raw.githubusercontent.com/xraph/octopus/main/config.example.yaml -o config.yaml
-
-# Or create manually
-cat > config.yaml <<EOF
-server:
-  http_port: 8080
-  admin_port: 9090
-
-discovery:
-  backend: static
+```yaml title="config.yaml"
+gateway:
+  listen: "0.0.0.0:8080"
+  workers: 0                 # 0 = one worker per CPU core
 
 upstreams:
   - name: example-service
+    lb_policy: round_robin
     instances:
-      - address: localhost
+      - id: example-1
+        host: 127.0.0.1
         port: 8081
 
 routes:
-  - path: /api/*
+  - path: /api
+    methods: [GET, POST]
     upstream: example-service
-EOF
+    strip_prefix: /api
 ```
 
-## Platform-Specific Notes
-
-### Linux
-
-<Callout type="info">
-  On Linux, you may need to allow Octopus to bind to ports below 1024:
-</Callout>
+Validate it without starting the server, then run it:
 
 ```bash
-sudo setcap 'cap_net_bind_service=+ep' /usr/local/bin/octopus
+octopus validate -c config.yaml
+octopus serve -c config.yaml
 ```
 
-### macOS
-
 <Callout type="info">
-  On macOS, you might need to allow network connections in System Preferences > Security & Privacy.
+  Configuration may be YAML, TOML, or JSON, and `-c/--config` accepts multiple files or a directory
+  (merged in order). See the [Configuration reference](/docs/configuration) for the full schema and
+  [CLI](/docs/cli) for every command and flag.
 </Callout>
 
-### Windows
+## Health and metrics endpoints
 
-<Callout type="info">
-  On Windows, ensure that Windows Defender Firewall allows Octopus to accept incoming connections.
-</Callout>
-
-## Kubernetes Installation
-
-For Kubernetes deployments, use Helm:
+Once running, the gateway serves Kubernetes-style health probes on the **listen port** and
+Prometheus metrics on the metrics endpoint:
 
 ```bash
-# Add Helm repository
-helm repo add octopus https://octopus.io/charts
-helm repo update
-
-# Install Octopus
-helm install my-gateway octopus/octopus \
-  --set discovery.backend=kubernetes \
-  --set farp.enabled=true
+curl http://localhost:8080/livez      # liveness — 200 while the process is alive
+curl http://localhost:8080/readyz     # readiness — 200 when ready to serve traffic
+curl http://localhost:8080/startupz   # startup — 200 once the listener has bound
+curl http://localhost:9090/metrics    # Prometheus metrics
 ```
 
-See [Kubernetes Deployment](/docs/deployment/kubernetes) for detailed instructions.
+See [Health probes](/docs/observability/health-probes) and [Metrics](/docs/observability/metrics)
+for details.
 
 ## Upgrading
 
-### Binary/Cargo
-
-```bash
-# Cargo
-cargo install --force octopus-gateway
-
-# Binary
-# Download new version and replace old one
-curl -L https://github.com/xraph/octopus/releases/latest/download/octopus-linux-amd64 -o octopus
-chmod +x octopus
-sudo mv octopus /usr/local/bin/
-```
-
 ### Docker
 
 ```bash
-# Pull latest image
-docker pull octopus/octopus:latest
-
-# Restart container
+docker pull ghcr.io/xraph/octopus:latest
 docker restart octopus
 ```
 
-### Helm
+### From source
 
 ```bash
-helm upgrade my-gateway octopus/octopus
-```
-
-## Uninstallation
-
-### Binary
-
-```bash
-sudo rm /usr/local/bin/octopus
-```
-
-### Cargo
-
-```bash
-cargo uninstall octopus-gateway
-```
-
-### Docker
-
-```bash
-docker stop octopus
-docker rm octopus
-docker rmi octopus/octopus:latest
+cd octopus
+git pull
+make release
+sudo install -m 0755 target/release/octopus /usr/local/bin/octopus
 ```
 
 ### Helm
 
 ```bash
-helm uninstall my-gateway
+helm upgrade octopus oci://ghcr.io/xraph/charts/octopus -n octopus
 ```
 
-## Next Steps
+## Next steps
 
-Now that Octopus is installed, check out:
-
-- [Quick Start](/docs/quick-start) - Get up and running in 5 minutes
-- [Configuration](/docs/configuration) - Learn about configuration options
-- [First Gateway](/docs/first-gateway) - Build your first API gateway
+<Cards>
+  <Card title="Quick Start" description="Run Octopus end to end in a few minutes." href="/docs/quick-start" />
+  <Card title="Build Your First Gateway" description="A fuller walkthrough with multiple services and middleware." href="/docs/first-gateway" />
+  <Card title="Configuration" description="The per-section configuration reference." href="/docs/configuration" />
+  <Card title="Kubernetes" description="The operator, Gateway API, CRDs, and Helm chart." href="/docs/kubernetes" />
+</Cards>
 
 ## Troubleshooting
 
-### Command Not Found
+### Command not found
 
-If you get "command not found" after installation:
+If `octopus` is not found after installing from source, make sure the install directory is on your
+`PATH` (or run the binary by its full path, e.g. `./target/release/octopus`):
 
 ```bash
-# Check if binary is in PATH
-echo $PATH
-
-# Add Cargo bin to PATH (if using Cargo)
-echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> ~/.bashrc
-source ~/.bashrc
+echo "$PATH"
 ```
 
-### Permission Denied
+### Port already in use
 
-If you get "permission denied":
-
-```bash
-# Make binary executable
-chmod +x octopus
-
-# Or run with sudo
-sudo octopus --config config.yaml
-```
-
-### Port Already in Use
-
-If you get "address already in use":
+If the gateway fails to bind with "address already in use", find the process holding the port or
+change `gateway.listen` in `config.yaml`:
 
 ```bash
-# Check what's using the port
 lsof -i :8080
-
-# Change port in config.yaml
-server:
-  http_port: 8081  # Use different port
 ```
 
-For more help, see [Troubleshooting Guide](/docs/guides/troubleshooting) or [open an issue](https://github.com/xraph/octopus/issues).
+```yaml
+gateway:
+  listen: "0.0.0.0:8081"   # bind a different port
+```
+
+For runtime debugging via logs and metrics, see [Observability](/docs/observability). For
+task-focused walkthroughs, see the [Guides](/docs/guides). You can also
+[open an issue](https://github.com/xraph/octopus/issues).

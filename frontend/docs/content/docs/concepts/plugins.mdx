@@ -16,6 +16,18 @@ Octopus supports two types of plugins:
 1. **Static Plugins**: Compiled into the binary
 2. **Dynamic Plugins**: Loaded at runtime from `.so`/`.dylib`/`.dll` files
 
+<Callout type="warn" title="The plugin config array is not consumed yet">
+  The plugin SDK, lifecycle runtime, and dynamic loader are implemented and
+  tested, but the gateway **does not yet load plugins from your configuration**.
+  The top-level `plugins:` array is parsed and validated, then ignored — the
+  server constructs an empty `PluginManager` with a `TODO: Load plugins from
+  config.plugins`, and no plugin runs on the request path today. Treat plugins as
+  a stable foundation for authoring, not an end-to-end runtime feature. For
+  request/response logic that *is* wired today, use [middleware](/docs/middleware)
+  or [scripting](/docs/plugins/scripting). See [Plugins & Scripting](/docs/plugins)
+  for the honest, source-verified status.
+</Callout>
+
 ## Plugin Capabilities
 
 Plugins can provide:
@@ -26,83 +38,34 @@ Plugins can provide:
 - **Metrics**: Custom metrics collection
 - **Storage**: Persist plugin state
 
-## Using Plugins
+## The `plugins` configuration array
 
-### Built-in Plugins
-
-```yaml
-plugins:
-  - name: jwt-auth
-    builtin: true
-    config:
-      secret: ${JWT_SECRET}
-      algorithm: HS256
-```
-
-### Dynamic Plugins
+Each entry deserializes into a `PluginConfig` with these fields: `name`,
+`plugin_type` (`static` or `dynamic`, default `static`), `enabled` (default
+`true`), `priority` (ordering hint, higher runs first), and a free-form `config`
+map passed to the plugin's `init`:
 
 ```yaml
 plugins:
-  - name: custom-plugin
-    path: /plugins/custom-plugin.so
+  - name: my-plugin
+    plugin_type: static
+    enabled: true
+    priority: 100
     config:
-      option1: value1
-      option2: value2
+      some_key: some_value
 ```
 
-## Available Plugins
-
-### JWT Authentication
-
-```yaml
-plugins:
-  - name: jwt-auth
-    builtin: true
-    config:
-      secret: ${JWT_SECRET}
-      algorithm: HS256
-      issuer: https://auth.example.com
-```
-
-### Redis Cache
-
-```yaml
-plugins:
-  - name: redis-cache
-    path: /plugins/redis-cache.so
-    config:
-      url: redis://localhost:6379
-      ttl: 300
-      key_prefix: "octopus:"
-```
-
-### Rate Limiter
-
-```yaml
-plugins:
-  - name: rate-limiter
-    builtin: true
-    config:
-      strategy: token-bucket
-      requests_per_second: 1000
-      distributed: true
-      redis_url: redis://localhost:6379
-```
-
-### Kafka Producer
-
-```yaml
-plugins:
-  - name: kafka-producer
-    path: /plugins/kafka-producer.so
-    config:
-      brokers: ["localhost:9092"]
-      topic: gateway-events
-```
+<Callout type="info">
+  This is the real schema, but the array is not yet wired into request handling
+  (see the warning above). Configuring a plugin here has no runtime effect today.
+  `builtin: true` and a bare `path:` are **not** fields — delivery is selected via
+  `plugin_type`. See [Plugins & Scripting](/docs/plugins).
+</Callout>
 
 ## Developing Plugins
 
-See [Plugin Development](/docs/plugins/development) for creating custom plugins.
+See [Writing a Plugin](/docs/plugins/writing-plugins) for creating custom plugins
+against the `octopus-plugin-api` SDK.
 
 ## Plugin Lifecycle
 
@@ -114,7 +77,8 @@ See [Plugin Development](/docs/plugins/development) for creating custom plugins.
 
 ## Next Steps
 
-- [Plugin Development](/docs/plugins/development) - Create plugins
-- [Available Plugins](/docs/plugins) - Browse all plugins
-- [Plugin API Reference](/docs/api/plugins) - API documentation
+- [Writing a Plugin](/docs/plugins/writing-plugins) - Create plugins
+- [Plugins & Scripting](/docs/plugins) - The plugin model and honest status
+- [Built-in Plugins](/docs/plugins/built-in) - What ships in the box today
+- [Scripting](/docs/plugins/scripting) - The embedded Rhai engine
 

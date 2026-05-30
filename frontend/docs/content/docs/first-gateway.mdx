@@ -1,34 +1,35 @@
 ---
 title: Build Your First Gateway
-description: Complete walkthrough to build a production-ready API gateway with Octopus
+description: A complete walkthrough that routes traffic to multiple microservices with load balancing, health checks, authentication, and observability.
 ---
 
 import { Step, Steps } from 'fumadocs-ui/components/steps';
 import { Tabs } from 'fumadocs-ui/components/tabs';
 import { Callout } from 'fumadocs-ui/components/callout';
+import { Card, Cards } from 'fumadocs-ui/components/card';
 
 # Build Your First Gateway
 
-In this guide, you'll build a production-ready API gateway that routes traffic to multiple microservices with authentication, rate limiting, and observability.
+In this guide you'll build a gateway that routes traffic to three backend services, load-balances
+across instances, runs active health checks, authenticates requests with JWT, and exposes
+Prometheus metrics.
 
-## What You'll Build
+## What you'll build
 
-By the end of this guide, you'll have a gateway that:
+A gateway that:
 
-- ✅ Routes to multiple backend services
-- ✅ Authenticates requests with JWT
-- ✅ Rate limits API calls
-- ✅ Compresses responses
-- ✅ Provides health checks
-- ✅ Exports Prometheus metrics
-- ✅ Handles errors gracefully
+- Routes to three backend services (users, orders, products).
+- Load-balances across multiple instances of a service.
+- Runs active health checks on upstreams.
+- Authenticates requests with a JWT auth provider, with public paths excluded.
+- Serves health probes (`/livez`, `/readyz`, `/startupz`) and Prometheus metrics.
 
-## Project Setup
+## Project setup
 
 <Steps>
 
 <Step>
-### Create Project Directory
+### Create a project directory
 
 ```bash
 mkdir my-gateway
@@ -37,401 +38,316 @@ cd my-gateway
 </Step>
 
 <Step>
-### Create Configuration File
+### Start the gateway config
 
-Create `config.yaml`:
+Create `config.yaml`. The `gateway` section is the only required one:
 
-```yaml
-server:
-  http_port: 8080
-  admin_port: 9090
-  workers: auto
-
-discovery:
-  backend: static
+```yaml title="config.yaml"
+gateway:
+  listen: "0.0.0.0:8080"
+  workers: 0                 # 0 = one worker per CPU core
+  request_timeout: 30s
 
 observability:
   logging:
     level: info
-    format: json
+    format: text
   metrics:
     enabled: true
+    endpoint: /metrics
 ```
 </Step>
 
 </Steps>
 
-## Define Upstreams
-
-Let's define three backend services: users, orders, and products.
-
-```yaml
-upstreams:
-  - name: user-service
-    instances:
-      - address: localhost
-        port: 8081
-        weight: 100
-    health_check:
-      type: http
-      path: /health
-      interval: 10s
-      timeout: 5s
-      healthy_threshold: 2
-      unhealthy_threshold: 3
-    load_balance: round-robin
-    
-  - name: order-service
-    instances:
-      - address: localhost
-        port: 8082
-      - address: localhost
-        port: 8083  # Multiple instances for load balancing
-    health_check:
-      type: http
-      path: /health
-      interval: 10s
-    load_balance: least-connections
-    
-  - name: product-service
-    instances:
-      - address: localhost
-        port: 8084
-    health_check:
-      type: http
-      path: /health
-      interval: 10s
-    load_balance: round-robin
-```
-
-<Callout title="Health Checks">
-  Health checks automatically remove unhealthy instances from the load balancer and add them back when they recover.
+<Callout type="info">
+  Build up `config.yaml` section by section below. The [complete file](#complete-configuration) at
+  the end of this page is validated and ready to copy.
 </Callout>
 
-## Configure Routes
+## Define upstreams
 
-Define routes that map paths to upstreams:
-
-```yaml
-routes:
-  # User service routes
-  - path: /api/users/*
-    upstream: user-service
-    methods: [GET, POST, PUT, DELETE]
-    timeout: 30s
-    retries: 3
-    
-  - path: /api/auth/*
-    upstream: user-service
-    methods: [POST]
-    timeout: 10s
-    strip_path: false  # Keep full path
-    
-  # Order service routes
-  - path: /api/orders/*
-    upstream: order-service
-    methods: [GET, POST, PUT, DELETE]
-    timeout: 30s
-    circuit_breaker:
-      enabled: true
-      failure_threshold: 5
-      timeout: 60s
-      half_open_requests: 3
-    
-  # Product service routes
-  - path: /api/products/*
-    upstream: product-service
-    methods: [GET, POST, PUT, DELETE]
-    timeout: 30s
-    
-  # Health endpoint (no upstream, handled by gateway)
-  - path: /_/health
-    internal: true
-```
-
-## Add Middleware
-
-Configure middleware to process requests:
+An upstream is a named backend made up of one or more instances. Define three services. The
+`order-service` has two instances so it can be load-balanced:
 
 ```yaml
-middleware:
-  - cors
-  - compression
-  - rate_limit
-  - auth
-
-# CORS configuration
-cors:
-  enabled: true
-  allowed_origins:
-    - "https://example.com"
-    - "http://localhost:3000"
-  allowed_methods: [GET, POST, PUT, DELETE, OPTIONS]
-  allowed_headers:
-    - "Content-Type"
-    - "Authorization"
-  exposed_headers:
-    - "X-Request-ID"
-  allow_credentials: true
-  max_age: 3600
-
-# Compression configuration
-compression:
-  enabled: true
-  level: 6  # Balance between compression and speed
-  min_size: 1024  # Only compress responses > 1KB
-  types:
-    - "application/json"
-    - "text/html"
-    - "text/css"
-    - "text/javascript"
-
-# Rate limiting configuration
-rate_limit:
-  enabled: true
-  strategy: token-bucket
-  requests_per_second: 100
-  burst: 200
-  key_by: ip  # Can also be: header, user_id, api_key
-  
-# Authentication configuration
-auth:
-  enabled: true
-  type: jwt
-  secret: ${JWT_SECRET}
-  algorithm: HS256
-  header: Authorization
-  scheme: Bearer
-  excluded_paths:
-    - "/api/auth/login"
-    - "/api/auth/register"
-    - "/_/health"
-```
-
-## Add Circuit Breaker
-
-Protect your services with circuit breakers:
-
-```yaml
-circuit_breaker:
-  enabled: true
-  failure_threshold: 5      # Open after 5 failures
-  timeout: 60s              # Stay open for 60s
-  half_open_requests: 3     # Allow 3 requests in half-open state
-  success_threshold: 2      # Close after 2 successes in half-open
-```
-
-## Configure Observability
-
-### Metrics
-
-```yaml
-observability:
-  metrics:
-    enabled: true
-    path: /metrics
-    port: 9090
-    include_default: true
-    custom_metrics:
-      - name: gateway_custom_metric
-        type: counter
-        help: Custom metric example
-```
-
-### Tracing
-
-```yaml
-observability:
-  tracing:
-    enabled: true
-    exporter: otlp
-    endpoint: http://jaeger:4317
-    sample_rate: 0.1  # Sample 10% of requests
-    include_headers: true
-```
-
-### Logging
-
-```yaml
-observability:
-  logging:
-    level: info
-    format: json
-    include_request_id: true
-    include_timestamp: true
-    fields:
-      - method
-      - path
-      - status
-      - duration
-      - upstream
-      - error
-```
-
-## Add Admin Configuration
-
-Configure the admin dashboard:
-
-```yaml
-admin:
-  enabled: true
-  address: 0.0.0.0:9090
-  auth:
-    enabled: true
-    type: basic
-    username: admin
-    password_hash: $2b$12$...  # bcrypt hash
-  endpoints:
-    - path: /_/health
-      public: true
-    - path: /_/metrics
-      public: true
-    - path: /_/services
-      auth_required: true
-    - path: /_/routes
-      auth_required: true
-    - path: /_/config
-      auth_required: true
-```
-
-## Complete Configuration
-
-Here's the complete `config.yaml`:
-
-```yaml
-server:
-  http_port: 8080
-  admin_port: 9090
-  workers: auto
-  read_timeout: 60s
-  write_timeout: 60s
-  idle_timeout: 120s
-
-discovery:
-  backend: static
-
 upstreams:
   - name: user-service
+    lb_policy: round_robin
     instances:
-      - address: localhost
+      - id: user-1
+        host: 127.0.0.1
         port: 8081
     health_check:
       type: http
       path: /health
       interval: 10s
-    load_balance: round-robin
-    
+      timeout: 2s
+      healthy_threshold: 2
+      unhealthy_threshold: 3
+
   - name: order-service
+    lb_policy: least_connections
     instances:
-      - address: localhost
+      - id: order-1
+        host: 127.0.0.1
         port: 8082
-      - address: localhost
+      - id: order-2
+        host: 127.0.0.1
         port: 8083
     health_check:
       type: http
       path: /health
       interval: 10s
-    load_balance: least-connections
-    
+      timeout: 2s
+
   - name: product-service
+    lb_policy: round_robin
     instances:
-      - address: localhost
+      - id: product-1
+        host: 127.0.0.1
         port: 8084
     health_check:
       type: http
       path: /health
       interval: 10s
-    load_balance: round-robin
-
-routes:
-  - path: /api/users/*
-    upstream: user-service
-    methods: [GET, POST, PUT, DELETE]
-    timeout: 30s
-    retries: 3
-    
-  - path: /api/auth/*
-    upstream: user-service
-    methods: [POST]
-    timeout: 10s
-    
-  - path: /api/orders/*
-    upstream: order-service
-    methods: [GET, POST, PUT, DELETE]
-    timeout: 30s
-    circuit_breaker:
-      enabled: true
-      failure_threshold: 5
-      timeout: 60s
-    
-  - path: /api/products/*
-    upstream: product-service
-    methods: [GET, POST, PUT, DELETE]
-    timeout: 30s
-
-middleware:
-  - cors
-  - compression
-  - rate_limit
-  - auth
-
-cors:
-  allowed_origins: ["*"]
-  allowed_methods: [GET, POST, PUT, DELETE, OPTIONS]
-  allowed_headers: ["*"]
-  allow_credentials: true
-
-compression:
-  enabled: true
-  level: 6
-  min_size: 1024
-
-rate_limit:
-  requests_per_second: 100
-  burst: 200
-  key_by: ip
-
-auth:
-  type: jwt
-  secret: ${JWT_SECRET}
-  algorithm: HS256
-  excluded_paths:
-    - "/api/auth/login"
-    - "/api/auth/register"
-    - "/_/health"
-
-circuit_breaker:
-  enabled: true
-  failure_threshold: 5
-  timeout: 60s
-
-observability:
-  metrics:
-    enabled: true
-    path: /metrics
-  tracing:
-    enabled: true
-    exporter: otlp
-    endpoint: http://jaeger:4317
-  logging:
-    level: info
-    format: json
-
-admin:
-  enabled: true
-  address: 0.0.0.0:9090
-  auth:
-    type: basic
-    username: admin
-    password_hash: $2b$12$...
+      timeout: 2s
 ```
 
-## Running the Gateway
+<Callout type="warn">
+  When upstreams come from a **static config file**, the gateway currently uses round-robin
+  regardless of `lb_policy`, and `health_check` / `circuit_breaker` are parsed and validated but not
+  yet wired into the static path. Both are honored on the Kubernetes/operator-driven path. See
+  [Upstreams](/docs/configuration/upstreams), [Load balancing](/docs/concepts/load-balancing), and
+  [Health checks](/docs/concepts/health-checks).
+</Callout>
+
+## Configure routes
+
+A route maps an incoming request to an upstream by name. Each `path` must start with `/`, and each
+`upstream` must exist in `upstreams`:
+
+```yaml
+routes:
+  - path: /api/users
+    upstream: user-service
+    methods: [GET, POST, PUT, DELETE]
+    strip_prefix: /api
+    timeout: 30s
+
+  - path: /api/auth
+    upstream: user-service
+    methods: [POST]
+    strip_prefix: /api
+    skip_auth: true            # public — no authentication
+    timeout: 10s
+
+  - path: /api/orders
+    upstream: order-service
+    methods: [GET, POST, PUT, DELETE]
+    strip_prefix: /api
+    require_roles: [orders]    # authorization: caller must have this role
+
+  - path: /api/products
+    upstream: product-service
+    methods: [GET, POST, PUT, DELETE]
+    strip_prefix: /api
+```
+
+<Callout type="info">
+  `strip_prefix` removes the prefix before proxying, so `/api/users/123` reaches the upstream as
+  `/users/123`. Routes also support `priority`, `add_prefix`, per-route `timeout`, and per-route
+  auth fields — see [Routes](/docs/configuration/routes).
+</Callout>
+
+## Add authentication
+
+Authentication is configured with **named auth providers** and a global `auth` section, not a
+middleware list. Define a JWT provider, make it the default, and exclude public paths:
+
+```yaml
+auth_providers:
+  primary-jwt:
+    type: jwt
+    secret: "${JWT_SECRET}"     # HS256 by default
+    algorithm: HS256
+    issuer: my-gateway
+
+auth:
+  default_provider: primary-jwt
+  global_enforce: true          # all routes require auth unless skip_auth / skip_paths
+  skip_paths:
+    - /api/auth
+    - /livez
+    - /readyz
+    - /startupz
+```
+
+A route can override the provider with `auth_provider:`, opt out with `skip_auth: true`, or require
+roles/scopes with `require_roles` / `require_scopes`. See
+[Authentication & authorization](/docs/configuration/auth) and the [Security](/docs/security)
+section for the request flow and other provider types (OIDC, API key, forward-auth, mTLS).
+
+## Compression
+
+Response compression runs in the request chain and is enabled by default. Tune it under
+`gateway.compression`:
+
+```yaml
+gateway:
+  listen: "0.0.0.0:8080"
+  compression:
+    enabled: true
+    level: 6
+    min_size: 1024
+    algorithms: ["br", "zstd", "gzip"]
+```
+
+See [Compression](/docs/middleware/compression).
+
+<Callout type="warn">
+  Compression and authentication are the middleware wired into the request chain today. CORS and
+  rate limiting are present in the schema (global `cors`, per-route `cors`/`rate_limit`) but **not
+  yet enforced** at request time. See [Middleware](/docs/middleware) for what is active.
+</Callout>
+
+## Configure observability
+
+`observability` has three sub-sections: `logging`, `metrics`, and `tracing`.
+
+```yaml
+observability:
+  logging:
+    level: info
+    format: text          # or "json"
+  metrics:
+    enabled: true
+    endpoint: /metrics
+  tracing:
+    enabled: false
+    jaeger_endpoint: http://jaeger:4317
+```
+
+<Callout type="info">
+  Metrics are live on the `/metrics` endpoint. The JSON log format and distributed tracing are
+  parsed but not yet applied at runtime — see [Observability](/docs/observability).
+</Callout>
+
+## Complete configuration
+
+Here's the complete, validated `config.yaml`:
+
+```yaml title="config.yaml"
+gateway:
+  listen: "0.0.0.0:8080"
+  workers: 0
+  request_timeout: 30s
+  shutdown_timeout: 30s
+  compression:
+    enabled: true
+    level: 6
+    min_size: 1024
+
+upstreams:
+  - name: user-service
+    lb_policy: round_robin
+    instances:
+      - id: user-1
+        host: 127.0.0.1
+        port: 8081
+    health_check:
+      type: http
+      path: /health
+      interval: 10s
+      timeout: 2s
+      healthy_threshold: 2
+      unhealthy_threshold: 3
+
+  - name: order-service
+    lb_policy: least_connections
+    instances:
+      - id: order-1
+        host: 127.0.0.1
+        port: 8082
+      - id: order-2
+        host: 127.0.0.1
+        port: 8083
+    health_check:
+      type: http
+      path: /health
+      interval: 10s
+      timeout: 2s
+
+  - name: product-service
+    lb_policy: round_robin
+    instances:
+      - id: product-1
+        host: 127.0.0.1
+        port: 8084
+    health_check:
+      type: http
+      path: /health
+      interval: 10s
+      timeout: 2s
+
+routes:
+  - path: /api/users
+    upstream: user-service
+    methods: [GET, POST, PUT, DELETE]
+    strip_prefix: /api
+    timeout: 30s
+
+  - path: /api/auth
+    upstream: user-service
+    methods: [POST]
+    strip_prefix: /api
+    skip_auth: true
+    timeout: 10s
+
+  - path: /api/orders
+    upstream: order-service
+    methods: [GET, POST, PUT, DELETE]
+    strip_prefix: /api
+    require_roles: [orders]
+
+  - path: /api/products
+    upstream: product-service
+    methods: [GET, POST, PUT, DELETE]
+    strip_prefix: /api
+
+auth_providers:
+  primary-jwt:
+    type: jwt
+    secret: "${JWT_SECRET}"
+    algorithm: HS256
+    issuer: my-gateway
+
+auth:
+  default_provider: primary-jwt
+  global_enforce: true
+  skip_paths:
+    - /api/auth
+    - /livez
+    - /readyz
+    - /startupz
+
+observability:
+  logging:
+    level: info
+    format: text
+  metrics:
+    enabled: true
+    endpoint: /metrics
+  tracing:
+    enabled: false
+```
+
+## Running the gateway
 
 <Steps>
 
 <Step>
-### Set Environment Variables
+### Set environment variables
 
 ```bash
 export JWT_SECRET=your-super-secret-key-change-this
@@ -439,195 +355,95 @@ export JWT_SECRET=your-super-secret-key-change-this
 </Step>
 
 <Step>
-### Start Backend Services
+### Start backend services
 
-For this example, we'll use mock services:
+For this example, use any HTTP servers on the configured ports (these won't answer `/health`, but
+they let you see routing work):
 
 ```bash
-# Terminal 1: User service
-python3 -m http.server 8081
-
-# Terminal 2: Order service (instance 1)
-python3 -m http.server 8082
-
-# Terminal 3: Order service (instance 2)
-python3 -m http.server 8083
-
-# Terminal 4: Product service
-python3 -m http.server 8084
+python3 -m http.server 8081   # user-service
+python3 -m http.server 8082   # order-service (instance 1)
+python3 -m http.server 8083   # order-service (instance 2)
+python3 -m http.server 8084   # product-service
 ```
 </Step>
 
 <Step>
-### Start Octopus
+### Validate and start Octopus
 
 ```bash
-octopus --config config.yaml
+octopus validate -c config.yaml
+octopus serve -c config.yaml
 ```
 </Step>
 
 <Step>
-### Test the Gateway
+### Test the gateway
 
 ```bash
-# Check health
-curl http://localhost:9090/_/health
+# Health probes (served on the listen port)
+curl http://localhost:8080/livez
+curl http://localhost:8080/readyz
 
-# Test routing
-curl http://localhost:8080/api/users/123
+# Public route (skip_auth) — reaches the upstream as /auth/login
+curl -X POST http://localhost:8080/api/auth/login
 
-# Test with auth (requires JWT token)
+# Authenticated route — requires a JWT signed with $JWT_SECRET
 export TOKEN="eyJhbGciOi..."
-curl -H "Authorization: Bearer $TOKEN" \
-  http://localhost:8080/api/orders/456
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/orders/456
 
-# Check metrics
+# Prometheus metrics
 curl http://localhost:9090/metrics
 ```
 </Step>
 
 </Steps>
 
-## Testing
-
-### Health Checks
-
-```bash
-# Gateway health
-curl http://localhost:9090/_/health
-
-# Expected response
-{
-  "status": "healthy",
-  "upstreams": {
-    "user-service": "healthy",
-    "order-service": "healthy",
-    "product-service": "healthy"
-  }
-}
-```
-
-### Rate Limiting
-
-```bash
-# Make requests until rate limited
-for i in {1..150}; do
-  curl http://localhost:8080/api/products
-done
-
-# Should return 429 Too Many Requests after 100 requests
-```
-
-### Circuit Breaker
-
-```bash
-# Stop order service to trigger circuit breaker
-# Make requests
-for i in {1..10}; do
-  curl http://localhost:8080/api/orders
-done
-
-# Circuit should open after 5 failures
-# Returns 503 Service Unavailable
-```
-
-### Load Balancing
-
-```bash
-# Make multiple requests to see load balancing
-for i in {1..10}; do
-  curl http://localhost:8080/api/orders
-done
-
-# Check logs to see requests distributed across instances
-```
-
 ## Monitoring
 
-### Prometheus Metrics
+The `/metrics` endpoint exposes Prometheus metrics. See [Metrics](/docs/observability/metrics) for
+the exact metric names Octopus emits and how to scrape them, and
+[Health probes](/docs/observability/health-probes) for the probe semantics.
 
-Key metrics to monitor:
-
-```bash
-# Request count
-octopus_requests_total{method="GET",status="200",route="/api/users/*"}
-
-# Request duration
-octopus_request_duration_seconds{method="GET",route="/api/users/*"}
-
-# Upstream health
-octopus_upstream_health{upstream="user-service"}
-
-# Circuit breaker state
-octopus_circuit_breaker_state{upstream="order-service"}
-
-# Rate limit hits
-octopus_rate_limit_hits_total
-```
-
-### Grafana Dashboard
-
-Import the Octopus dashboard:
-
-```bash
-# Download dashboard JSON
-curl -O https://grafana.com/dashboards/octopus-gateway.json
-
-# Import to Grafana
-```
-
-## Production Checklist
+## Production checklist
 
 Before deploying to production:
 
-- [ ] Enable TLS/HTTPS
-- [ ] Use strong JWT secret
-- [ ] Configure proper CORS origins
-- [ ] Set up Prometheus/Grafana monitoring
-- [ ] Enable distributed tracing
-- [ ] Configure log aggregation
-- [ ] Set resource limits
-- [ ] Enable circuit breakers
-- [ ] Test failover scenarios
-- [ ] Document API endpoints
-- [ ] Set up alerting
-- [ ] Create backup configuration
+- [ ] Terminate TLS (static [`gateway.tls`](/docs/configuration/tls) or the Kubernetes path).
+- [ ] Use a strong `JWT_SECRET` supplied via the environment, never committed.
+- [ ] Scrape `/metrics` with Prometheus and wire alerting.
+- [ ] Wire Kubernetes liveness/readiness/startup probes to `/livez`, `/readyz`, `/startupz`.
+- [ ] Size `terminationGracePeriodSeconds` against `gateway.shutdown_timeout` and `pre_stop_delay`.
+- [ ] Run `octopus validate -c config.yaml` in CI.
 
-## Next Steps
+See the full [production checklist](/docs/deployment/production-checklist).
 
-- [Configuration Reference](/docs/configuration) - Detailed configuration options
-- [Middleware Guide](/docs/middleware) - Learn about all middleware
-- [Plugin System](/docs/plugins) - Extend with custom plugins
-- [FARP Protocol](/docs/concepts/farp) - Auto-discover services
-- [Kubernetes Deployment](/docs/deployment/kubernetes) - Deploy to K8s
-- [Performance Tuning](/docs/guides/performance) - Optimize for production
+## Next steps
 
-## Common Issues
+<Cards>
+  <Card title="Configuration" description="The per-section configuration reference." href="/docs/configuration" />
+  <Card title="Middleware" description="Compression and authentication in the request chain." href="/docs/middleware" />
+  <Card title="Plugins & scripting" description="Extend the gateway with plugins and Rhai." href="/docs/plugins" />
+  <Card title="FARP & discovery" description="Auto-discover services and generate routes." href="/docs/farp" />
+  <Card title="Kubernetes" description="The operator, Gateway API, CRDs, and Helm chart." href="/docs/kubernetes" />
+  <Card title="Scaling" description="Vertical and horizontal scaling for production." href="/docs/deployment/scaling" />
+</Cards>
+
+## Common issues
 
 <Callout type="error" title="Troubleshooting">
 
-**Upstream connection refused**
-- Check upstream service is running
-- Verify port numbers in configuration
-- Check firewall rules
+**Upstream connection refused** — confirm the backend is running and the instance `host`/`port`
+are correct; for FARP-discovered services, check the discovery backend.
 
-**JWT authentication failing**
-- Verify `JWT_SECRET` environment variable is set
-- Check token format (should be `Bearer <your_jwt_token>`)
-- Ensure the token has not expired
+**JWT authentication failing** — verify `JWT_SECRET` is set, the token is sent as
+`Authorization: Bearer <token>`, the algorithm matches the provider (`HS256`), and the token has
+not expired.
 
-**High latency**
-- Increase worker threads in gateway configuration
-- Enable connection pooling
-- Add caching middleware
-- Check upstream response times
-
-**Rate limiting too strict**
-- Increase requests_per_second
-- Adjust burst size
-- Consider per-user rate limiting instead of per-IP
+**Config rejected on startup** — run `octopus validate -c config.yaml`; it names the exact field
+that failed (for example a route referencing an upstream that doesn't exist).
 
 </Callout>
 
-For more help, see the [Troubleshooting Guide](/docs/guides/troubleshooting).
-
+For runtime debugging via logs and metrics, see [Observability](/docs/observability). For scaling
+guidance, see [Scaling](/docs/deployment/scaling).

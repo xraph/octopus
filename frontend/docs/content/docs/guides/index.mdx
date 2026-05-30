@@ -1,33 +1,81 @@
 ---
 title: Guides
-description: Practical guides for using Octopus API Gateway
+description: End-to-end, task-focused walkthroughs for Octopus — securing APIs, terminating TLS, proxying gRPC, running on Kubernetes, auto-discovering services, generating clients, and wiring observability.
 ---
 
 import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Callout } from 'fumadocs-ui/components/callout';
 
 # Guides
 
-Practical guides and best practices for Octopus.
+Each guide is an end-to-end walkthrough for a single task, with copy-pasteable
+configuration grounded in the real schema and links to the reference pages. If
+you are brand new, start with [Quick start](/docs/quick-start) and
+[Your first gateway](/docs/first-gateway), then come back here for specific
+tasks.
+
+<Callout type="info">
+  Every guide below only relies on features that are wired into the runtime
+  today. Where a related feature is parsed but not yet enforced (for example
+  rate limiting), the guide says so explicitly rather than pretending it works.
+</Callout>
+
+## Security
 
 <Cards>
   <Card
-    title="Performance Tuning"
-    description="Optimize Octopus for maximum performance"
-    href="/docs/guides/performance"
+    title="Secure an API with JWT"
+    description="Validate bearer tokens, enforce auth globally, and gate routes by role and scope."
+    href="/docs/guides/secure-api-jwt"
   />
   <Card
-    title="Security Best Practices"
-    description="Secure your API gateway"
-    href="/docs/guides/security"
+    title="Protect the admin dashboard"
+    description="Require authentication on /admin with an auth provider."
+    href="/docs/guides/protect-admin"
   />
   <Card
-    title="Troubleshooting"
-    description="Common issues and solutions"
-    href="/docs/guides/troubleshooting"
+    title="Enable mutual TLS"
+    description="Terminate TLS with client-certificate verification and map CNs to roles."
+    href="/docs/guides/enable-mtls"
+  />
+</Cards>
+
+## Protocols & discovery
+
+<Cards>
+  <Card
+    title="Expose a gRPC service"
+    description="Proxy gRPC transparently over HTTP/2 with a normal route."
+    href="/docs/guides/expose-grpc"
   />
   <Card
-    title="Migration Guide"
-    description="Migrate from other gateways"
-    href="/docs/guides/migration"
+    title="Auto-discover services with FARP"
+    description="Let services publish OpenAPI and have Octopus generate routes."
+    href="/docs/guides/farp-auto-discovery"
+  />
+  <Card
+    title="Generate a TypeScript client"
+    description="Use octopus gen to produce a typed client with TanStack Query hooks."
+    href="/docs/guides/generate-typescript-client"
+  />
+</Cards>
+
+## Kubernetes & operations
+
+<Cards>
+  <Card
+    title="Route with the Gateway API"
+    description="Reconcile GatewayClass, Gateway, and HTTPRoute into the router."
+    href="/docs/guides/kubernetes-gateway-api"
+  />
+  <Card
+    title="TLS with cert-manager"
+    description="Source certificates from Gateway listener Secrets and hot-reload renewals."
+    href="/docs/guides/cert-manager-tls"
+  />
+  <Card
+    title="Set up observability"
+    description="Prometheus metrics, health probes, graceful drain, and structured logs."
+    href="/docs/guides/observability-setup"
   />
 </Cards>

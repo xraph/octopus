@@ -1,0 +1,127 @@
+---
+title: Protect the admin dashboard
+description: Lock down the built-in admin dashboard and its JSON API by pointing admin.auth_provider at a configured auth provider.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+# Protect the admin dashboard
+
+Octopus ships a built-in [admin dashboard](/docs/observability/admin-dashboard) —
+a web UI plus a JSON REST API for routes, health, metrics, plugins, config, and
+FARP services. It is served on the gateway's listen port and, out of the box,
+**requires no authentication**. Anyone who can reach the port can read your
+gateway's internals. This guide puts it behind an auth provider.
+
+<Callout type="warn">
+  Always set `admin.auth_provider` in any non-local deployment, and also restrict
+  the port at the network layer (NetworkPolicy, firewall, or simply not exposing
+  the admin paths publicly). The companion `admin.allowed_ips` field is **parsed
+  but not enforced** by the runtime today — do not rely on it as your only
+  control. See [Admin configuration](/docs/configuration/admin).
+</Callout>
+
+<Steps>
+
+<Step>
+## Define an auth provider for the dashboard
+
+Any [auth provider](/docs/configuration/auth) works. A dedicated JWT provider for
+operators is a common choice; you could equally reuse an existing provider or use
+[API key](/docs/security/api-key), [mTLS](/docs/security/mtls), or
+[forward auth](/docs/security/forward-auth).
+
+```yaml title="gateway.yaml"
+auth_providers:
+  dashboard-auth:
+    type: jwt
+    secret: "${ADMIN_JWT_SECRET}"
+    algorithm: HS256
+    issuer: https://auth.example.com
+```
+</Step>
+
+<Step>
+## Point the admin block at it
+
+Set `admin.auth_provider` to the **name** of that provider. Every `/admin*`
+request is then run through it before the dashboard is dispatched;
+unauthenticated requests get `401 Unauthorized`.
+
+```yaml title="gateway.yaml"
+admin:
+  auth_provider: dashboard-auth   # must match an auth_providers key
+```
+
+<Callout type="info">
+  Static assets are exempt: requests whose path contains `/static/` or `/_next/`
+  bypass the admin auth check so login-protected pages can still load their CSS
+  and JS. This is wired in the runtime.
+</Callout>
+</Step>
+
+<Step>
+## Validate and run
+
+```bash
+export ADMIN_JWT_SECRET=change-me
+octopus validate -c gateway.yaml
+octopus serve -c gateway.yaml
+```
+
+The full configuration (a real upstream is included so the gateway also proxies
+traffic — the admin protection works the same with or without it):
+
+```yaml title="gateway.yaml"
+gateway:
+  listen: "0.0.0.0:8080"
+
+upstreams:
+  - name: app
+    instances:
+      - id: app-1
+        host: 10.0.0.51
+        port: 8080
+
+auth_providers:
+  dashboard-auth:
+    type: jwt
+    secret: "${ADMIN_JWT_SECRET}"
+    algorithm: HS256
+    issuer: https://auth.example.com
+
+admin:
+  auth_provider: dashboard-auth
+
+routes:
+  - path: /*
+    upstream: app
+```
+</Step>
+
+<Step>
+## Verify it is protected
+
+```bash
+# Unauthenticated -> 401
+curl -i http://localhost:8080/admin
+
+# With a valid token from dashboard-auth
+curl -i -H "Authorization: Bearer $ADMIN_TOKEN" http://localhost:8080/admin
+```
+
+The same protection covers the JSON API under `/admin/api/*` and the `/__admin`
+alias. The dashboard's pages and endpoints are documented in
+[Admin dashboard](/docs/observability/admin-dashboard) and the
+[Admin API](/docs/observability/admin-api) reference.
+</Step>
+
+</Steps>
+
+## See also
+
+- [Admin dashboard](/docs/observability/admin-dashboard) — what the UI serves and where it mounts.
+- [Admin configuration](/docs/configuration/admin) — the `admin` block schema.
+- [Secure an API with JWT](/docs/guides/secure-api-jwt) — building the provider you reference here.
+- [Security overview](/docs/security) — all provider types you can point `auth_provider` at.

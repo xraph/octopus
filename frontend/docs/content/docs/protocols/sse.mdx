@@ -55,7 +55,8 @@ SSE needs no special route — point a path at an upstream that emits an event s
 upstreams:
   - name: events-service
     instances:
-      - address: 127.0.0.1
+      - id: events-1
+        host: 127.0.0.1
         port: 8080
 
 routes:

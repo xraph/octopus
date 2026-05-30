@@ -1,0 +1,171 @@
+---
+title: Generate a TypeScript client
+description: Use octopus gen to read a service's OpenAPI spec and produce a typed TypeScript client with TanStack Query hooks, plus optional Octopus config fragments.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+# Generate a TypeScript client
+
+The `octopus gen` command reads your services' API specs and generates artifacts
+from them: an intermediate Octopus schema, optional Octopus config fragments, and
+a **TypeScript client** with a namespace-chained API and
+[TanStack Query](https://tanstack.com/query) hooks. This guide produces a typed
+client from a service's OpenAPI document.
+
+`octopus gen` is driven entirely by a `octopus-gen.yaml` file (not your gateway
+config). See the [CLI](/docs/cli) overview for the full command set.
+
+<Steps>
+
+<Step>
+## Describe the service in octopus-gen.yaml
+
+Create `octopus-gen.yaml`. At minimum it lists `services`; each service has a
+`name`, a `type` (`openapi`, `asyncapi`, or `farp`), a spec source (`spec` for a
+file/URL or `endpoint` for a live spec), and an `upstream` (`host` + `port`).
+
+```yaml title="octopus-gen.yaml"
+output_dir: ./generated
+
+services:
+  - name: orders
+    type: openapi
+    spec: ./specs/orders.openapi.json   # local file or URL
+    prefix: /orders
+    upstream:
+      host: orders.internal
+      port: 8080
+```
+</Step>
+
+<Step>
+## Turn on the TypeScript client
+
+Add a `client` block and set `enabled: true`. Enable TanStack Query hooks and
+pick the major version (4 or 5), and configure how the generated client sends
+auth.
+
+```yaml title="octopus-gen.yaml"
+client:
+  enabled: true
+  output_dir: ./generated/client
+  package_name: "@myorg/api-client"
+  tanstack_query:
+    enabled: true
+    version: 5
+  auth:
+    default_strategy: bearer
+    header: Authorization
+    prefix: "Bearer "
+```
+
+<Callout type="info">
+  Defaults if you omit fields: `output_dir` `./generated/client`, `package_name`
+  `@octopus/api-client`, TanStack Query version `5`, auth header `Authorization`
+  with prefix `Bearer `. The client can also emit WebSocket and SSE clients
+  (`websocket`, `sse`) when the source spec includes those channels.
+</Callout>
+</Step>
+
+<Step>
+## (Optional) Also emit Octopus config fragments
+
+The same run can generate Octopus route/upstream config fragments and the
+intermediate schema, so the gateway config and the client stay in sync with the
+spec.
+
+```yaml title="octopus-gen.yaml"
+config:
+  format: yaml
+  split: true            # one config file per service
+
+schema:
+  output: octopus-schema.json
+```
+</Step>
+
+<Step>
+## Run the generator
+
+`octopus gen` defaults to reading `octopus-gen.yaml` in the working directory;
+pass `-c` to point elsewhere.
+
+```bash
+# uses ./octopus-gen.yaml
+octopus gen
+
+# explicit path
+octopus gen -c ./codegen/octopus-gen.yaml
+```
+
+The complete `octopus-gen.yaml` for this guide:
+
+```yaml title="octopus-gen.yaml"
+output_dir: ./generated
+
+config:
+  format: yaml
+  split: true
+
+schema:
+  output: octopus-schema.json
+
+client:
+  enabled: true
+  output_dir: ./generated/client
+  package_name: "@myorg/api-client"
+  tanstack_query:
+    enabled: true
+    version: 5
+  auth:
+    default_strategy: bearer
+    header: Authorization
+    prefix: "Bearer "
+
+services:
+  - name: orders
+    type: openapi
+    spec: ./specs/orders.openapi.json
+    prefix: /orders
+    upstream:
+      host: orders.internal
+      port: 8080
+```
+</Step>
+
+<Step>
+## Use the generated client
+
+The output lands under `output_dir` (the client under its own `output_dir`). The
+client exposes a namespace-chained API and, with TanStack Query enabled, ready-to-use
+query/mutation hooks. Install it as a local package or wire it into your frontend
+build, and configure the base URL to point at your gateway.
+
+```ts
+import { createClient } from "@myorg/api-client";
+
+const api = createClient({
+  baseUrl: "https://gateway.example.com",
+  // bearer token applied via the configured Authorization header
+  getToken: () => localStorage.getItem("access_token") ?? "",
+});
+
+const order = await api.orders.getOrder({ id: "42" });
+```
+</Step>
+
+</Steps>
+
+<Callout type="info">
+  The generated client targets the gateway, so it pairs naturally with
+  [JWT-secured routes](/docs/guides/secure-api-jwt): the `auth` block above sends
+  the bearer token the gateway validates.
+</Callout>
+
+## See also
+
+- [CLI](/docs/cli) — `octopus serve`, `validate`, `gen`, `crd`, and configuration loading.
+- [Auto-discover services with FARP](/docs/guides/farp-auto-discovery) — the `farp` service type generates from live discovery.
+- [Secure an API with JWT](/docs/guides/secure-api-jwt) — securing the routes the client calls.

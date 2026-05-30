@@ -1,0 +1,431 @@
+---
+title: Codegen
+description: octopus gen — turn OpenAPI, AsyncAPI, and FARP service specs into Octopus config fragments, an intermediate JSON schema, and a fully-typed TypeScript client with TanStack Query hooks.
+---
+
+import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+
+# Codegen
+
+`octopus gen` reads a single configuration file — `octopus-gen.yaml` — that lists your
+backend services and their API specs, then produces, in one pass:
+
+1. **Octopus config fragments** — `routes` + `upstreams` YAML (or JSON) you can hand straight to `octopus serve`.
+2. **The Octopus Schema** — an intermediate `*.json` describing every service, scoped operation, and DTO type.
+3. **A TypeScript client SDK** — a namespace-chained, fully-typed REST client built from that schema.
+4. **TanStack Query hooks** — React hooks generated per operation (optional).
+5. **Per-service packages** — standalone re-export packages, one per service (optional).
+
+Everything is driven by the schema in [`GenConfig`](#configuration-octopus-genyaml); each output
+stage is independently optional and only runs if its section is present in the config.
+
+## Running it
+
+```bash
+# uses ./octopus-gen.yaml by default
+octopus gen
+
+# point at a different config file
+octopus gen --config my-gen.yaml
+octopus gen -c my-gen.yaml
+```
+
+`gen` takes a single `-c/--config` path to one gen file (default `octopus-gen.yaml`). This is
+different from [`serve` and `validate`](/docs/cli), which take one or more gateway config paths.
+The gen file itself is *not* gateway config — it is a recipe for producing config and clients.
+
+A typical workflow: generate, then serve the generated fragments alongside your hand-written
+config (the generated directory is just more config files, and `serve` merges directories):
+
+```bash
+octopus gen
+octopus serve -c config.yaml -c ./generated/
+```
+
+<Callout type="info">
+Services are processed independently. If one service's spec can't be fetched or parsed, `octopus
+gen` logs a warning and **skips that service**, continuing with the rest — it does not abort the run.
+</Callout>
+
+## What it consumes
+
+Each entry under `services` names a backend and points at an API spec. The spec is loaded from
+either a local file or an HTTP(S) URL (the source is whichever of `spec` or `endpoint` is set;
+`spec` wins if both are present):
+
+- A source starting with `http://` or `https://` is fetched over HTTP with `Accept: application/json`.
+- Anything else is read from disk. The file is parsed as JSON first, then YAML as a fallback.
+
+Three source types are supported via the `type` field:
+
+| `type` | Parser | Notes |
+|--------|--------|-------|
+| `openapi` | OpenAPI `paths` → routes + operations | The primary, fully-exercised path. |
+| `farp` | Parsed with the same OpenAPI extractor | Point `endpoint`/`spec` at the FARP schema document. |
+| `asyncapi` | AsyncAPI 2.x **and** 3.x `channels` → WebSocket/SSE channels | Protocol auto-detected from `x-protocol`, bindings, or tags. |
+
+<Callout type="warn">
+Any other `type` value is a hard error for that service. The example config ships with `asyncapi`
+and `farp` services commented out — `openapi` is the most-tested path.
+</Callout>
+
+## Configuration (`octopus-gen.yaml`)
+
+The config below is grounded in the fields the generator actually deserializes. Optional fields
+fall back to the defaults shown in the comments.
+
+```yaml
+# Where all generated files are written (default: ./generated)
+output_dir: "./generated"
+
+# ── Octopus config fragments ─────────────────────────────────────────────
+# Omit this whole section to skip config-fragment generation.
+config:
+  format: yaml          # yaml | json (default: yaml)
+  split: true           # true = one file per service; false = single merged file (default: true)
+
+# ── Octopus Schema ───────────────────────────────────────────────────────
+# Omit to skip. The TypeScript client is built from this schema.
+schema:
+  output: "octopus-schema.json"   # relative to output_dir unless it starts with / or .
+
+# ── TypeScript client SDK ────────────────────────────────────────────────
+# Only runs when present AND enabled: true.
+client:
+  enabled: true
+  output_dir: "./generated/client"     # default: ./generated/client
+  package_name: "@myapp/api-client"    # default: @octopus/api-client
+
+  # Standalone per-service re-export packages under <output_dir>/per-service/
+  per_service_packages: true
+
+  # TanStack Query (React Query) hooks
+  tanstack_query:
+    enabled: true
+    version: 5            # 5 -> @tanstack/react-query; 4 -> @tanstack/react-query; <4 -> react-query
+
+  # Default auth wiring baked into the generated fetcher
+  auth:
+    default_strategy: bearer    # bearer | api_key | custom
+    header: "Authorization"
+    prefix: "Bearer "
+
+  # WebSocket client runtime (only emitted if an AsyncAPI service has WS channels)
+  websocket:
+    enabled: true
+    reconnect: true
+    ping_interval: 30
+
+  # SSE client runtime (only emitted if an AsyncAPI service has SSE channels)
+  sse:
+    enabled: true
+    post_support: true
+
+  # Type-name cleanup applied to every type extracted from specs
+  types:
+    # Exact-match renames (checked first)
+    rename:
+      "ComExampleModelsUser": "User"
+      "ComExampleModelsPost": "Post"
+    # Regex transforms, applied in order to whatever survives renaming
+    transforms:
+      - pattern: "^Dto"
+        replace: ""
+      - pattern: "Response$"
+        replace: ""
+      - pattern: "^ComExample"
+        replace: ""
+
+# ── Services ─────────────────────────────────────────────────────────────
+services:
+  - name: twinos
+    type: openapi
+    spec: "http://localhost:7900/openapi.json"   # file path or URL
+    prefix: "/twinos"                             # route prefix in the gateway
+    upstream:
+      host: localhost
+      port: 7900
+      lb_policy: round_robin                      # default: round_robin
+    auth:
+      provider: "internal-jwt"
+      require_roles: [user]
+      # require_scopes: [...]
+      # skip_auth: false
+    skip_paths:                                   # exact match, or trailing-* prefix match
+      - "/health"
+      - "/metrics"
+      - "/openapi.json"
+      - "/swagger/*"
+    # Manual scope overrides: path -> { METHOD -> scope }. Falls back to auto-derivation.
+    scopes:
+      "/api/v1/users":
+        GET: "twinos.users.list"
+        POST: "twinos.users.create"
+      "/api/v1/users/{id}":
+        GET: "twinos.users.get"
+        PUT: "twinos.users.update"
+        DELETE: "twinos.users.delete"
+
+  - name: portal
+    type: openapi
+    spec: "./specs/portal-openapi.yaml"
+    prefix: "/portal"
+    upstream:
+      host: portal.internal
+      port: 8080
+    auth:
+      provider: "internal-jwt"
+    skip_paths:
+      - "/health"
+```
+
+A live, fuller version of this file (with commented AsyncAPI and FARP examples) ships as
+`octopus-gen.example.yaml` at the repo root.
+
+### Service fields
+
+| Field | Required | Purpose |
+|-------|----------|---------|
+| `name` | yes | Used for file names, the upstream name, and the top-level client namespace. |
+| `type` | yes | `openapi`, `asyncapi`, or `farp`. |
+| `spec` | one of `spec`/`endpoint` | File path or URL of the spec/manifest. |
+| `endpoint` | one of `spec`/`endpoint` | Alternative HTTP endpoint for the spec; used if `spec` is unset. |
+| `prefix` | no | Route prefix (e.g. `/twinos`). Becomes the service `base_path` and a `strip_prefix` on routes. |
+| `upstream.host` / `upstream.port` | yes | Backend target. |
+| `upstream.lb_policy` | no | Defaults to `round_robin`. |
+| `auth.provider` | no | Auth provider name attached to generated routes. |
+| `auth.require_roles` / `auth.require_scopes` | no | Role/scope requirements copied onto routes. |
+| `auth.skip_auth` | no | Marks routes as auth-exempt. |
+| `skip_paths` | no | Paths to exclude. `"/foo/*"` matches any path starting with `/foo/`; otherwise exact match. |
+| `scopes` | no | Manual `path → { method → scope }` overrides. |
+
+## What it produces
+
+<Steps>
+
+<Step>
+### Octopus config fragments
+
+When the `config:` section is present, the generator walks each spec's `paths`, skips `skip_paths`
+and any method outside `GET/POST/PUT/DELETE/PATCH/HEAD/OPTIONS`, and emits gateway routes plus an
+upstream definition per service.
+
+With `split: true` (the default) it writes two files **per service**, named from the service name:
+
+```bash
+generated/
+  twinos.routes.yaml      # { routes: [...] }
+  twinos.upstream.yaml    # { upstreams: [...] }
+  portal.routes.yaml
+  portal.upstream.yaml
+```
+
+With `split: false` it writes a single `generated-config.yaml` (or `.json`) containing both merged
+`routes` and `upstreams` arrays. The extension follows `format` (`yaml` or `json`).
+
+A generated route carries the prefixed path, the HTTP method, the upstream name, and — when a
+`prefix` is set — a `strip_prefix`. Auth fields from the service are copied in; if the spec marks an
+operation as having no `security` while the service declares auth, that route gets `skip_auth: true`.
+
+```yaml
+# twinos.routes.yaml (excerpt)
+routes:
+  - path: /twinos/api/v1/users
+    methods:
+      - GET
+    upstream: twinos
+    strip_prefix: /twinos
+    auth_provider: internal-jwt
+    require_roles:
+      - user
+```
+
+```yaml
+# twinos.upstream.yaml
+upstreams:
+  - name: twinos
+    lb_policy: round_robin
+    instances:
+      - id: twinos-1
+        host: localhost
+        port: 7900
+```
+
+These map directly onto the gateway's [routes](/docs/configuration/routes) and
+[upstreams](/docs/configuration/upstreams) config. The split fragments include the per-route
+`skip_prefix`/`require_scopes`/`skip_auth` fields; the merged file emits a slightly leaner route
+shape (path, methods, upstream, prefix, provider, roles).
+</Step>
+
+<Step>
+### The Octopus Schema
+
+When the `schema:` section is present, the generator writes a single intermediate JSON document
+(default `octopus-schema.json`, under `output_dir` unless the path is absolute or starts with `.`).
+This is the contract the TypeScript client is generated from — and it is also built in-memory when
+generating the client, so the client works even if you omit the standalone `schema:` output.
+
+It contains:
+
+- A top-level `$schema`, `version`, and `generated_at` (Unix seconds).
+- A `services` map: per service, the `base_path`, `upstream` (host/port), optional `auth`
+  (`strategy: bearer`, provider, roles, scopes), an `operations` map keyed by **scope**, and a
+  `channels` map for WS/SSE.
+- A `types` map: every DTO extracted from the spec's `components.schemas`, cleaned for output
+  (`x-*` extensions, `xml`, and `example` are stripped; `$ref`s are rewritten to `#/types/<Name>`).
+
+Each operation records its method, path, summary, tags, `params` (split into `path`/`query`/`header`),
+and `request_body`/`response` type references. Array responses (e.g. an OpenAPI array of `$ref: User`)
+are recorded as `#/types/User[]`.
+</Step>
+
+<Step>
+### Scopes
+
+Every operation is assigned a dot-separated **scope** like `twinos.users.list`. The scope determines
+where the operation lands in the client's namespace chain. Scopes resolve in priority order:
+
+1. **Manual mapping** from the service's `scopes:` block (exact `path` + `METHOD`).
+2. **`operationId`** from the spec — `listUsers` → `twinos.users.list`, `users_list` → `twinos.users.list`.
+3. **Path + method heuristics** — the resource segments of the path plus a verb derived from the method.
+
+The path heuristic skips `api` and version segments (`v1`, `v2`, …) and path parameters, then chooses a
+verb based on whether the path ends in a parameter:
+
+| Method | Collection (e.g. `/users`) | Single resource (e.g. `/users/{id}`) |
+|--------|----------------------------|--------------------------------------|
+| GET | `list` | `get` |
+| POST | `create` | `create` |
+| PUT | `replaceAll` | `update` |
+| PATCH | `updateAll` | `patch` |
+| DELETE | `deleteAll` | `delete` |
+
+So `GET /api/v1/users` → `twinos.users.list`, `GET /api/v1/users/{id}` → `twinos.users.get`, and
+`GET /api/v1/users/{userId}/posts` → `twinos.users.posts.list`. Use the `scopes:` block to override
+any of these explicitly.
+</Step>
+
+<Step>
+### TypeScript client SDK
+
+When `client.enabled: true`, the generator writes a TypeScript package into `client.output_dir`.
+The client is **namespace-chained**: the scope path becomes the call path. `twinos.users.list`
+becomes `client.twinos.users.list()`.
+
+```ts
+import { createClient } from '@myapp/api-client';
+
+const client = createClient({
+  baseURL: 'https://gateway.example.com',
+  auth: { token: process.env.API_TOKEN },
+});
+
+// Namespace chain mirrors the scope: twinos.users.list
+const users = await client.twinos.users.list();
+
+// Path/query/body params are passed as a typed options object
+const user = await client.twinos.users.get({ path: { id: '123' } });
+const created = await client.twinos.users.create({ body: { name: 'Ada' } });
+```
+
+The emitted package layout is:
+
+```bash
+generated/client/
+  package.json                  # name, exports, TanStack peerDependency
+  index.ts                      # createClient() + per-service factories
+  types.ts                      # generated DTO types
+  core/
+    types.ts                    # ClientConfig, AuthConfig, RequestConfig, ApiError
+    fetcher.ts                  # the request() implementation (auth, timeout, interceptors)
+    ws.ts                       # WebSocket runtime (only if a service has WS channels)
+    sse.ts                      # SSE runtime (only if a service has SSE channels)
+  services/
+    twinos/                     # one folder per service: index.ts + per-namespace files
+    portal/
+  tanstack/                     # only if tanstack_query.enabled
+    twinos.hooks.ts
+    portal.hooks.ts
+    index.ts
+  per-service/                  # only if per_service_packages: true
+    twinos/{package.json,index.ts}
+    portal/{package.json,index.ts}
+```
+
+`ClientConfig` (from `core/types.ts`) takes `baseURL`, default `auth`, `headers`, `cookies`,
+`credentials`, a `timeout`, an optional custom `fetch`, and `onRequest`/`onResponse` interceptor
+arrays. Each call accepts the same per-request overrides plus `signal`, `responseType`, and
+`timeout`. Auth defaults (header name, prefix, strategy) come from `client.auth`.
+
+The generated `package.json` is marked `private` with `version: "0.0.0"`, `main`/`types` pointing
+at `index.ts`, an `exports` map (`.`, `./types`, and `./tanstack` when hooks are enabled), and a
+`@tanstack/react-query` peer dependency derived from `tanstack_query.version`. It is meant to be
+consumed in-tree by a TypeScript toolchain, not published as-is.
+</Step>
+
+<Step>
+### TanStack Query hooks
+
+With `client.tanstack_query.enabled`, the generator emits a hook per operation under `tanstack/`,
+one file per service plus a barrel `index.ts`. Read operations (`GET`) become `useQuery` hooks;
+write operations (`POST/PUT/DELETE/PATCH`) become `…Mutation` hooks built on `useMutation`. Hook
+names are derived from the service name and the relative scope (e.g. `twinos.users.list` →
+`useTwinosUsersList`), and the full scope is used as the query key.
+
+```ts
+import { useTwinosUsersList } from '@myapp/api-client/tanstack';
+
+function UserList(config) {
+  const { data, isLoading } = useTwinosUsersList(config);
+  // ...
+}
+```
+
+`version: 5` and `version: 4` both import from `@tanstack/react-query`; any lower value imports from
+the legacy `react-query` package.
+</Step>
+
+<Step>
+### Per-service packages
+
+With `client.per_service_packages: true`, the generator also emits a standalone re-export package
+per service under `per-service/<service>/`. Each is a small `package.json` (named
+`<package_name-without-/api-client>-<service>`, `private`, `0.0.0`) plus an `index.ts` that
+re-exports that service's factory (e.g. `createTwinosService` as `createTwinosClient`) and the shared
+types from the main package. This lets a frontend depend on just the slice of the API it uses.
+</Step>
+
+<Step>
+### WebSocket & SSE clients (AsyncAPI)
+
+For `asyncapi` services, channels become typed real-time endpoints. WebSocket channels are mapped to
+`/ws<channel>` and SSE channels to `/events<channel>`; protocol is detected from the `x-protocol`
+extension, `ws`/`http` bindings, or SSE-flavored tags. The schema records each channel's send/receive
+message types, and the client emits a typed `ws.ts`/`sse.ts` runtime plus channel methods on the
+service namespace. These runtimes are only written when a service actually defines channels of that
+kind, gated additionally by `client.websocket.enabled` / `client.sse.enabled`.
+</Step>
+
+</Steps>
+
+## Notes and honest limits
+
+- **Per-service skipping is silent-ish.** A failing service is logged at `warn` and skipped; the
+  command still exits successfully. Check the logs if an expected service is missing from the output.
+- **`openapi` is the most-tested type.** `farp` reuses the OpenAPI extractor, and `asyncapi`
+  (2.x and 3.x) drives the WS/SSE paths; the example config ships those two commented out.
+- **Output stages are independent.** Drop the `config:`, `schema:`, or `client:` section to skip that
+  stage. The client always builds its schema in-memory, so a standalone `schema:` output is optional.
+- **The generated package is not publish-ready.** It is emitted `private` at version `0.0.0` with
+  `.ts` entry points — wire it into your build, don't `npm publish` it directly.
+
+## Related
+
+<Cards>
+  <Card title="CLI overview" description="serve, validate, gen, crd, version." href="/docs/cli" />
+  <Card title="Routes config" description="The route shape generated fragments produce." href="/docs/configuration/routes" />
+  <Card title="Upstreams config" description="Where generated upstream blocks plug in." href="/docs/configuration/upstreams" />
+  <Card title="Auth config" description="Providers, roles, and scopes on routes." href="/docs/configuration/auth" />
+</Cards>

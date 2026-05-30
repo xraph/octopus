@@ -3,9 +3,22 @@ title: Health Checks
 description: Monitor and manage upstream health
 ---
 
+import { Callout } from 'fumadocs-ui/components/callout';
+
 # Health Checks
 
-Octopus monitors upstream health and automatically removes unhealthy instances from rotation.
+Octopus can monitor upstream health and remove unhealthy instances from rotation.
+Health checks are configured per upstream under `health_check`. Required fields
+are `type` (`http`, `tcp`, or `grpc`), `interval`, and `timeout`.
+
+<Callout type="warn" title="Wired on the operator path">
+  Active health checking is wired into the live runtime on the
+  Kubernetes/operator-driven path. For upstreams registered from a **static
+  config file**, the `health_check` block is parsed and validated but not yet
+  enforced. See [Upstreams](/docs/configuration/upstreams). Inside Kubernetes,
+  endpoint readiness from EndpointSlice discovery also drives instance health —
+  see [Kubernetes discovery](/docs/kubernetes/discovery).
+</Callout>
 
 ## Types
 
@@ -14,18 +27,17 @@ Octopus monitors upstream health and automatically removes unhealthy instances f
 ```yaml
 upstreams:
   - name: api-service
-    instances:
-      - address: api-1
-        port: 8080
     health_check:
       type: http
-      path: /health
-      method: GET
+      path: /healthz
       interval: 10s
-      timeout: 5s
+      timeout: 2s
       healthy_threshold: 2
       unhealthy_threshold: 3
-      expected_status: [200, 204]
+    instances:
+      - id: api-1
+        host: 10.0.0.11
+        port: 8080
 ```
 
 ### TCP Health Check
@@ -33,13 +45,14 @@ upstreams:
 ```yaml
 upstreams:
   - name: redis
-    instances:
-      - address: redis-1
-        port: 6379
     health_check:
       type: tcp
       interval: 5s
       timeout: 3s
+    instances:
+      - id: redis-1
+        host: 10.0.0.41
+        port: 6379
 ```
 
 ### gRPC Health Check
@@ -47,38 +60,22 @@ upstreams:
 ```yaml
 upstreams:
   - name: grpc-service
-    instances:
-      - address: grpc-1
-        port: 50051
     health_check:
       type: grpc
-      service: grpc.health.v1.Health
       interval: 10s
+      timeout: 2s
+    instances:
+      - id: grpc-1
+        host: 10.0.0.51
+        port: 50051
 ```
 
-## Active vs Passive
+## Thresholds
 
-### Active Health Checks
-
-Gateway actively polls instances:
-
-```yaml
-health_check:
-  type: http
-  path: /health
-  interval: 10s
-```
-
-### Passive Health Detection
-
-Gateway monitors request success/failure:
-
-```yaml
-passive_health_check:
-  enabled: true
-  failure_threshold: 5
-  window: 60s
-```
+`healthy_threshold` (default `2`) is the number of consecutive successes before
+an instance is marked healthy; `unhealthy_threshold` (default `3`) is the number
+of consecutive failures before it is marked unhealthy. The gateway actively polls
+each instance every `interval`, failing a check after `timeout`.
 
 ## Health States
 

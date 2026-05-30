@@ -43,7 +43,8 @@ Routes are protocol-agnostic. An HTTP route is just a path pointed at an upstrea
 upstreams:
   - name: api-service
     instances:
-      - address: 127.0.0.1
+      - id: api-1
+        host: 127.0.0.1
         port: 8080
 
 routes:
