@@ -235,7 +235,53 @@ pub struct GRPCRouteSpec {
     pub rules: Vec<GrpcRouteRule>,
 }
 
-/// `Gateway` spec (minimal — listeners are honored in a later phase).
+/// A reference to a Secret holding a TLS certificate (a Gateway listener's
+/// `tls.certificateRefs[]`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CertificateRef {
+    /// Kind (defaults to `Secret`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// Secret name.
+    pub name: String,
+    /// Secret namespace (defaults to the Gateway's namespace; cross-namespace
+    /// requires a ReferenceGrant).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+}
+
+/// A listener's TLS configuration.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GatewayTls {
+    /// `Terminate` (default) or `Passthrough`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    /// Secrets providing the listener's certificate(s).
+    #[serde(default)]
+    pub certificate_refs: Vec<CertificateRef>,
+}
+
+/// A Gateway listener.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GatewayListener {
+    /// Listener name.
+    pub name: String,
+    /// Hostname this listener serves (SNI).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hostname: Option<String>,
+    /// Listen port.
+    pub port: u16,
+    /// `HTTP` | `HTTPS` | `TLS` | …
+    pub protocol: String,
+    /// TLS configuration (for HTTPS/TLS listeners).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tls: Option<GatewayTls>,
+}
+
+/// `Gateway` spec.
 #[derive(CustomResource, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[kube(
     group = "gateway.networking.k8s.io",
@@ -247,6 +293,9 @@ pub struct GRPCRouteSpec {
 pub struct GatewaySpec {
     /// The GatewayClass this gateway belongs to.
     pub gateway_class_name: String,
+    /// Listeners (HTTP/HTTPS/TLS).
+    #[serde(default)]
+    pub listeners: Vec<GatewayListener>,
 }
 
 /// `GatewayClass` spec (cluster-scoped).

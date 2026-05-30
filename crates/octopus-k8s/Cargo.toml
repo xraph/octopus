@@ -11,6 +11,7 @@ description = "Kubernetes operator: Gateway API + Octopus CRDs for the Octopus A
 [dependencies]
 octopus-core = { path = "../octopus-core" }
 octopus-router = { path = "../octopus-router" }
+octopus-tls = { path = "../octopus-tls" }
 
 # Kubernetes
 kube = { workspace = true }

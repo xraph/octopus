@@ -25,6 +25,8 @@ pub mod error;
 pub mod gateway_api;
 pub mod ir;
 pub mod policy;
+pub mod refgrant;
+pub mod tls;
 pub mod translate;
 
 pub use error::{K8sError, Result};

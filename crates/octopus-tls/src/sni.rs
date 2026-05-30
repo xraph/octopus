@@ -4,7 +4,7 @@
 //! TLS Secret — by selecting the certificate that matches the SNI server name.
 
 use octopus_core::{Error, Result};
-use rustls::server::{ClientHello, ResolvesServerCert};
+use rustls::server::{ClientHello, ResolvesServerCert, ServerConfig};
 use rustls::sign::CertifiedKey;
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -50,6 +50,17 @@ impl SniCertResolver {
     /// Whether no host-specific certificates are tracked.
     pub fn is_empty(&self) -> bool {
         self.by_host.is_empty()
+    }
+
+    /// Consume the resolver into a rustls [`ServerConfig`] that performs SNI
+    /// certificate selection, with HTTP/2 + HTTP/1.1 ALPN and no client auth.
+    pub fn into_server_config(self) -> ServerConfig {
+        crate::ensure_crypto_provider();
+        let mut config = ServerConfig::builder()
+            .with_no_client_auth()
+            .with_cert_resolver(Arc::new(self));
+        config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+        config
     }
 
     /// Resolve the certificate for an SNI server name (testable core of
@@ -154,5 +165,13 @@ MZJwLhzCrGHJXk0exP7K73agVp3RiDz7w/rmMBCmhSCppD+vpl7vMnZ9
     fn add_rejects_invalid_pem() {
         let mut r = SniCertResolver::new();
         assert!(r.add("x", b"garbage", b"garbage").is_err());
+    }
+
+    #[test]
+    fn into_server_config_sets_alpn() {
+        let mut r = SniCertResolver::new();
+        r.set_default(CERT.as_bytes(), KEY.as_bytes()).unwrap();
+        let config = r.into_server_config();
+        assert!(config.alpn_protocols.contains(&b"h2".to_vec()));
     }
 }
