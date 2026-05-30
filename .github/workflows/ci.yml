@@ -120,6 +120,15 @@ jobs:
       - name: Run tests
         run: make test
 
+      - name: Check vendored Helm CRDs are up to date
+        if: matrix.os == 'ubuntu-latest' && matrix.rust == 'stable'
+        run: |
+          cargo run -q --all-features --bin octopus -- crd > /tmp/octopus-crds.yaml
+          if ! diff -u deploy/helm/octopus/crds/octopus-crds.yaml /tmp/octopus-crds.yaml; then
+            echo "::error::Vendored Helm CRDs are stale. Regenerate with: octopus crd > deploy/helm/octopus/crds/octopus-crds.yaml"
+            exit 1
+          fi
+
       - name: Build examples
         run: cargo build --examples --all-features
 

@@ -1,0 +1,71 @@
+name: Helm Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Chart version to publish (e.g. 1.2.3, without a leading v).'
+        required: true
+
+env:
+  CHART_DIR: deploy/helm/octopus
+  OCI_REGISTRY: oci://ghcr.io/${{ github.repository_owner }}/charts
+
+jobs:
+  helm:
+    name: Package & Publish Helm chart
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # attach the packaged chart to the GitHub release
+      packages: write # push the chart as an OCI artifact to GHCR
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Resolve chart version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Publishing chart version ${VERSION}"
+
+      - name: Lint chart
+        run: helm lint "$CHART_DIR"
+
+      - name: Package chart
+        id: pkg
+        run: |
+          mkdir -p dist
+          helm package "$CHART_DIR" \
+            --version "${{ steps.ver.outputs.version }}" \
+            --app-version "${{ steps.ver.outputs.version }}" \
+            --destination dist
+          echo "chart=dist/octopus-${{ steps.ver.outputs.version }}.tgz" >> "$GITHUB_OUTPUT"
+
+      - name: Stage CRDs as a release asset
+        run: cp "$CHART_DIR/crds/octopus-crds.yaml" dist/octopus-crds.yaml
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Push chart to GHCR (OCI)
+        run: helm push "${{ steps.pkg.outputs.chart }}" "$OCI_REGISTRY"
+
+      - name: Attach chart + CRDs to the GitHub release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            ${{ steps.pkg.outputs.chart }}
+            dist/octopus-crds.yaml
