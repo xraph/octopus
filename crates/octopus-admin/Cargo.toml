@@ -8,6 +8,12 @@ license.workspace = true
 repository.workspace = true
 description = "Admin dashboard for Octopus API Gateway (Askama + HTMX + Alpine.js)"
 
+[features]
+default = []
+# Enable live Kubernetes CRD views (OctopusGateway/Route/Policy/Upstream).
+# Off by default to keep the standalone build free of the kube client stack.
+kubernetes = ["dep:octopus-k8s", "dep:kube", "dep:k8s-openapi"]
+
 [dependencies]
 # Core Octopus crates
 octopus-core = { path = "../octopus-core" }
@@ -19,6 +25,11 @@ octopus-plugin-runtime = { path = "../octopus-plugin-runtime" }
 octopus-metrics = { path = "../octopus-metrics" }
 octopus-ui = { path = "../octopus-ui" }
 octopus-farp = { path = "../octopus-farp" }
+
+# Kubernetes CRD views (optional, behind the `kubernetes` feature)
+octopus-k8s = { path = "../octopus-k8s", optional = true }
+kube = { workspace = true, optional = true }
+k8s-openapi = { workspace = true, optional = true }
 
 # Web framework
 axum.workspace = true
@@ -34,6 +45,13 @@ askama_axum.workspace = true
 # Serialization
 serde.workspace = true
 serde_json.workspace = true
+
+# Authentication (admin session cookies)
+jsonwebtoken.workspace = true
+sha2.workspace = true
+
+# TLS certificate inspection
+x509-parser = "0.16"
 
 # Time
 chrono.workspace = true

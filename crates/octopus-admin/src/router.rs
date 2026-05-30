@@ -27,6 +27,19 @@ use crate::octopus_ui_handlers_pure::{
     octopus_ui_dashboard_handler, octopus_ui_health_handler, octopus_ui_plugins_handler,
     octopus_ui_routes_handler,
 };
+use crate::auth::{api_auth_login_handler, api_auth_logout_handler, api_auth_me_handler};
+use crate::k8s_handlers::{
+    api_k8s_gateways_handler, api_k8s_policies_handler, api_k8s_routes_handler,
+    api_k8s_status_handler, api_k8s_upstreams_handler,
+};
+use crate::tls_handlers::{
+    api_tls_cert_detail_handler, api_tls_cert_upload_handler, api_tls_certs_list_handler,
+    api_tls_reload_handler,
+};
+use crate::upstream_handlers::{
+    api_upstream_create_handler, api_upstream_delete_handler, api_upstream_get_handler,
+    api_upstream_update_handler,
+};
 
 /// Dashboard router builder
 pub struct DashboardRouter;
@@ -93,10 +106,29 @@ impl DashboardRouter {
             .route("/admin/api/config/:key", put(api_config_update_handler))
             // ===== Upstreams, Services & Circuits API =====
             .route("/admin/api/upstreams", get(api_upstreams_list_handler))
+            .route("/admin/api/upstreams", post(api_upstream_create_handler))
+            .route("/admin/api/upstreams/:name", get(api_upstream_get_handler))
+            .route("/admin/api/upstreams/:name", put(api_upstream_update_handler))
+            .route("/admin/api/upstreams/:name", delete(api_upstream_delete_handler))
             .route("/admin/api/services", get(api_services_list_handler))
             .route("/admin/api/circuits", get(api_circuits_list_handler))
             .route("/admin/api/health/checks", get(api_health_checks_handler))
             .route("/admin/api/openapi.json", get(api_openapi_handler))
+            // ===== TLS / Certificates API =====
+            .route("/admin/api/tls/certs", get(api_tls_certs_list_handler))
+            .route("/admin/api/tls/certs", post(api_tls_cert_upload_handler))
+            .route("/admin/api/tls/certs/:name", get(api_tls_cert_detail_handler))
+            .route("/admin/api/tls/reload", post(api_tls_reload_handler))
+            // ===== Kubernetes CRD views API =====
+            .route("/admin/api/k8s/gateways", get(api_k8s_gateways_handler))
+            .route("/admin/api/k8s/routes", get(api_k8s_routes_handler))
+            .route("/admin/api/k8s/policies", get(api_k8s_policies_handler))
+            .route("/admin/api/k8s/upstreams", get(api_k8s_upstreams_handler))
+            .route("/admin/api/k8s/status", get(api_k8s_status_handler))
+            // ===== Admin authentication / session API =====
+            .route("/admin/api/auth/login", post(api_auth_login_handler))
+            .route("/admin/api/auth/logout", post(api_auth_logout_handler))
+            .route("/admin/api/auth/me", get(api_auth_me_handler))
             // ===== FARP (Federated API Registry Protocol) API =====
             .route("/admin/api/farp/services", get(api_farp_services_handler))
             .route(
@@ -155,6 +187,12 @@ impl DashboardRouter {
                     .precompressed_gzip()
                     .precompressed_br(),
             )
+            // Enforce the admin session on protected endpoints. A pass-through
+            // when `state.admin_auth` is `None` (auth disabled).
+            .layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                crate::auth::require_admin_session,
+            ))
             .with_state(state)
     }
 }

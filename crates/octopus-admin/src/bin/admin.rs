@@ -91,11 +91,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // Ensure a live router exists even without a config file, so route/upstream
+    // management works in standalone mode.
+    if state.router.is_none() {
+        state.router = Some(Arc::new(octopus_router::Router::new()));
+    }
+
     // Create metrics collector for the standalone instance
     state.metrics = Some(Arc::new(octopus_metrics::MetricsCollector::new()));
     state.activity_log = Some(Arc::new(octopus_metrics::ActivityLog::default()));
     state.health_tracker = Some(Arc::new(octopus_health::HealthTracker::default_config()));
     state.circuit_breaker = Some(Arc::new(octopus_health::CircuitBreaker::default_config()));
+
+    // Optional admin authentication. Enabled only when OCTOPUS_ADMIN_PASSWORD is
+    // set; otherwise the dashboard remains open (historical behavior).
+    if let Some(auth) = octopus_admin::auth::AdminAuth::from_env() {
+        tracing::info!("Admin authentication enabled — login required");
+        state.admin_auth = Some(Arc::new(auth));
+    } else {
+        tracing::warn!(
+            "Admin authentication is DISABLED — set OCTOPUS_ADMIN_PASSWORD to require login"
+        );
+    }
 
     let app_state = Arc::new(state);
     let app = DashboardRouter::build(app_state);

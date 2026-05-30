@@ -283,3 +283,156 @@ impl Default for DashboardStats {
         }
     }
 }
+
+// ============================================================================
+// Upstream CRUD payloads
+// ============================================================================
+
+/// Upstream cluster create/update payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamConfig {
+    /// Cluster name (unique key).
+    pub name: String,
+    /// Load-balancing strategy: `round_robin`, `least_connections`,
+    /// `weighted_round_robin`, `random`, or `ip_hash`. Defaults to round-robin.
+    #[serde(default)]
+    pub strategy: Option<String>,
+    /// Backend instances.
+    #[serde(default)]
+    pub instances: Vec<UpstreamInstanceConfig>,
+}
+
+/// A single upstream instance in a create/update payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamInstanceConfig {
+    /// Stable instance id (generated when omitted).
+    #[serde(default)]
+    pub id: Option<String>,
+    /// Host or IP address.
+    pub address: String,
+    /// Port.
+    pub port: u16,
+    /// Relative weight for weighted strategies.
+    #[serde(default)]
+    pub weight: Option<u32>,
+}
+
+// ============================================================================
+// TLS certificate inspection
+// ============================================================================
+
+/// A TLS certificate as surfaced to the admin dashboard.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TlsCertInfo {
+    /// Logical name (the configured cert file name or SNI host).
+    pub name: String,
+    /// Certificate file path on disk (if file-backed).
+    pub cert_file: Option<String>,
+    /// Private key file path on disk (if file-backed).
+    pub key_file: Option<String>,
+    /// SNI hostnames this certificate serves (from SANs).
+    pub sni_hosts: Vec<String>,
+    /// Subject common name.
+    pub subject_cn: Option<String>,
+    /// Subject alternative names (DNS).
+    pub sans: Vec<String>,
+    /// Issuer distinguished name.
+    pub issuer: Option<String>,
+    /// Not-before (RFC3339).
+    pub not_before: Option<String>,
+    /// Not-after / expiry (RFC3339).
+    pub not_after: Option<String>,
+    /// Days until expiry (negative when expired).
+    pub days_until_expiry: Option<i64>,
+    /// `valid`, `expiring` (< 30 days), `expired`, or `unknown`.
+    pub status: String,
+    /// Minimum negotiated TLS version, when known from config.
+    pub min_tls_version: Option<String>,
+    /// Whether mutual TLS (client certs) is required.
+    pub require_client_cert: bool,
+    /// Where this entry came from: `config` | `operator` | `manual`.
+    pub source: String,
+}
+
+/// Payload for uploading a PEM certificate pair (best-effort; persisted only
+/// when a writable certificate path is configured).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TlsCertUpload {
+    /// Logical name / primary hostname.
+    pub name: String,
+    /// PEM-encoded certificate chain.
+    pub cert_pem: String,
+    /// PEM-encoded private key.
+    pub key_pem: String,
+}
+
+// ============================================================================
+// Kubernetes CRD views
+// ============================================================================
+
+/// A thin, serde-friendly summary of a Kubernetes custom resource.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct K8sResourceSummary {
+    /// Resource name.
+    pub name: String,
+    /// Namespace (None for cluster-scoped).
+    pub namespace: Option<String>,
+    /// Kind (`OctopusGateway`, `OctopusRoute`, `OctopusPolicy`, `OctopusUpstream`).
+    pub kind: String,
+    /// The `.spec` payload.
+    pub spec: serde_json::Value,
+    /// Creation timestamp (RFC3339), when available.
+    pub created_at: Option<String>,
+}
+
+/// Kubernetes operator connectivity status.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct K8sStatus {
+    /// Whether the admin process could reach a cluster.
+    pub connected: bool,
+    /// Whether the crate was compiled with the `kubernetes` feature.
+    pub feature_enabled: bool,
+    /// Human-readable detail (error message or context name).
+    pub detail: Option<String>,
+    /// Counts per CRD kind.
+    pub counts: std::collections::HashMap<String, usize>,
+}
+
+// ============================================================================
+// Admin authentication / session
+// ============================================================================
+
+/// Login request body.
+#[derive(Debug, Clone, Deserialize)]
+pub struct LoginRequest {
+    /// Username.
+    pub username: String,
+    /// Password.
+    pub password: String,
+}
+
+/// Login response body.
+#[derive(Debug, Clone, Serialize)]
+pub struct LoginResponse {
+    /// Whether the login succeeded.
+    pub success: bool,
+    /// Bearer token (also set as an HttpOnly cookie). Present on success.
+    pub token: Option<String>,
+    /// Token expiry (unix seconds, as string).
+    pub expires_at: Option<String>,
+    /// Optional human-readable message.
+    pub message: Option<String>,
+}
+
+/// Current-session response body (`GET /admin/api/auth/me`).
+#[derive(Debug, Clone, Serialize)]
+pub struct MeResponse {
+    /// Whether the caller holds a valid session (always true when auth is disabled).
+    pub authenticated: bool,
+    /// Whether the dashboard requires authentication at all.
+    pub auth_required: bool,
+    /// Authenticated username.
+    pub username: Option<String>,
+    /// Role (currently always `admin`).
+    pub role: Option<String>,
+}

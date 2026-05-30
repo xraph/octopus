@@ -41,13 +41,17 @@
 //! Uses Askama for templates, HTMX for dynamic content, and Alpine.js for interactions.
 
 pub mod api_handlers;
+pub mod auth;
 pub mod handlers;
+pub mod k8s_handlers;
 pub mod models;
 pub mod octopus_ui_handlers;
 pub mod octopus_ui_handlers_pure;
 pub mod plugin;
 pub mod router;
+pub mod tls_handlers;
 pub mod ui_components;
+pub mod upstream_handlers;
 pub mod websocket;
 
 pub use api_handlers::*;

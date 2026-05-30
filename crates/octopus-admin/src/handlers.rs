@@ -37,6 +37,8 @@ pub struct AppState {
     pub farp_registry: Option<Arc<octopus_farp::SchemaRegistry>>,
     /// FARP schema federation for merged `OpenAPI` output
     pub farp_federation: Option<Arc<octopus_farp::SchemaFederation>>,
+    /// Optional admin authentication (login/session). `None` = no auth enforced.
+    pub admin_auth: Option<Arc<crate::auth::AdminAuth>>,
     /// Server start time for uptime calculation
     pub start_time: std::time::Instant,
 }
@@ -56,6 +58,7 @@ impl AppState {
             config: None,
             farp_registry: None,
             farp_federation: None,
+            admin_auth: None,
             start_time: std::time::Instant::now(),
         }
     }
@@ -120,6 +123,13 @@ impl AppState {
     #[must_use]
     pub fn with_farp_federation(mut self, f: Arc<octopus_farp::SchemaFederation>) -> Self {
         self.farp_federation = Some(f);
+        self
+    }
+
+    /// Builder: set the admin authentication backend (enables the login gate).
+    #[must_use]
+    pub fn with_admin_auth(mut self, a: Arc<crate::auth::AdminAuth>) -> Self {
+        self.admin_auth = Some(a);
         self
     }
 }
