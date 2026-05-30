@@ -42,6 +42,11 @@ jobs:
       - name: Cache build artifacts
         uses: Swatinem/rust-cache@v2
 
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev protobuf-compiler
+
       - name: Check formatting
         run: make fmt
 
@@ -103,7 +108,11 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libssl-dev
+          sudo apt-get install -y pkg-config libssl-dev protobuf-compiler
+
+      - name: Install system dependencies (macOS)
+        if: matrix.os == 'macos-latest'
+        run: brew install protobuf
 
       - name: Build
         run: make build
@@ -127,6 +136,11 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev protobuf-compiler
 
       - name: Install tarpaulin
         run: cargo install cargo-tarpaulin
@@ -158,11 +172,16 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev protobuf-compiler
+
       - name: Cache build artifacts
         uses: Swatinem/rust-cache@v2
 
       - name: Run benchmarks
-        run: make bench
+        run: make bench-criterion
 
       - name: Store benchmark results
         uses: actions/upload-artifact@v4
@@ -203,14 +222,22 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      - name: Install musl tools (Linux musl)
-        if: matrix.target == 'x86_64-unknown-linux-musl'
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y musl-tools
+          sudo apt-get install -y pkg-config libssl-dev protobuf-compiler
+
+      - name: Install system dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install protobuf
+
+      - name: Install musl tools (Linux musl)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: sudo apt-get install -y musl-tools
 
       - name: Build release binary
-        run: cargo build --release --target ${{ matrix.target }} --all-features
+        run: cargo build --release --target ${{ matrix.target }} --bin octopus
 
       - name: Strip binary (Linux)
         if: runner.os == 'Linux'
@@ -285,6 +312,11 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev protobuf-compiler
 
       - name: Cache build artifacts
         uses: Swatinem/rust-cache@v2

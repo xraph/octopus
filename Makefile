@@ -462,9 +462,13 @@ full: clean release test lint docs docker ## Full build pipeline
 ##@ 📊 Benchmarks
 # ==============================================================================
 
-.PHONY: bench bench-octopus bench-bastion bench-compare
+.PHONY: bench bench-criterion bench-octopus bench-bastion bench-compare
 
 bench: bench-compare ## Run all benchmarks (Octopus vs Bastion)
+
+bench-criterion: ## Run Criterion micro-benchmarks (CI, no external deps)
+	@echo "$(COLOR_BLUE)Running Criterion benchmarks...$(COLOR_RESET)"
+	$(CARGO) bench $(CARGO_WORKSPACE) $(CARGO_ALL_FEATURES)
 
 bench-octopus: ## Benchmark Octopus only
 	@./benchmarks/run.sh octopus
