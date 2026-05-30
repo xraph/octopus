@@ -626,10 +626,10 @@ pub async fn api_config_update_handler(
 /// Get system information
 /// GET /admin/api/system/info
 pub async fn api_system_info_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let uptime_seconds = state
-        .metrics
-        .as_ref()
-        .map_or_else(|| state.start_time.elapsed().as_secs(), |m| m.uptime_seconds());
+    let uptime_seconds = state.metrics.as_ref().map_or_else(
+        || state.start_time.elapsed().as_secs(),
+        |m| m.uptime_seconds(),
+    );
 
     let (_, _, total_memory, _) = get_system_metrics();
 
