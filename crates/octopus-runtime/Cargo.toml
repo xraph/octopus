@@ -17,6 +17,7 @@ octopus-admin = { path = "../octopus-admin" }
 octopus-health = { path = "../octopus-health" }
 octopus-farp = { path = "../octopus-farp" }
 octopus-discovery = { path = "../octopus-discovery", optional = true }
+octopus-k8s = { path = "../octopus-k8s", optional = true }
 octopus-metrics = { path = "../octopus-metrics" }
 octopus-compression = { path = "../octopus-compression" }
 octopus-tls = { path = "../octopus-tls" }
@@ -73,4 +74,4 @@ default = ["mdns"]
 mdns = ["octopus-discovery", "octopus-discovery/mdns"]
 dns = ["octopus-discovery", "octopus-discovery/dns"]
 consul = ["octopus-discovery", "octopus-discovery/consul"]
-kubernetes = ["octopus-discovery", "octopus-discovery/kubernetes"]
+kubernetes = ["octopus-discovery", "octopus-discovery/kubernetes", "octopus-k8s"]

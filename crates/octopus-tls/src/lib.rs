@@ -33,7 +33,10 @@ pub use mtls::{MtlsConfig, TargetTlsConfig};
 /// builders cannot choose one automatically and panic. Installing a default once
 /// removes that ambiguity; the call is idempotent and a no-op if a provider
 /// already exists.
-pub(crate) fn ensure_crypto_provider() {
+///
+/// Call this before constructing any rustls client/server (TLS acceptor, the
+/// Kubernetes client, etc.).
+pub fn ensure_crypto_provider() {
     use std::sync::Once;
     static INIT: Once = Once::new();
     INIT.call_once(|| {

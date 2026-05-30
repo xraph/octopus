@@ -18,9 +18,12 @@
 #![warn(missing_docs, rust_2018_idioms)]
 
 pub mod apply;
+pub mod controller;
 pub mod crd;
 pub mod crds;
 pub mod error;
+pub mod gateway_api;
 pub mod ir;
+pub mod translate;
 
 pub use error::{K8sError, Result};

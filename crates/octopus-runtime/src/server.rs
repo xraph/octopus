@@ -830,6 +830,12 @@ impl ServerBuilder {
             "Server components initialized"
         );
 
+        // Start the Kubernetes operator (Gateway API + Octopus CRDs) if enabled.
+        #[cfg(feature = "kubernetes")]
+        if config.kubernetes.enabled {
+            Self::initialize_k8s_operator(&config, Arc::clone(&router)).await;
+        }
+
         // Configuration is fully loaded and applied.
         lifecycle.mark_config_loaded();
 
@@ -1043,6 +1049,85 @@ impl ServerBuilder {
             // No watcher will run to flip the readiness flag, so mark discovery
             // as synced now — otherwise readiness would be blocked forever.
             discovery_synced.store(true, Ordering::Release);
+        }
+    }
+
+    /// Convert static config routes/upstreams into the operator's intermediate
+    /// representation so they survive merges once the operator owns the router.
+    #[cfg(feature = "kubernetes")]
+    fn config_to_ir(
+        config: &Config,
+    ) -> (
+        Vec<octopus_k8s::ir::IntermediateRoute>,
+        Vec<octopus_core::UpstreamCluster>,
+    ) {
+        use octopus_k8s::ir::{IntermediateRoute, RateLimit, RouteSource};
+
+        let mut routes = Vec::new();
+        for rc in &config.routes {
+            for method_str in &rc.methods {
+                let Ok(method) = method_str.parse::<http::Method>() else {
+                    continue;
+                };
+                let mut r =
+                    IntermediateRoute::new(method, &rc.path, &rc.upstream, RouteSource::Static);
+                r.priority = rc.priority;
+                r.strip_prefix = rc.strip_prefix.clone();
+                r.add_prefix = rc.add_prefix.clone();
+                r.auth_provider = rc.auth_provider.clone();
+                r.skip_auth = rc.skip_auth;
+                r.require_roles = rc.require_roles.clone();
+                r.require_scopes = rc.require_scopes.clone();
+                r.authz_rule = rc.authz_rule.clone();
+                r.timeout = rc.timeout;
+                if let Some(rl) = &rc.rate_limit {
+                    r.rate_limit = Some(RateLimit {
+                        requests: rl.requests_per_window,
+                        window: rl.window_size,
+                    });
+                }
+                routes.push(r);
+            }
+        }
+
+        let mut upstreams = Vec::new();
+        for uc in &config.upstreams {
+            let mut cluster = octopus_core::UpstreamCluster::new(&uc.name);
+            for ic in &uc.instances {
+                cluster.add_instance(octopus_core::UpstreamInstance::new(
+                    &ic.id, &ic.host, ic.port,
+                ));
+            }
+            upstreams.push(cluster);
+        }
+
+        (routes, upstreams)
+    }
+
+    /// Initialize and spawn the in-process Kubernetes operator.
+    #[cfg(feature = "kubernetes")]
+    async fn initialize_k8s_operator(config: &Config, router: Arc<octopus_router::Router>) {
+        use octopus_k8s::controller::RouteReconciler;
+
+        tracing::info!(
+            gateway_class = %config.kubernetes.gateway_class,
+            "Starting Kubernetes operator (Gateway API + Octopus CRDs)"
+        );
+
+        // The kube client uses rustls; make sure a CryptoProvider is installed
+        // (the TLS acceptor path may not have run when TLS isn't configured).
+        octopus_tls::ensure_crypto_provider();
+
+        let reconciler = Arc::new(RouteReconciler::new(router));
+        // Seed static config routes so they survive merges with reconciled sources.
+        let (routes, upstreams) = Self::config_to_ir(config);
+        reconciler.seed_static(routes, upstreams);
+
+        if let Err(e) =
+            octopus_k8s::controller::start(reconciler, config.kubernetes.watch_namespaces.clone())
+                .await
+        {
+            tracing::error!(error = %e, "Failed to start Kubernetes operator");
         }
     }
 }
