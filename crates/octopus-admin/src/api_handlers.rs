@@ -629,7 +629,7 @@ pub async fn api_system_info_handler(State(state): State<Arc<AppState>>) -> impl
     let uptime_seconds = state
         .metrics
         .as_ref()
-        .map_or(state.start_time.elapsed().as_secs(), |m| m.uptime_seconds());
+        .map_or_else(|| state.start_time.elapsed().as_secs(), |m| m.uptime_seconds());
 
     let (_, _, total_memory, _) = get_system_metrics();
 

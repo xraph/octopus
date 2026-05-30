@@ -9,7 +9,7 @@ pub enum Node {
     Element {
         tag: String,
         attrs: Vec<(String, String)>,
-        children: Vec<Node>,
+        children: Vec<Self>,
         self_closing: bool,
     },
     /// Plain text content
@@ -17,7 +17,7 @@ pub enum Node {
     /// Raw HTML (unescaped)
     Raw(String),
     /// Group of nodes (rendered sequentially without wrapper)
-    Group(Vec<Node>),
+    Group(Vec<Self>),
     /// Empty node (renders nothing)
     Empty,
 }

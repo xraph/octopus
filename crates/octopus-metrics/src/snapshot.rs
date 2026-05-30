@@ -83,7 +83,7 @@ impl MetricsSnapshot {
         }
 
         // Sort routes by request count (descending)
-        routes.sort_by(|a, b| b.request_count.cmp(&a.request_count));
+        routes.sort_by_key(|b| std::cmp::Reverse(b.request_count));
 
         Self {
             timestamp,

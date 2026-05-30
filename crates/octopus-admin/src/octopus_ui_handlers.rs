@@ -140,7 +140,7 @@ pub async fn octopus_ui_dashboard_handler(
         },
     ];
 
-    let health_checks = vec![
+    let health_checks = [
         HealthCheckInfo {
             name: "PostgreSQL Database".to_string(),
             status: "passing".to_string(),
@@ -161,7 +161,7 @@ pub async fn octopus_ui_dashboard_handler(
         },
     ];
 
-    let plugins = vec![
+    let plugins = [
         PluginInfo {
             id: "auth-jwt".to_string(),
             name: "JWT Authentication".to_string(),
@@ -265,7 +265,7 @@ pub async fn octopus_ui_routes_handler(State(_state): State<Arc<AppState>>) -> i
 
 /// Handler for health page using octopus-ui
 pub async fn octopus_ui_health_handler(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
-    let health_checks = vec![
+    let health_checks = [
         HealthCheckInfo {
             name: "PostgreSQL Database".to_string(),
             status: "passing".to_string(),
@@ -308,7 +308,7 @@ pub async fn octopus_ui_health_handler(State(_state): State<Arc<AppState>>) -> i
 
 /// Handler for plugins page using octopus-ui
 pub async fn octopus_ui_plugins_handler(State(_state): State<Arc<AppState>>) -> impl IntoResponse {
-    let plugins = vec![
+    let plugins = [
         PluginInfo {
             id: "auth-jwt".to_string(),
             name: "JWT Authentication".to_string(),

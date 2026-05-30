@@ -144,7 +144,7 @@ impl RouteTrie {
         Self::match_recursive(&self.root, &segments, 0, &mut matches);
 
         // Return highest priority match
-        matches.sort_by(|a, b| b.route.priority.cmp(&a.route.priority));
+        matches.sort_by_key(|b| std::cmp::Reverse(b.route.priority));
         matches.into_iter().next()
     }
 

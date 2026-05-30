@@ -17,22 +17,17 @@ use tracing::warn;
 pub type Body = Full<Bytes>;
 
 /// WAF operating mode
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum WafMode {
     /// Block malicious requests with an error response
+    #[default]
     Block,
     /// Log detections but allow requests to continue
     LogOnly,
 }
 
-impl Default for WafMode {
-    fn default() -> Self {
-        Self::Block
-    }
-}
-
 /// What parts of the request to inspect
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum WafTarget {
     /// Only inspect URL query string parameters
     QueryString,
@@ -41,13 +36,8 @@ pub enum WafTarget {
     /// Only inspect request body
     Body,
     /// Inspect all targets (query string, headers, and body)
+    #[default]
     All,
-}
-
-impl Default for WafTarget {
-    fn default() -> Self {
-        Self::All
-    }
 }
 
 /// A custom WAF rule with a named regex pattern

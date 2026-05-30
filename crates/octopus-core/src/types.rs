@@ -5,10 +5,11 @@ use std::fmt;
 use std::time::Duration;
 
 /// Load balancing strategy
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LoadBalanceStrategy {
     /// Round-robin load balancing
+    #[default]
     RoundRobin,
     /// Least connections
     LeastConnections,
@@ -18,12 +19,6 @@ pub enum LoadBalanceStrategy {
     Random,
     /// IP hash
     IpHash,
-}
-
-impl Default for LoadBalanceStrategy {
-    fn default() -> Self {
-        Self::RoundRobin
-    }
 }
 
 /// Health check configuration

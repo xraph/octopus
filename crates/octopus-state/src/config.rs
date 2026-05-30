@@ -25,10 +25,11 @@ impl Default for StateConfig {
 }
 
 /// Backend configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum BackendConfig {
     /// In-memory backend (default, single-instance only)
+    #[default]
     InMemory,
 
     /// Redis backend (distributed, production-ready)
@@ -87,12 +88,6 @@ pub enum BackendConfig {
         #[serde(default)]
         prefix: Option<String>,
     },
-}
-
-impl Default for BackendConfig {
-    fn default() -> Self {
-        Self::InMemory
-    }
 }
 
 fn default_cleanup_interval() -> Duration {
