@@ -3,13 +3,11 @@
   "icon": "Network",
   "defaultOpen": false,
   "pages": [
-    "protocols",
-    "protocols-http",
-    "protocols-grpc",
-    "protocols-websocket",
-    "protocols-sse",
-    "protocols-graphql",
-    "protocols-webtransport"
+    "index",
+    "http",
+    "grpc",
+    "websocket",
+    "sse",
+    "graphql"
   ]
 }
-

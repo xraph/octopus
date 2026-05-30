@@ -1,0 +1,50 @@
+---
+title: Kubernetes
+description: Run Octopus as a Kubernetes-native gateway — an in-process operator that programs the router from the Gateway API and Octopus CRDs, with health probes, graceful drain, EndpointSlice discovery, and cert-manager TLS.
+---
+
+import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Kubernetes
+
+Octopus is **Kubernetes-first**. The same binary that runs as a standalone gateway can also run an
+**in-process operator** that watches the cluster and programs its own router — no sidecar, no
+separate control plane. It understands two complementary resource models:
+
+- The **Kubernetes Gateway API** — `GatewayClass`, `Gateway`, `HTTPRoute`, `GRPCRoute`, and `ReferenceGrant`.
+- **Octopus CRDs** — `OctopusGateway`, `OctopusRoute`, `OctopusUpstream`, and `OctopusPolicy`, which expose Octopus-specific features (auth, rate limiting, canaries, …) that the portable Gateway API does not model.
+
+Both are reconciled into the same internal route table, so you can adopt the portable Gateway API
+and reach for Octopus CRDs only where you need gateway-specific behaviour.
+
+<Callout type="info">
+  Enable the operator with `kubernetes.enabled: true`. Install the Octopus CRDs with
+  `octopus crd | kubectl apply -f -`, and install the upstream Gateway API CRDs separately if you
+  use `HTTPRoute`/`GRPCRoute`.
+</Callout>
+
+## What you get
+
+- **Operator** — watches Gateway API and Octopus resources, reconciles them into live routes, and writes status back.
+- **Health probes** — `/livez`, `/readyz`, and `/startupz` on the listen port for Kubernetes liveness/readiness/startup probes.
+- **Graceful drain** — on `SIGTERM`, readiness flips to `503` and a configurable delay lets `kube-proxy` stop routing before in-flight requests drain.
+- **EndpointSlice discovery** — Pod endpoints are discovered via the `discovery.k8s.io/v1` EndpointSlice API, reflecting scale up/down.
+- **TLS via cert-manager** — terminate TLS using certificates from Gateway listener Secrets, hot-reloaded as they rotate.
+- **Helm chart** — install with RBAC, probes, autoscaling, and a `ServiceMonitor`.
+
+## In this section
+
+- **Install** — Helm (OCI), raw manifests, CRD installation, and Gateway API prerequisites.
+- **Probes & drain** — liveness/readiness/startup semantics and graceful shutdown tuning.
+- **Discovery** — EndpointSlice-based service discovery inside the cluster.
+- **Operator** — watchers, the reconcile → merge → apply pipeline, precedence, and leader election.
+- **Gateway API** — `GatewayClass`/`Gateway`/`HTTPRoute`/`GRPCRoute`/`ReferenceGrant` and how they map to routes.
+- **Octopus CRDs** — `OctopusGateway`/`OctopusRoute`/`OctopusUpstream`/`OctopusPolicy` and GEP-713 policy attachment.
+- **TLS & cert-manager** — `terminate_tls`, listener Secrets, SNI, and cross-namespace `ReferenceGrant`.
+- **Helm chart** — the values reference, RBAC, HPA, PDB, and `ServiceMonitor`.
+
+<Cards>
+  <Card title="Kubernetes configuration" description="The kubernetes section: gateway_class, watch_namespaces, leader_election, terminate_tls." href="/docs/configuration" />
+  <Card title="CLI" description="octopus crd and octopus serve." href="/docs/cli" />
+</Cards>

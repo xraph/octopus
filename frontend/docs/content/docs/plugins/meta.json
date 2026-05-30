@@ -1,13 +1,11 @@
 {
-  "title": "Plugins",
+  "title": "Plugins & Scripting",
   "icon": "Package",
   "defaultOpen": false,
   "pages": [
     "index",
-    "jwt-auth",
-    "redis-cache",
-    "rate-limiter",
-    "kafka-producer",
-    "development"
+    "writing-plugins",
+    "built-in",
+    "scripting"
   ]
 }

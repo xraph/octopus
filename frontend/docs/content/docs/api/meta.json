@@ -4,9 +4,7 @@
   "defaultOpen": false,
   "pages": [
     "index",
-    "farp",
     "admin-api",
-    "plugin-api",
-    "errors"
+    "farp"
   ]
 }

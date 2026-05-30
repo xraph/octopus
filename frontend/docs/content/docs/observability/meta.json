@@ -3,11 +3,12 @@
   "icon": "ChartBar",
   "defaultOpen": false,
   "pages": [
-    "observability-index",
-    "observability-metrics",
-    "observability-tracing",
-    "observability-logging",
-    "observability-health"
+    "index",
+    "metrics",
+    "tracing",
+    "logging",
+    "health-probes",
+    "admin-dashboard",
+    "admin-api"
   ]
 }
-

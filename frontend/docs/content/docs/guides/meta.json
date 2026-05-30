@@ -1,12 +1,18 @@
 {
   "title": "Guides",
-  "icon": "BookOpen",
+  "icon": "GraduationCap",
   "defaultOpen": false,
   "pages": [
     "index",
-    "performance",
-    "security",
-    "troubleshooting",
-    "migration"
+    "secure-api-jwt",
+    "per-tenant-rate-limiting",
+    "canary-release",
+    "expose-grpc",
+    "enable-mtls",
+    "kubernetes-gateway-api",
+    "cert-manager-tls",
+    "observability-setup",
+    "farp-auto-discovery",
+    "generate-typescript-client"
   ]
 }

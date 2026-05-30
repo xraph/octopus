@@ -1,246 +1,169 @@
 ---
 title: Introduction
-description: Welcome to Octopus API Gateway - A high-performance, extensible API Gateway built in Rust
+description: Octopus is a high-performance, extensible API gateway written in Rust, with schema-driven service discovery (FARP) and first-class Kubernetes support.
 ---
 
 import { Card, Cards } from 'fumadocs-ui/components/card';
 import { Step, Steps } from 'fumadocs-ui/components/steps';
+import { Callout } from 'fumadocs-ui/components/callout';
 
-# Welcome to Octopus 🐙
+# Octopus API Gateway 🐙
 
-**Octopus** is a high-performance, extensible API Gateway built in Rust, designed for cloud-native environments. It provides automatic service discovery, dynamic routing, multi-protocol support, and a powerful plugin system.
+**Octopus** is an API gateway written in Rust. It routes HTTP traffic to upstream services and
+can discover and configure those services automatically through **FARP** — the Forge API Gateway
+Registration Protocol. Services that speak FARP publish their own schemas (OpenAPI, AsyncAPI,
+gRPC, GraphQL) and Octopus turns them into routes as services come and go. You can also run it
+purely statically by listing `upstreams` and `routes` in a config file — the two modes work
+together.
+
+Octopus is maintained by [Xraph](https://github.com/xraph) and is part of the
+[FARP](https://github.com/xraph/farp) ecosystem.
 
 ## Why Octopus?
 
 <Cards>
-  <Card
-    title="⚡ High Performance"
-    description="100k+ RPS per instance with P99 latency < 10ms. Built on Tokio and Hyper for maximum throughput."
-  />
-  <Card
-    title="🔌 Extensible"
-    description="Dynamic plugin system for custom functionality. Add middleware, protocol handlers, and more without modifying core code."
-  />
-  <Card
-    title="🔄 Auto-Discovery"
-    description="FARP protocol integration for zero-config routing. Automatically discover services and generate routes."
-  />
-  <Card
-    title="🌐 Multi-Protocol"
-    description="Native support for HTTP/1.1, HTTP/2, gRPC, WebSocket, SSE, GraphQL, and more."
-  />
-  <Card
-    title="📊 Observable"
-    description="Built-in Prometheus metrics, OpenTelemetry tracing, and structured logging."
-  />
-  <Card
-    title="🛡️ Production Ready"
-    description="Health checks, circuit breakers, graceful shutdown, and comprehensive error handling."
-  />
+  <Card title="⚡ Fast by default" description="An async core built on Tokio and Hyper, a trie-based router, connection pooling, and Rhai scripts that run in microseconds." />
+  <Card title="🔄 Schema-driven discovery" description="FARP watches services and generates routes from their published schemas — no hand-written route tables required." />
+  <Card title="☸️ Kubernetes-first" description="An in-process operator programs the router from the Gateway API and Octopus CRDs, with probes, graceful drain, EndpointSlice discovery, and cert-manager TLS." />
+  <Card title="🧩 Extensible" description="An ordered middleware chain, a plugin system, and inline/file Rhai scripting for custom request and response logic." />
+  <Card title="🌐 Multi-protocol" description="HTTP/1.1 and HTTP/2 reverse proxying with WebSocket upgrades, plus gRPC, Server-Sent Events, and GraphQL." />
+  <Card title="📊 Observable" description="Prometheus metrics, OpenTelemetry/Jaeger tracing, structured JSON logging, and a built-in admin dashboard and API." />
 </Cards>
 
-## Key Features
+## Capabilities
 
-### Core Capabilities
+- **Reverse proxy** — HTTP/1.1 and HTTP/2 with connection pooling, configurable timeouts, and WebSocket upgrades.
+- **Routing** — a trie-based router with wildcard path matching, method filtering, prefix rewriting, and per-route priorities.
+- **Load balancing & resilience** — round-robin and weighted policies with active health checks, circuit breaking, and bulkheads.
+- **Service discovery** — FARP-driven discovery with backends for mDNS, Consul, etcd, DNS, and Kubernetes (EndpointSlice).
+- **Middleware** — a request/response chain: request IDs, CORS, authentication, rate limiting, compression (brotli, zstd, gzip), transformations, caching, and more.
+- **Security** — JWT, OIDC, API-key, forward-auth, and mTLS authentication; role/scope and Rhai/OPA authorization; TLS termination with hot certificate reloading.
+- **Scripting & plugins** — inline or file-based [Rhai](https://rhai.rs) scripts, plus a static/dynamic plugin system.
+- **Kubernetes** — an operator for the Gateway API (`HTTPRoute`/`GRPCRoute`) and Octopus CRDs, health probes, graceful drain, and a Helm chart.
+- **Observability** — Prometheus metrics, OpenTelemetry/Jaeger tracing, and structured JSON logging.
+- **Configuration** — layered YAML, JSON, or TOML with `${VAR}` / `${VAR:-default}` environment substitution and multi-file merging.
 
-- **🔄 Automatic Service Discovery** - FARP protocol for zero-config routing
-- **⚡ High Performance** - 100k+ RPS, P99 < 10ms
-- **🔌 Extensible Plugin System** - Dynamic loading and custom functionality
-- **🌐 Multi-Protocol Support** - REST, gRPC, WebSocket, SSE, GraphQL, WebTransport
-- **📊 Comprehensive Observability** - Metrics, tracing, and logging
-- **🛡️ Production Features** - Health checks, circuit breakers, graceful shutdown
-- **📝 Auto-Generated Docs** - Federated OpenAPI/AsyncAPI from services
+## Protocol support
 
-### Protocol Support
+| Protocol | Status | Notes |
+|----------|:------:|-------|
+| HTTP/1.1 | ✅ | Reverse proxy with connection pooling |
+| HTTP/2 | ✅ | Multiplexing |
+| gRPC | ✅ | Proxying over HTTP/2 |
+| WebSocket | ✅ | Bidirectional upgrade proxying |
+| Server-Sent Events | ✅ | Streaming responses |
+| GraphQL | ✅ | Routing to GraphQL upstreams |
+| HTTP/3 (QUIC) | 🚧 | Planned |
 
-| Protocol | Status | Description |
-|----------|--------|-------------|
-| HTTP/1.1 | ✅ | Full support with connection pooling |
-| HTTP/2 | ✅ | Multiplexing, server push |
-| HTTP/3 (QUIC) | 🚧 | Experimental |
-| gRPC | ✅ | Proxying, reflection, transcoding |
-| WebSocket | ✅ | Bidirectional proxying |
-| SSE | ✅ | Server-Sent Events |
-| GraphQL | ✅ | Federation support |
-| WebTransport | 🚧 | Experimental |
-| Custom | ✅ | Via plugins |
+## Quick example
 
-### Service Discovery Backends
-
-- ✅ Kubernetes (native support)
-- ✅ Consul
-- ✅ etcd
-- ✅ Eureka
-- ✅ DNS SRV records
-- ✅ Static configuration
-
-## Quick Example
+A minimal static configuration — one upstream and one route:
 
 ```yaml
 # config.yaml
-server:
-  http_port: 8080
-  admin_port: 9090
+gateway:
+  listen: "0.0.0.0:8080"
+  workers: 0                 # 0 = one worker per CPU core
 
-discovery:
-  backend: kubernetes
-  kubernetes:
-    namespace: default
+upstreams:
+  - name: user-service
+    lb_policy: round_robin
+    instances:
+      - id: user-1
+        host: 127.0.0.1
+        port: 8081
+    health_check:
+      type: http
+      path: /health
+      interval: 10s
 
-farp:
-  enabled: true
-  watch_interval: 5s
+routes:
+  - path: /api/users/*
+    methods: [GET, POST, PUT, DELETE]
+    upstream: user-service
+    strip_prefix: /api
 ```
 
 ```bash
-# Run the gateway
-octopus --config config.yaml
-
-# Check health
-curl http://localhost:9090/_/health
-
-# View metrics
-curl http://localhost:9090/metrics
+octopus validate -c config.yaml   # check the config parses
+octopus serve -c config.yaml      # start the gateway
+curl http://localhost:8080/api/users/123
 ```
 
-## Architecture Overview
+<Callout type="info">
+  Health probes are served on the listen port at `/livez`, `/readyz`, and `/startupz`. Prometheus
+  metrics are served at `/metrics` on the address configured by `observability.metrics.endpoint`.
+</Callout>
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     Client Layer                             │
-│  HTTP/HTTPS │ gRPC │ WebSocket │ GraphQL │ Custom           │
-└───────────────────────────────┬─────────────────────────────┘
-                                │
-┌───────────────────────────────▼─────────────────────────────┐
-│              Octopus API Gateway                             │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  Protocol Layer: HTTP │ gRPC │ WS │ GraphQL         │  │
-│  └────────────────────────┬─────────────────────────────┘  │
-│  ┌────────────────────────▼─────────────────────────────┐  │
-│  │  Middleware: Auth │ RateLimit │ CORS │ Scripting    │  │
-│  └────────────────────────┬─────────────────────────────┘  │
-│  ┌────────────────────────▼─────────────────────────────┐  │
-│  │  Router: Trie-based matching, Load balancing        │  │
-│  └────────────────────────┬─────────────────────────────┘  │
-│  ┌────────────────────────▼─────────────────────────────┐  │
-│  │  Service Registry (FARP Client)                      │  │
-│  └────────────────────────┬─────────────────────────────┘  │
-│  ┌────────────────────────▼─────────────────────────────┐  │
-│  │  Plugin System: Dynamic loading, lifecycle mgmt      │  │
-│  └──────────────────────────────────────────────────────┘  │
-└───────────────────────────────┬─────────────────────────────┘
-                                │
-┌───────────────────────────────▼─────────────────────────────┐
-│          Discovery: K8s │ Consul │ etcd │ Eureka            │
-└───────────────────────────────┬─────────────────────────────┘
-                                │
-┌───────────────────────────────▼─────────────────────────────┐
-│                    Upstream Services                         │
-└──────────────────────────────────────────────────────────────┘
-```
-
-## Getting Started
+## Getting started
 
 <Steps>
 
 <Step>
-### Install Octopus
+### Install
+
+Run the published container image (ports `8080` for traffic, `9090` for metrics):
 
 ```bash
-# From source
-cargo install octopus-gateway
+docker run --rm \
+  -p 8080:8080 -p 9090:9090 \
+  -v "$(pwd)/config.yaml:/etc/octopus/config.yaml" \
+  ghcr.io/xraph/octopus:latest
+```
 
-# Or download binary
-curl -L https://github.com/xraph/octopus/releases/latest/download/octopus-linux-amd64 -o octopus
-chmod +x octopus
+Or build from source (Rust 1.75+) — the binary is written to `target/release/octopus`:
+
+```bash
+git clone https://github.com/xraph/octopus.git
+cd octopus
+make release
+```
+
+See [Installation](/docs/installation) for Helm and Kubernetes options.
+</Step>
+
+<Step>
+### Configure
+
+Create a `config.yaml`. Start from the [Quick Start](/docs/quick-start) or the per-section
+[Configuration reference](/docs/configuration).
+</Step>
+
+<Step>
+### Validate & run
+
+```bash
+octopus validate -c config.yaml
+octopus serve -c config.yaml
 ```
 </Step>
 
 <Step>
-### Create Configuration
-
-```yaml
-# config.yaml
-server:
-  http_port: 8080
-  admin_port: 9090
-
-discovery:
-  backend: static
-
-upstreams:
-  - name: my-service
-    instances:
-      - address: localhost
-        port: 8081
-
-routes:
-  - path: /api/*
-    upstream: my-service
-```
-</Step>
-
-<Step>
-### Run the Gateway
+### Verify
 
 ```bash
-octopus --config config.yaml
-```
-</Step>
-
-<Step>
-### Test It
-
-```bash
-# Make a request
-curl http://localhost:8080/api/hello
-
-# Check health
-curl http://localhost:9090/_/health
-
-# View metrics
-curl http://localhost:9090/metrics
+curl http://localhost:8080/api/users/123   # proxied to your upstream
+curl http://localhost:8080/livez            # liveness
+curl http://localhost:8080/readyz           # readiness
 ```
 </Step>
 
 </Steps>
 
-## Next Steps
+## Next steps
 
 <Cards>
-  <Card
-    title="Quick Start"
-    description="Get Octopus up and running in 5 minutes"
-    href="/docs/quick-start"
-  />
-  <Card
-    title="Configuration"
-    description="Learn how to configure Octopus for your needs"
-    href="/docs/configuration"
-  />
-  <Card
-    title="FARP Protocol"
-    description="Understand automatic service discovery"
-    href="/docs/concepts/farp"
-  />
-  <Card
-    title="Plugin System"
-    description="Extend Octopus with custom plugins"
-    href="/docs/concepts/plugins"
-  />
+  <Card title="Quick Start" description="Run Octopus end to end in a few minutes." href="/docs/quick-start" />
+  <Card title="Core Concepts" description="Architecture, routing, load balancing, and resilience." href="/docs/concepts" />
+  <Card title="Configuration" description="The per-section configuration reference." href="/docs/configuration" />
+  <Card title="Service Discovery & FARP" description="Schema-driven discovery and route generation." href="/docs/farp" />
+  <Card title="Kubernetes" description="The operator, Gateway API, CRDs, and Helm chart." href="/docs/kubernetes" />
+  <Card title="Plugins & Scripting" description="Extend the gateway with plugins and Rhai." href="/docs/plugins" />
 </Cards>
 
-## Community & Support
+## Community & license
 
-- **📖 Documentation**: You're reading it!
-- **💬 Discussions**: [GitHub Discussions](https://github.com/xraph/octopus/discussions)
-- **🐛 Issues**: [GitHub Issues](https://github.com/xraph/octopus/issues)
-- **📧 Email**: support@octopus.io
+- **Discussions** — [GitHub Discussions](https://github.com/xraph/octopus/discussions)
+- **Issues** — [GitHub Issues](https://github.com/xraph/octopus/issues)
 
-## License
-
-Octopus is dual-licensed under **MIT** and **Apache-2.0**. Choose the license that best suits your needs.
-
----
-
-**Ready to build? Let's go! 🐙**
+Octopus is dual-licensed under **MIT** or **Apache-2.0**.

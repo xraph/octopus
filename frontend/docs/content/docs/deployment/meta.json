@@ -6,8 +6,8 @@
     "index",
     "docker",
     "kubernetes",
-    "systemd",
-    "production"
+    "production-checklist",
+    "scaling",
+    "graceful-shutdown"
   ]
 }
-

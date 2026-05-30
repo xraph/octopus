@@ -1,0 +1,51 @@
+---
+title: CLI
+description: The octopus command-line interface — serve, validate, gen, crd, and version, with multi-file and directory configuration loading.
+---
+
+import { Card, Cards } from 'fumadocs-ui/components/card';
+
+# CLI
+
+Octopus ships as a single binary, `octopus`. Everything — running the gateway, validating
+configuration, generating clients, and emitting Kubernetes CRDs — is a subcommand.
+
+## Commands
+
+| Command | Purpose |
+|---------|---------|
+| `octopus serve` | Start the gateway. |
+| `octopus validate` | Load and validate configuration without starting the server. |
+| `octopus gen` | Generate config, JSON schema, and a TypeScript client from API specs. |
+| `octopus crd` | Print the Octopus CRD definitions as YAML (pipe to `kubectl apply -f -`). |
+| `octopus version` | Print version information. |
+
+## Configuration loading
+
+`serve` and `validate` take one or more `-c/--config` paths. Each may be a file or a directory:
+
+```bash
+# single file
+octopus serve -c config.yaml
+
+# multiple files, merged in order (later files override earlier ones)
+octopus serve -c base.yaml -c prod.yaml
+
+# a directory — all *.yaml, *.yml, *.json, *.toml files are merged in sorted order
+octopus serve -c ./config.d/
+```
+
+`serve` also accepts `-l/--log-level` (`trace`, `debug`, `info`, `warn`, `error`; default `info`).
+
+```bash
+octopus serve -c config.yaml --log-level debug
+```
+
+## In this section
+
+- **Codegen** — a deep dive into `octopus gen`: service specs, generated config and JSON schema, and the TypeScript client with TanStack Query hooks.
+
+<Cards>
+  <Card title="Configuration" description="What serve and validate load." href="/docs/configuration" />
+  <Card title="Kubernetes CRDs" description="Where octopus crd output is applied." href="/docs/kubernetes" />
+</Cards>

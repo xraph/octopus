@@ -1,0 +1,48 @@
+---
+title: Security
+description: Authentication, authorization, and TLS in Octopus — named auth providers, per-route enforcement, role/scope and policy-based authorization, and TLS termination with mutual TLS.
+---
+
+import { Card, Cards } from 'fumadocs-ui/components/card';
+
+# Security
+
+Octopus secures traffic at three layers: **authentication** (who is calling), **authorization**
+(what they may do), and **transport security** (TLS/mTLS). Each is configured declaratively and
+can be applied globally or per route.
+
+## Authentication
+
+Authentication providers are declared once under `auth_providers` and referenced by name from the
+global `auth` block or from an individual route. A request is authenticated by the provider its
+matched route selects; routes may also opt out with `skip_auth`. Supported provider types:
+
+- **JWT** — validate bearer tokens against a secret or JWKS, checking issuer, audience, and expiry.
+- **OIDC** — discover an OpenID Connect provider and validate its tokens.
+- **API key** — match keys presented in a header or query parameter.
+- **Forward auth** — delegate the decision to an external HTTP service (à la Traefik/NGINX `auth_request`).
+- **mTLS** — authenticate clients by their presented certificate.
+
+## Authorization
+
+Once a caller is authenticated, authorization decides whether the request is allowed: role and
+scope checks, expression rules evaluated by the embedded **Rhai** engine, or an external **OPA**
+policy. Rules can be global or attached to specific routes.
+
+## Transport security (TLS)
+
+Octopus terminates TLS on its listener, supports **mutual TLS** for client authentication, and
+**hot-reloads** certificates without dropping connections. On Kubernetes, certificates can be
+sourced from Gateway listener Secrets (for example, issued by cert-manager).
+
+## In this section
+
+- **Authentication** — the route auth flow, the default provider, `skip_auth`, and token caching.
+- **JWT**, **OIDC**, **API key**, **Forward auth**, **mTLS** — one page per provider.
+- **Authorization** — roles, scopes, Rhai rules, and OPA.
+- **TLS** — termination, SNI, hot certificate reload, and mutual TLS.
+
+<Cards>
+  <Card title="Configuration reference" description="The auth, auth_providers, and tls schema." href="/docs/configuration" />
+  <Card title="Kubernetes TLS" description="cert-manager and Gateway listener Secrets." href="/docs/kubernetes" />
+</Cards>

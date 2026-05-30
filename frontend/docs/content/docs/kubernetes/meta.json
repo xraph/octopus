@@ -1,0 +1,16 @@
+{
+  "title": "Kubernetes",
+  "icon": "Container",
+  "defaultOpen": false,
+  "pages": [
+    "index",
+    "install",
+    "probes-and-drain",
+    "discovery",
+    "operator",
+    "gateway-api",
+    "octopus-crds",
+    "tls-cert-manager",
+    "helm-chart"
+  ]
+}

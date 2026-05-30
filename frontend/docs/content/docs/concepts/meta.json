@@ -5,12 +5,14 @@
   "pages": [
     "index",
     "architecture",
+    "request-lifecycle",
     "routing",
     "middleware",
     "plugins",
     "farp",
     "load-balancing",
     "health-checks",
-    "circuit-breaker"
+    "circuit-breaker",
+    "service-discovery"
   ]
 }

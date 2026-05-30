@@ -1,0 +1,16 @@
+{
+  "title": "Security",
+  "icon": "ShieldCheck",
+  "defaultOpen": false,
+  "pages": [
+    "index",
+    "authentication",
+    "jwt",
+    "oidc",
+    "api-key",
+    "forward-auth",
+    "mtls",
+    "authorization",
+    "tls"
+  ]
+}

@@ -1,0 +1,46 @@
+---
+title: Service Discovery & FARP
+description: FARP — the Forge API Gateway Registration Protocol — lets services publish their own schemas so Octopus generates routes automatically, backed by mDNS, Consul, etcd, DNS, and Kubernetes discovery.
+---
+
+import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Service Discovery & FARP
+
+Most gateways expect you to declare every route by hand. **FARP** — the Forge API Gateway
+Registration Protocol — flips that around: services publish their own schemas (OpenAPI, AsyncAPI,
+gRPC, GraphQL), and Octopus turns those schemas into routes as services come and go. Static
+`upstreams`/`routes` and FARP-driven discovery work together — you can use either or both.
+
+## How it works
+
+1. **Discover** — a discovery backend reports the set of live service instances and their addresses.
+2. **Fetch schemas** — Octopus retrieves each service's published schema (its FARP manifest).
+3. **Generate routes** — paths and methods from the schema become gateway routes pointing at the discovered upstream.
+4. **Watch & reconcile** — Octopus watches for changes and updates routes when services scale, appear, or disappear.
+
+## Discovery backends
+
+FARP can source instances from several backends:
+
+- **mDNS / Bonjour** — zero-config discovery for local development.
+- **Consul** — service catalog with health filtering.
+- **etcd** — key/value-based registration.
+- **DNS** — resolve instances from DNS records.
+- **Kubernetes** — discover Pod endpoints via the `discovery.k8s.io/v1` EndpointSlice API.
+
+<Callout type="info">
+  Kubernetes discovery uses **EndpointSlice**, which reflects Pod scale up/down that the legacy
+  Endpoints watch can miss. See the [Kubernetes](/docs/kubernetes) section for cluster setup.
+</Callout>
+
+## In this section
+
+- **Backends** — configuring mDNS, Consul, etcd, and DNS discovery.
+- **Schema federation** — how OpenAPI, AsyncAPI, gRPC, and GraphQL schemas become a unified API surface.
+
+<Cards>
+  <Card title="FARP configuration" description="The farp section: watch intervals, caching, and backends." href="/docs/configuration" />
+  <Card title="FARP concept" description="A conceptual overview of discovery and auto-routing." href="/docs/concepts/farp" />
+</Cards>

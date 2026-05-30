@@ -1,0 +1,34 @@
+---
+title: State
+description: Octopus keeps shared runtime state — rate-limit counters, caches, sessions, and circuit-breaker state — in a pluggable store with in-memory, Redis, Postgres, and hybrid backends.
+---
+
+import { Card, Cards } from 'fumadocs-ui/components/card';
+
+# State
+
+Several gateway features need to remember things between requests — and, when you run more than
+one replica, between instances. Octopus stores that shared runtime state in a pluggable **state
+store** so features behave consistently whether you run one process or many.
+
+## What uses the state store
+
+- **Rate limiting** — request counters and windows, so limits are enforced across all replicas.
+- **Caching** — cached upstream responses.
+- **Sessions & tokens** — authentication caches and session data.
+- **Circuit breakers** — shared failure counts and breaker state.
+- **Coordination** — locks and other coordination primitives.
+
+## Backends
+
+| Backend | Scope | Use case |
+|---------|-------|----------|
+| **In-memory** | Per process | Local development and single-instance deployments. |
+| **Redis** | Shared | Multi-replica deployments needing fast shared counters and caches. |
+| **Postgres** | Shared, durable | Shared state that must survive restarts. |
+| **Hybrid** | Tiered | A fast local tier backed by a shared tier. |
+
+<Cards>
+  <Card title="State configuration" description="Selecting and tuning a state backend." href="/docs/configuration" />
+  <Card title="Rate limiting" description="The primary consumer of shared counters." href="/docs/middleware" />
+</Cards>

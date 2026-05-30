@@ -4,14 +4,16 @@
   "defaultOpen": false,
   "pages": [
     "index",
-    "server",
-    "discovery",
+    "gateway",
     "upstreams",
-    "routing",
+    "routes",
     "middleware",
-    "tls",
+    "auth",
+    "farp",
     "observability",
-    "admin"
+    "admin",
+    "grpc",
+    "kubernetes",
+    "tls"
   ]
 }
-

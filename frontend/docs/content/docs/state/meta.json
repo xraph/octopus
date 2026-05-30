@@ -1,0 +1,8 @@
+{
+  "title": "State",
+  "icon": "Database",
+  "defaultOpen": false,
+  "pages": [
+    "index"
+  ]
+}

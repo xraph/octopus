@@ -1,0 +1,10 @@
+{
+  "title": "Service Discovery & FARP",
+  "icon": "Radar",
+  "defaultOpen": false,
+  "pages": [
+    "index",
+    "backends",
+    "schema-federation"
+  ]
+}

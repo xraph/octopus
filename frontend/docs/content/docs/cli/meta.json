@@ -1,0 +1,9 @@
+{
+  "title": "CLI & Codegen",
+  "icon": "Terminal",
+  "defaultOpen": false,
+  "pages": [
+    "index",
+    "codegen"
+  ]
+}
