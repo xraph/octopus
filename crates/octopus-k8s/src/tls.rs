@@ -93,7 +93,8 @@ pub struct TlsReconciler {
     acceptor: SwappableTlsAcceptor,
     gateways: Mutex<HashMap<String, GatewayCerts>>,
     secrets: Mutex<HashMap<String, SecretPem>>,
-    grants: Mutex<HashMap<String, Vec<ReferenceGrantSpec>>>,
+    /// ReferenceGrants keyed by `namespace/name` → (namespace, spec).
+    grants: Mutex<HashMap<String, (String, ReferenceGrantSpec)>>,
     /// Number of certificates loaded into the resolver on the last rebuild.
     loaded_certs: AtomicUsize,
 }
@@ -160,10 +161,18 @@ impl TlsReconciler {
         self.rebuild();
     }
 
-    /// Replace the ReferenceGrants for a namespace.
-    pub fn set_grants(&self, namespace: &str, grants: Vec<ReferenceGrantSpec>) {
+    /// Track (or replace) a ReferenceGrant.
+    pub fn set_grant(&self, name: &str, namespace: &str, spec: ReferenceGrantSpec) {
         if let Ok(mut g) = self.grants.lock() {
-            g.insert(namespace.to_string(), grants);
+            g.insert(format!("{namespace}/{name}"), (namespace.to_string(), spec));
+        }
+        self.rebuild();
+    }
+
+    /// Stop tracking a ReferenceGrant.
+    pub fn remove_grant(&self, name: &str, namespace: &str) {
+        if let Ok(mut g) = self.grants.lock() {
+            g.remove(&format!("{namespace}/{name}"));
         }
         self.rebuild();
     }
@@ -180,9 +189,18 @@ impl TlsReconciler {
             return;
         };
 
+        // Group grants by their namespace for authorization lookups.
+        let mut grants_by_ns: HashMap<String, Vec<ReferenceGrantSpec>> = HashMap::new();
+        for (ns, spec) in grants.values() {
+            grants_by_ns
+                .entry(ns.clone())
+                .or_default()
+                .push(spec.clone());
+        }
+
         let mut loaded = 0usize;
         for gc in gateways.values() {
-            for r in authorized_secret_refs(&gc.namespace, &gc.refs, &grants) {
+            for r in authorized_secret_refs(&gc.namespace, &gc.refs, &grants_by_ns) {
                 let key = format!("{}/{}", r.secret_namespace, r.secret_name);
                 let Some((cert, keyb)) = secrets.get(&key) else {
                     continue; // Secret not present (yet).
@@ -387,6 +405,61 @@ MZJwLhzCrGHJXk0exP7K73agVp3RiDz7w/rmMBCmhSCppD+vpl7vMnZ9
             rec.loaded_cert_count(),
             0,
             "removing the Secret drops the cert"
+        );
+    }
+
+    #[test]
+    fn cross_namespace_secret_loads_only_with_grant() {
+        let acceptor =
+            SwappableTlsAcceptor::new(Arc::new(SniCertResolver::new().into_server_config()));
+        let rec = TlsReconciler::new(acceptor);
+
+        // Gateway in "prod" references a Secret in "certs".
+        let spec: GatewaySpec = serde_yaml::from_str(
+            "gatewayClassName: octopus\nlisteners:\n  - name: https\n    hostname: api\n    port: 443\n    protocol: HTTPS\n    tls:\n      certificateRefs:\n        - name: shared\n          namespace: certs\n",
+        )
+        .unwrap();
+        rec.set_gateway("gw", "prod", &spec);
+        rec.set_secret(
+            "shared",
+            "certs",
+            CERT.as_bytes().to_vec(),
+            KEY.as_bytes().to_vec(),
+        );
+        assert_eq!(
+            rec.loaded_cert_count(),
+            0,
+            "cross-ns Secret denied without a grant"
+        );
+
+        // A grant in "certs" authorizing prod Gateways to reference its Secrets.
+        rec.set_grant(
+            "g",
+            "certs",
+            ReferenceGrantSpec {
+                from: vec![ReferenceGrantFrom {
+                    group: "gateway.networking.k8s.io".into(),
+                    kind: "Gateway".into(),
+                    namespace: "prod".into(),
+                }],
+                to: vec![ReferenceGrantTo {
+                    group: "".into(),
+                    kind: "Secret".into(),
+                    name: None,
+                }],
+            },
+        );
+        assert_eq!(
+            rec.loaded_cert_count(),
+            1,
+            "grant authorizes the cross-ns Secret"
+        );
+
+        rec.remove_grant("g", "certs");
+        assert_eq!(
+            rec.loaded_cert_count(),
+            0,
+            "removing the grant revokes access"
         );
     }
 }

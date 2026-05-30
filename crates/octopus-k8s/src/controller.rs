@@ -13,6 +13,7 @@ use crate::crds::{
 use crate::gateway_api::{GRPCRoute, GRPCRouteSpec, Gateway, HTTPRoute, HTTPRouteSpec};
 use crate::ir::{IntermediateRoute, RouteSource, RouteStore, SourceKey};
 use crate::policy::{apply_overlays, PolicyOverlay};
+use crate::refgrant::ReferenceGrant;
 use crate::tls::TlsReconciler;
 use crate::translate::{
     grpcroute_to_route, httproute_to_route, octopus_route_to_route, octopus_upstream_to_cluster,
@@ -256,13 +257,23 @@ fn spawn_tls_watchers(client: Client, tls: Arc<TlsReconciler>, namespace: Option
     };
     let secrets: Api<Secret> = match &namespace {
         Some(ns) => Api::namespaced(client.clone(), ns),
+        None => Api::all(client.clone()),
+    };
+    let grants: Api<ReferenceGrant> = match &namespace {
+        Some(ns) => Api::namespaced(client.clone(), ns),
         None => Api::all(client),
     };
     tokio::spawn({
         let tls = Arc::clone(&tls);
         async move { run_watcher(gateways, tls, "Gateway", on_gateway).await }
     });
-    tokio::spawn(async move { run_watcher(secrets, tls, "Secret(TLS)", on_tls_secret).await });
+    tokio::spawn({
+        let tls = Arc::clone(&tls);
+        async move { run_watcher(secrets, tls, "Secret(TLS)", on_tls_secret).await }
+    });
+    tokio::spawn(
+        async move { run_watcher(grants, tls, "ReferenceGrant", on_reference_grant).await },
+    );
 }
 
 /// Spawn one watcher per resource type for a single namespace scope.
@@ -391,6 +402,22 @@ fn on_tls_secret(tls: &TlsReconciler, event: watcher::Event<Secret>) {
         watcher::Event::Delete(o) => {
             if let Some((name, ns)) = ident(&o) {
                 tls.remove_secret(&name, &ns);
+            }
+        }
+        watcher::Event::Init | watcher::Event::InitDone => {}
+    }
+}
+
+fn on_reference_grant(tls: &TlsReconciler, event: watcher::Event<ReferenceGrant>) {
+    match event {
+        watcher::Event::Apply(o) | watcher::Event::InitApply(o) => {
+            if let Some((name, ns)) = ident(&o) {
+                tls.set_grant(&name, &ns, o.spec.clone());
+            }
+        }
+        watcher::Event::Delete(o) => {
+            if let Some((name, ns)) = ident(&o) {
+                tls.remove_grant(&name, &ns);
             }
         }
         watcher::Event::Init | watcher::Event::InitDone => {}
