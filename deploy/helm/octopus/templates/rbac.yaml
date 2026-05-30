@@ -23,6 +23,13 @@ rules:
   - apiGroups: ["gateway.octopus.io"]
     resources: ["octopusgateways", "octopusroutes", "octopusupstreams", "octopuspolicies"]
     verbs: ["get", "list", "watch"]
+  # ReferenceGrants + TLS Secrets (only needed for operator-managed TLS termination).
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["referencegrants"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

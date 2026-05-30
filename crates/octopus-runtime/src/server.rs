@@ -17,6 +17,54 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
+/// How a connection's transport is handled.
+#[derive(Clone)]
+enum TlsMode {
+    /// Plain HTTP.
+    Plain,
+    /// File-based TLS from static configuration.
+    Static(octopus_tls::TlsAcceptor),
+    /// Operator-managed, hot-swappable TLS (Gateway listener Secrets).
+    Operator(octopus_tls::SwappableTlsAcceptor),
+}
+
+/// Serve a single connection (HTTP/1.1 or HTTP/2 auto-detected), injecting the
+/// optional client-certificate CN (mTLS) into request extensions.
+async fn serve_io<IO>(io: IO, handler: crate::RequestHandler, client_cn: Option<String>)
+where
+    IO: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let service =
+        hyper::service::service_fn(move |mut req: http::Request<hyper::body::Incoming>| {
+            let handler = handler.clone();
+            let cn = client_cn.clone();
+            async move {
+                req.extensions_mut().insert(octopus_tls::TlsClientCn(cn));
+                handler.handle(req).await.or_else(|e| {
+                    tracing::error!("Request handler error: {}", e);
+                    let status = e.to_status_code();
+                    http::Response::builder()
+                        .status(status)
+                        .body(http_body_util::Either::Left(http_body_util::Full::new(
+                            bytes::Bytes::from(format!("Error: {e}")),
+                        )))
+                        .map_err(|e| {
+                            tracing::error!("Failed to build error response: {}", e);
+                            e
+                        })
+                })
+            }
+        });
+    let io = hyper_util::rt::TokioIo::new(io);
+    if let Err(e) =
+        hyper_util::server::conn::auto::Builder::new(hyper_util::rt::TokioExecutor::new())
+            .serve_connection_with_upgrades(io, service)
+            .await
+    {
+        tracing::error!("Connection error: {}", e);
+    }
+}
+
 /// HTTP server
 pub struct Server {
     config: Config,
@@ -33,6 +81,9 @@ pub struct Server {
     config_paths: Option<Vec<std::path::PathBuf>>,
     /// Lifecycle state backing the health probes.
     lifecycle: LifecycleState,
+    /// Operator-managed (hot-swappable) TLS acceptor, when the gateway listener
+    /// terminates TLS from Gateway listener Secrets.
+    operator_tls: Option<octopus_tls::SwappableTlsAcceptor>,
 }
 
 impl std::fmt::Debug for Server {
@@ -131,8 +182,18 @@ impl Server {
                 }
             }
         } else {
-            tracing::info!("Server listening on {} (HTTP only)", self.listen_addr());
             None
+        };
+
+        // How each connection is served: static file-based TLS takes precedence,
+        // then operator-managed (hot-swappable) TLS, otherwise plain HTTP.
+        let tls_mode = if let Some(acceptor) = tls_acceptor {
+            TlsMode::Static(acceptor)
+        } else if let Some(swappable) = self.operator_tls.clone() {
+            TlsMode::Operator(swappable)
+        } else {
+            tracing::info!("Server listening on {} (HTTP only)", self.listen_addr());
+            TlsMode::Plain
         };
 
         // Build middleware chain
@@ -339,92 +400,26 @@ impl Server {
                             tracing::trace!("Accepted connection from {}", addr);
 
                             let handler = handler.clone();
-                            let tls_acceptor_clone = tls_acceptor.clone();
+                            let tls_mode = tls_mode.clone();
 
                             // Spawn a task to handle this connection
                             tokio::spawn(async move {
-                                // Handle TLS if configured
-                                if let Some(acceptor) = tls_acceptor_clone {
-                                    // Perform TLS handshake
-                                    match acceptor.accept(stream).await {
+                                match tls_mode {
+                                    TlsMode::Plain => serve_io(stream, handler, None).await,
+                                    TlsMode::Static(acceptor) => match acceptor.accept(stream).await {
                                         Ok(tls_stream) => {
-                                            // Extract client CN from peer certificate (for mTLS)
-                                            let client_cn = octopus_tls::extract_client_cn(&tls_stream);
-                                            let cn_ext = octopus_tls::TlsClientCn(client_cn);
-
-                                            let io = hyper_util::rt::TokioIo::new(tls_stream);
-                                            // Create service_fn after TLS handshake so it can inject CN
-                                            let service = hyper::service::service_fn(move |mut req: http::Request<hyper::body::Incoming>| {
-                                                let handler = handler.clone();
-                                                let cn = cn_ext.clone();
-                                                async move {
-                                                    req.extensions_mut().insert(cn);
-                                                    handler.handle(req).await
-                                                        .or_else(|e| {
-                                                            tracing::error!("Request handler error: {}", e);
-                                                            let status = e.to_status_code();
-                                                            http::Response::builder()
-                                                                .status(status)
-                                                                .body(http_body_util::Either::Left(
-                                                                    http_body_util::Full::new(bytes::Bytes::from(
-                                                                        format!("Error: {e}")
-                                                                    ))
-                                                                ))
-                                                                .map_err(|e| {
-                                                                    tracing::error!("Failed to build error response: {}", e);
-                                                                    e
-                                                                })
-                                                        })
-                                                }
-                                            });
-                                            // Auto-detect HTTP/1.1 vs HTTP/2 (via ALPN for TLS)
-                                            if let Err(e) = hyper_util::server::conn::auto::Builder::new(
-                                                hyper_util::rt::TokioExecutor::new(),
-                                            )
-                                                .serve_connection_with_upgrades(io, service)
-                                                .await
-                                            {
-                                                tracing::error!("HTTPS connection error: {}", e);
-                                            }
+                                            let cn = octopus_tls::extract_client_cn(&tls_stream);
+                                            serve_io(tls_stream, handler, cn).await;
                                         }
-                                        Err(e) => {
-                                            tracing::error!("TLS handshake failed: {}", e);
+                                        Err(e) => tracing::error!("TLS handshake failed: {}", e),
+                                    },
+                                    TlsMode::Operator(acceptor) => match acceptor.accept(stream).await {
+                                        Ok(tls_stream) => {
+                                            let cn = octopus_tls::extract_client_cn(&tls_stream);
+                                            serve_io(tls_stream, handler, cn).await;
                                         }
-                                    }
-                                } else {
-                                    // Plain HTTP — inject empty TLS CN
-                                    let service = hyper::service::service_fn(move |mut req: http::Request<hyper::body::Incoming>| {
-                                        let handler = handler.clone();
-                                        async move {
-                                            req.extensions_mut().insert(octopus_tls::TlsClientCn(None));
-                                            handler.handle(req).await
-                                                .or_else(|e| {
-                                                    tracing::error!("Request handler error: {}", e);
-                                                    let status = e.to_status_code();
-                                                    http::Response::builder()
-                                                        .status(status)
-                                                        .body(http_body_util::Either::Left(
-                                                            http_body_util::Full::new(bytes::Bytes::from(
-                                                                format!("Error: {e}")
-                                                            ))
-                                                        ))
-                                                        .map_err(|e| {
-                                                            tracing::error!("Failed to build error response: {}", e);
-                                                            e
-                                                        })
-                                                })
-                                        }
-                                    });
-                                    // Plain HTTP — auto-detect HTTP/1.1 vs HTTP/2 (h2c via prior knowledge)
-                                    let io = hyper_util::rt::TokioIo::new(stream);
-                                    if let Err(e) = hyper_util::server::conn::auto::Builder::new(
-                                        hyper_util::rt::TokioExecutor::new(),
-                                    )
-                                        .serve_connection_with_upgrades(io, service)
-                                        .await
-                                    {
-                                        tracing::error!("HTTP connection error: {}", e);
-                                    }
+                                        Err(e) => tracing::error!("TLS handshake failed: {}", e),
+                                    },
                                 }
                             });
                         }
@@ -832,9 +827,13 @@ impl ServerBuilder {
 
         // Start the Kubernetes operator (Gateway API + Octopus CRDs) if enabled.
         #[cfg(feature = "kubernetes")]
-        if config.kubernetes.enabled {
-            Self::initialize_k8s_operator(&config, Arc::clone(&router)).await;
-        }
+        let operator_tls = if config.kubernetes.enabled {
+            Self::initialize_k8s_operator(&config, Arc::clone(&router)).await
+        } else {
+            None
+        };
+        #[cfg(not(feature = "kubernetes"))]
+        let operator_tls: Option<octopus_tls::SwappableTlsAcceptor> = None;
 
         // Configuration is fully loaded and applied.
         lifecycle.mark_config_loaded();
@@ -852,6 +851,7 @@ impl ServerBuilder {
             protocol_handlers,
             config_paths: self.config_paths,
             lifecycle,
+            operator_tls,
         })
     }
 
@@ -1106,7 +1106,10 @@ impl ServerBuilder {
 
     /// Initialize and spawn the in-process Kubernetes operator.
     #[cfg(feature = "kubernetes")]
-    async fn initialize_k8s_operator(config: &Config, router: Arc<octopus_router::Router>) {
+    async fn initialize_k8s_operator(
+        config: &Config,
+        router: Arc<octopus_router::Router>,
+    ) -> Option<octopus_tls::SwappableTlsAcceptor> {
         use octopus_k8s::controller::RouteReconciler;
 
         tracing::info!(
@@ -1114,8 +1117,8 @@ impl ServerBuilder {
             "Starting Kubernetes operator (Gateway API + Octopus CRDs)"
         );
 
-        // The kube client uses rustls; make sure a CryptoProvider is installed
-        // (the TLS acceptor path may not have run when TLS isn't configured).
+        // The kube client (and any operator TLS) uses rustls; make sure a
+        // CryptoProvider is installed even when static TLS isn't configured.
         octopus_tls::ensure_crypto_provider();
 
         let reconciler = Arc::new(RouteReconciler::new(router));
@@ -1123,12 +1126,27 @@ impl ServerBuilder {
         let (routes, upstreams) = Self::config_to_ir(config);
         reconciler.seed_static(routes, upstreams);
 
-        if let Err(e) =
-            octopus_k8s::controller::start(reconciler, config.kubernetes.watch_namespaces.clone())
-                .await
+        // Terminate TLS on the listener from Gateway Secrets only when opted in
+        // and no static TLS is configured (static TLS takes precedence).
+        let tls_acceptor = if config.kubernetes.terminate_tls && config.gateway.tls.is_none() {
+            let initial = Arc::new(octopus_tls::SniCertResolver::new().into_server_config());
+            tracing::info!("Operator-managed TLS termination enabled (Gateway listener Secrets)");
+            Some(octopus_tls::SwappableTlsAcceptor::new(initial))
+        } else {
+            None
+        };
+
+        if let Err(e) = octopus_k8s::controller::start(
+            reconciler,
+            config.kubernetes.watch_namespaces.clone(),
+            tls_acceptor.clone(),
+        )
+        .await
         {
             tracing::error!(error = %e, "Failed to start Kubernetes operator");
         }
+
+        tls_acceptor
     }
 }
 

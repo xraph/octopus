@@ -10,13 +10,15 @@ use crate::crds::{
     OctopusPolicy, OctopusPolicySpec, OctopusRoute, OctopusRouteSpec, OctopusUpstream,
     OctopusUpstreamSpec,
 };
-use crate::gateway_api::{GRPCRoute, GRPCRouteSpec, HTTPRoute, HTTPRouteSpec};
+use crate::gateway_api::{GRPCRoute, GRPCRouteSpec, Gateway, HTTPRoute, HTTPRouteSpec};
 use crate::ir::{IntermediateRoute, RouteSource, RouteStore, SourceKey};
 use crate::policy::{apply_overlays, PolicyOverlay};
+use crate::tls::TlsReconciler;
 use crate::translate::{
     grpcroute_to_route, httproute_to_route, octopus_route_to_route, octopus_upstream_to_cluster,
 };
 use futures::TryStreamExt;
+use k8s_openapi::api::core::v1::Secret;
 use kube::{
     api::Api,
     runtime::{watcher, watcher::Config as WatcherConfig},
@@ -24,6 +26,7 @@ use kube::{
 };
 use octopus_core::UpstreamCluster;
 use octopus_router::Router;
+use octopus_tls::SwappableTlsAcceptor;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -218,7 +221,11 @@ impl RouteReconciler {
 /// Create a Kubernetes client and spawn watchers for HTTPRoute and the Octopus
 /// CRDs, driving `reconciler`. An empty `namespaces` watches all namespaces
 /// (requires cluster-scoped RBAC); otherwise watchers are spawned per namespace.
-pub async fn start(reconciler: Arc<RouteReconciler>, namespaces: Vec<String>) -> crate::Result<()> {
+pub async fn start(
+    reconciler: Arc<RouteReconciler>,
+    namespaces: Vec<String>,
+    tls_acceptor: Option<SwappableTlsAcceptor>,
+) -> crate::Result<()> {
     let client = Client::try_default().await?;
 
     let scopes: Vec<Option<String>> = if namespaces.is_empty() {
@@ -227,11 +234,35 @@ pub async fn start(reconciler: Arc<RouteReconciler>, namespaces: Vec<String>) ->
         namespaces.into_iter().map(Some).collect()
     };
 
-    for scope in scopes {
-        spawn_watchers(client.clone(), Arc::clone(&reconciler), scope);
+    // When the gateway listener terminates operator-managed TLS, drive a
+    // TlsReconciler from Gateway + Secret watches.
+    let tls = tls_acceptor.map(|a| Arc::new(TlsReconciler::new(a)));
+
+    for scope in &scopes {
+        spawn_watchers(client.clone(), Arc::clone(&reconciler), scope.clone());
+        if let Some(ref tls) = tls {
+            spawn_tls_watchers(client.clone(), Arc::clone(tls), scope.clone());
+        }
     }
 
     Ok(())
+}
+
+/// Spawn Gateway + Secret watchers driving a [`TlsReconciler`] for one scope.
+fn spawn_tls_watchers(client: Client, tls: Arc<TlsReconciler>, namespace: Option<String>) {
+    let gateways: Api<Gateway> = match &namespace {
+        Some(ns) => Api::namespaced(client.clone(), ns),
+        None => Api::all(client.clone()),
+    };
+    let secrets: Api<Secret> = match &namespace {
+        Some(ns) => Api::namespaced(client.clone(), ns),
+        None => Api::all(client),
+    };
+    tokio::spawn({
+        let tls = Arc::clone(&tls);
+        async move { run_watcher(gateways, tls, "Gateway", on_gateway).await }
+    });
+    tokio::spawn(async move { run_watcher(secrets, tls, "Secret(TLS)", on_tls_secret).await });
 }
 
 /// Spawn one watcher per resource type for a single namespace scope.
@@ -284,21 +315,22 @@ fn spawn_watchers(client: Client, reconciler: Arc<RouteReconciler>, namespace: O
     });
 }
 
-/// Drive `reconciler` from a resource's watch stream until it ends.
-async fn run_watcher<K>(
+/// Drive a context `ctx` from a resource's watch stream until it ends.
+async fn run_watcher<K, C>(
     api: Api<K>,
-    reconciler: Arc<RouteReconciler>,
+    ctx: Arc<C>,
     label: &'static str,
-    handler: fn(&RouteReconciler, watcher::Event<K>),
+    handler: fn(&C, watcher::Event<K>),
 ) where
     K: kube::Resource + Clone + std::fmt::Debug + serde::de::DeserializeOwned + Send + 'static,
     <K as kube::Resource>::DynamicType: Default + Clone + Eq + std::hash::Hash,
+    C: Send + Sync + 'static,
 {
     tracing::info!(resource = label, "Starting watcher");
     let mut stream = std::pin::pin!(watcher(api, WatcherConfig::default()));
     loop {
         match stream.try_next().await {
-            Ok(Some(event)) => handler(&reconciler, event),
+            Ok(Some(event)) => handler(&ctx, event),
             Ok(None) => break,
             Err(e) => tracing::error!(resource = label, error = %e, "watch error"),
         }
@@ -329,6 +361,51 @@ fn on_http_route(rec: &RouteReconciler, event: watcher::Event<HTTPRoute>) {
         }
         watcher::Event::Init | watcher::Event::InitDone => {}
     }
+}
+
+fn on_gateway(tls: &TlsReconciler, event: watcher::Event<Gateway>) {
+    match event {
+        watcher::Event::Apply(o) | watcher::Event::InitApply(o) => {
+            if let Some((name, ns)) = ident(&o) {
+                tls.set_gateway(&name, &ns, &o.spec);
+            }
+        }
+        watcher::Event::Delete(o) => {
+            if let Some((name, ns)) = ident(&o) {
+                tls.remove_gateway(&name, &ns);
+            }
+        }
+        watcher::Event::Init | watcher::Event::InitDone => {}
+    }
+}
+
+fn on_tls_secret(tls: &TlsReconciler, event: watcher::Event<Secret>) {
+    match event {
+        watcher::Event::Apply(o) | watcher::Event::InitApply(o) => {
+            if let Some((name, ns)) = ident(&o) {
+                if let Some((cert, key)) = tls_secret_payload(&o) {
+                    tls.set_secret(&name, &ns, cert, key);
+                }
+            }
+        }
+        watcher::Event::Delete(o) => {
+            if let Some((name, ns)) = ident(&o) {
+                tls.remove_secret(&name, &ns);
+            }
+        }
+        watcher::Event::Init | watcher::Event::InitDone => {}
+    }
+}
+
+/// Extract `(tls.crt, tls.key)` PEM bytes from a `kubernetes.io/tls` Secret.
+fn tls_secret_payload(secret: &Secret) -> Option<(Vec<u8>, Vec<u8>)> {
+    if secret.type_.as_deref() != Some("kubernetes.io/tls") {
+        return None;
+    }
+    let data = secret.data.as_ref()?;
+    let cert = data.get("tls.crt")?.0.clone();
+    let key = data.get("tls.key")?.0.clone();
+    Some((cert, key))
 }
 
 fn on_grpcroute(rec: &RouteReconciler, event: watcher::Event<GRPCRoute>) {

@@ -76,6 +76,12 @@ pub struct KubernetesConfig {
     /// Use leader election (a `coordination.k8s.io/v1` Lease) so only one
     /// replica writes resource status when scaled out.
     pub leader_election: bool,
+
+    /// Terminate TLS on the gateway listener using certificates from HTTPS
+    /// Gateway listeners' `tls.certificateRefs` Secrets (hot-reloaded). Opt-in;
+    /// ignored when static `gateway.tls` is configured. When enabled the listen
+    /// port serves HTTPS (SNI), not plain HTTP.
+    pub terminate_tls: bool,
 }
 
 impl Default for KubernetesConfig {
@@ -85,6 +91,7 @@ impl Default for KubernetesConfig {
             gateway_class: "octopus".to_string(),
             watch_namespaces: Vec::new(),
             leader_election: true,
+            terminate_tls: false,
         }
     }
 }
