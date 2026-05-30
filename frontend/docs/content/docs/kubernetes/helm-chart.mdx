@@ -1,0 +1,173 @@
+---
+title: Helm chart
+description: The Octopus Helm chart values reference — image, replicas, resources, probes, RBAC/serviceAccount, autoscaling, PodDisruptionBudget, ServiceMonitor, and the embedded gateway config.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Helm chart
+
+The Octopus Helm chart deploys the gateway with RBAC, health probes, a `Service`, a
+`PodDisruptionBudget`, and optional autoscaling and a Prometheus `ServiceMonitor`. It is published to
+the OCI registry `oci://ghcr.io/xraph/charts` as chart `octopus`, and the container image is
+`ghcr.io/xraph/octopus`.
+
+```bash
+helm install octopus oci://ghcr.io/xraph/charts/octopus \
+  --namespace octopus --create-namespace
+```
+
+See [Install](/docs/kubernetes/install) for installation flows and CRD setup. The values below are
+the chart defaults; only documented keys exist.
+
+## Image & rollout
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `replicaCount` | int | `2` | Replicas (ignored when `autoscaling.enabled`). |
+| `image.repository` | string | `ghcr.io/xraph/octopus` | Container image. |
+| `image.tag` | string | `""` | Image tag; defaults to the chart `appVersion`. |
+| `image.pullPolicy` | string | `IfNotPresent` | Image pull policy. |
+| `imagePullSecrets` | list | `[]` | Pull secrets for private registries. |
+| `nameOverride` / `fullnameOverride` | string | `""` | Override the generated resource names. |
+| `extraArgs` | list | `[]` | Extra args appended after `serve --config /etc/octopus/config.yaml`. |
+| `logLevel` | string | `info` | `RUST_LOG` for the container. |
+
+## Gateway config
+
+`config` is rendered verbatim into a `ConfigMap` as `config.yaml` and mounted at
+`/etc/octopus/config.yaml`. Add upstreams, routes, plugins, and auth here. The chart's default
+`config` includes the gateway listen/timeouts/probes and a `kubernetes` discovery backend under
+`farp.discovery`.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `config.gateway.listen` | string | `0.0.0.0:8080` | Listen address. |
+| `config.gateway.workers` | int | `0` | Worker threads (`0` = auto). |
+| `config.gateway.request_timeout` | duration | `30s` | Per-request timeout. |
+| `config.gateway.shutdown_timeout` | duration | `30s` | Max wait for in-flight requests on shutdown. |
+| `config.gateway.pre_stop_delay` | duration | `5s` | Delay after `SIGTERM` before the server stops accepting. |
+| `config.gateway.probes.enabled` | bool | `true` | Serve probe endpoints. |
+| `config.gateway.probes.liveness_path` | string | `/livez` | Liveness path. |
+| `config.gateway.probes.readiness_path` | string | `/readyz` | Readiness path. |
+| `config.gateway.probes.startup_path` | string | `/startupz` | Startup path. |
+| `config.gateway.probes.require_discovery_sync` | bool | `true` | Gate readiness on the first discovery sync. |
+| `config.farp.enabled` | bool | `true` | Enable FARP (hosts the discovery backends). |
+| `config.farp.discovery.backends` | list | _(kubernetes backend)_ | Discovery backends — see [Discovery](/docs/kubernetes/discovery). |
+| `config.observability.logging.level` / `.format` | string | `info` / `json` | Logging level and format. |
+
+<Callout type="info">
+  The default `config` does **not** set `kubernetes.enabled`, so the chart deploys the gateway with
+  EndpointSlice discovery but **without** the operator. To run the [operator](/docs/kubernetes/operator),
+  add a `kubernetes:` block under `config` (e.g. `--set config.kubernetes.enabled=true`). The
+  full gateway config schema is in the [configuration](/docs/configuration) section.
+</Callout>
+
+## Service discovery scope
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `discovery.namespace` | string | `""` | Namespace the gateway watches; empty watches all namespaces (needs cluster-scoped RBAC). |
+
+## Service account & RBAC
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `serviceAccount.create` | bool | `true` | Create a ServiceAccount. |
+| `serviceAccount.name` | string | `""` | Name (generated when empty). |
+| `serviceAccount.annotations` | map | `{}` | Annotations (e.g. IRSA/workload identity). |
+| `rbac.create` | bool | `true` | Create RBAC resources. |
+| `rbac.clusterScoped` | bool | `true` | `true` → `ClusterRole`/`ClusterRoleBinding` (watch all namespaces); `false` → namespaced `Role`/`RoleBinding`. |
+
+<Callout type="warn">
+  The namespaced `Role` (`rbac.clusterScoped=false`) only covers `services`, `endpoints`, and
+  `endpointslices`. To reconcile cluster-wide Gateway API / Octopus CRDs, keep the default
+  cluster-scoped RBAC.
+</Callout>
+
+## Service
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `service.type` | string | `ClusterIP` | Service type. |
+| `service.port` | int | `8080` | Gateway port (`http`). |
+| `service.adminPort` | int | `9090` | Admin port (`admin`). |
+| `service.annotations` | map | `{}` | Service annotations. |
+
+The Service sets `publishNotReadyAddresses: false` so draining pods leave the EndpointSlice — see
+[Probes & drain](/docs/kubernetes/probes-and-drain).
+
+## Pod & container
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `terminationGracePeriodSeconds` | int | `45` | Must be ≥ `pre_stop_delay` + `shutdown_timeout`. |
+| `podAnnotations` / `podLabels` | map | `{}` | Extra pod metadata. |
+| `podSecurityContext` | map | `runAsNonRoot: true`, uid/gid/fsGroup `1000` | Pod security context. |
+| `containerSecurityContext` | map | `allowPrivilegeEscalation: false`, `readOnlyRootFilesystem: true`, drop `ALL` caps | Container security context. |
+| `resources.requests` | map | `cpu: 100m`, `memory: 128Mi` | Resource requests. |
+| `resources.limits` | map | `cpu: "1"`, `memory: 512Mi` | Resource limits. |
+| `nodeSelector` / `tolerations` / `affinity` | — | `{}` / `[]` / `{}` | Scheduling. |
+| `topologySpreadConstraints` | list | `[]` | Spread replicas across nodes/zones. |
+| `preStopHook.enabled` | bool | `false` | Add a `sleep` preStop hook (set `pre_stop_delay: 0` to avoid double-counting). |
+| `preStopHook.sleepSeconds` | int | `5` | preStop sleep duration. |
+
+## Probes
+
+Kubernetes probe tuning (paths default to the gateway's probe paths). All three target the `http`
+port.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `probes.startup.path` | string | `/startupz` | Startup probe path. |
+| `probes.startup.periodSeconds` | int | `2` | Startup probe period. |
+| `probes.startup.failureThreshold` | int | `30` | ~60s startup budget. |
+| `probes.liveness.path` | string | `/livez` | Liveness probe path. |
+| `probes.liveness.periodSeconds` | int | `10` | Liveness probe period. |
+| `probes.liveness.failureThreshold` | int | `3` | Liveness failure threshold. |
+| `probes.readiness.path` | string | `/readyz` | Readiness probe path. |
+| `probes.readiness.periodSeconds` | int | `5` | Readiness probe period. |
+| `probes.readiness.failureThreshold` | int | `2` | Readiness failure threshold. |
+
+## Metrics & ServiceMonitor
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `metrics.path` | string | `/metrics` | Prometheus metrics path (served on the gateway port). |
+| `metrics.serviceMonitor.enabled` | bool | `false` | Create a `monitoring.coreos.com/v1` ServiceMonitor (needs the Prometheus Operator). |
+| `metrics.serviceMonitor.interval` | duration | `30s` | Scrape interval. |
+| `metrics.serviceMonitor.scrapeTimeout` | duration | `10s` | Scrape timeout. |
+| `metrics.serviceMonitor.labels` | map | `{}` | Extra labels (e.g. to match your Prometheus selector). |
+
+## Autoscaling (HPA)
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `autoscaling.enabled` | bool | `false` | Create an `autoscaling/v2` HorizontalPodAutoscaler. |
+| `autoscaling.minReplicas` | int | `2` | Minimum replicas. |
+| `autoscaling.maxReplicas` | int | `10` | Maximum replicas. |
+| `autoscaling.targetCPUUtilizationPercentage` | int | `80` | Target CPU utilization. |
+| `autoscaling.targetMemoryUtilizationPercentage` | int | _(unset)_ | Target memory utilization (uncomment to enable). |
+
+## PodDisruptionBudget
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `podDisruptionBudget.enabled` | bool | `true` | Create a `policy/v1` PodDisruptionBudget. |
+| `podDisruptionBudget.minAvailable` | int/string | `1` | Minimum available pods. |
+| `podDisruptionBudget.maxUnavailable` | int/string | _(unset)_ | Alternative to `minAvailable`. |
+
+## Ingress (optional)
+
+For fronting the gateway with another ingress controller.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `ingress.enabled` | bool | `false` | Create an Ingress. |
+| `ingress.className` | string | `""` | IngressClass name. |
+| `ingress.annotations` | map | `{}` | Ingress annotations. |
+| `ingress.hosts` | list | `gateway.example.com` `/` `Prefix` | Host/path rules. |
+| `ingress.tls` | list | `[]` | TLS blocks. |
+
+For the gateway's own TLS termination (rather than fronting it), see
+[TLS & cert-manager](/docs/kubernetes/tls-cert-manager).

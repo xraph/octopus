@@ -1,0 +1,39 @@
+---
+title: gRPC
+description: The grpc section — gRPC and gRPC-Web proxying, reflection, deadline propagation, and explicit service-to-upstream mapping.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# gRPC
+
+The `grpc` section configures gRPC proxying. The block is optional and gRPC proxying is **enabled
+by default**. For the protocol model, see the [Protocols](/docs/protocols) section.
+
+```yaml
+grpc:
+  enabled: true
+  max_message_size: 4194304
+  enable_reflection: false
+  enable_grpc_web: false
+  deadline_propagation: true
+  services:
+    "users.UserService": user-service
+    "orders.OrderService": order-service
+```
+
+## `grpc`
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `enabled` | boolean | `true` | Enable gRPC proxying. |
+| `max_message_size` | integer (bytes) | `4194304` (4 MiB) | Maximum gRPC message size. |
+| `enable_reflection` | boolean | `false` | Enable the gRPC reflection proxy. |
+| `enable_grpc_web` | boolean | `false` | Enable gRPC-Web support (HTTP/1.1 compatible). |
+| `deadline_propagation` | boolean | `true` | Propagate gRPC deadlines to upstreams. |
+| `services` | map of string→string | `{}` | Explicit mapping from fully qualified gRPC service name to upstream name. |
+
+<Callout type="info">
+  `services` keys are fully qualified service names such as `users.UserService`; values are
+  [upstream](/docs/configuration/upstreams) names.
+</Callout>

@@ -1,0 +1,37 @@
+---
+title: Kubernetes
+description: The kubernetes section — the in-process Gateway API controller, GatewayClass, watched namespaces, leader election, and operator-managed TLS.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Kubernetes
+
+The `kubernetes` section enables the in-process Kubernetes controller. When enabled, the gateway
+programs its router from the Kubernetes Gateway API and Octopus CRDs. The block is optional and the
+controller is **disabled by default**. For deployment guidance, see the [Kubernetes](/docs/kubernetes)
+section.
+
+```yaml
+kubernetes:
+  enabled: true
+  gateway_class: octopus
+  watch_namespaces: [team-a, team-b]
+  leader_election: true
+  terminate_tls: false
+```
+
+## `kubernetes`
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `enabled` | boolean | `false` | Run the in-process Kubernetes controller. |
+| `gateway_class` | string | `octopus` | GatewayClass name this instance reconciles (controllerName `gateway.octopus.io/gateway-controller`). |
+| `watch_namespaces` | array of string | `[]` | Namespaces to watch. Empty means all namespaces. |
+| `leader_election` | boolean | `true` | Use a `coordination.k8s.io/v1` Lease so only one replica writes resource status when scaled out. |
+| `terminate_tls` | boolean | `false` | Terminate TLS on the listener using certificates from HTTPS Gateway listeners' `tls.certificateRefs` Secrets (hot-reloaded). Opt-in; ignored when static `gateway.tls` is set. When enabled, the listen port serves HTTPS (SNI), not plain HTTP. |
+
+<Callout type="warn">
+  `terminate_tls` is ignored when static [`gateway.tls`](/docs/configuration/tls) is configured.
+  Choose one TLS source: static gateway certificates or operator-managed Secrets.
+</Callout>

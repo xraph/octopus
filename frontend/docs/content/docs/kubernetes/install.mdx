@@ -1,0 +1,142 @@
+---
+title: Install
+description: Install Octopus on Kubernetes with the Helm OCI chart or raw manifests, install the Octopus CRDs, and add the upstream Gateway API CRDs when using HTTPRoute/GRPCRoute.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Steps, Step } from 'fumadocs-ui/components/steps';
+import { Tabs } from 'fumadocs-ui/components/tabs';
+import { Card, Cards } from 'fumadocs-ui/components/card';
+
+# Install
+
+Octopus ships as a single container image (`ghcr.io/xraph/octopus`) and a Helm chart published to an
+OCI registry. The same binary serves traffic and, when `kubernetes.enabled` is set, runs the
+in-process operator. This page covers installing the gateway, the Octopus CRDs, and the upstream
+Gateway API CRDs.
+
+## Prerequisites
+
+- A Kubernetes cluster and `kubectl` configured for it.
+- Helm 3.8+ (OCI support is on by default) if you use the chart.
+- The **upstream Gateway API CRDs** (`gateway.networking.k8s.io`) installed separately — only if you
+  plan to use `HTTPRoute`, `GRPCRoute`, `Gateway`, or `ReferenceGrant`. Octopus does **not** ship
+  those CRDs; it reconciles them but the schemas come from the Gateway API release. The Octopus CRDs
+  (`gateway.octopus.io`) are separate and are installed below.
+
+## Install the gateway
+
+<Tabs items={['Helm (OCI)', 'Raw manifests']}>
+<div title="Helm (OCI)">
+
+The chart is published to `oci://ghcr.io/xraph/charts` as chart `octopus`:
+
+```bash
+helm install octopus oci://ghcr.io/xraph/charts/octopus \
+  --namespace octopus --create-namespace
+```
+
+Pin a chart/app version with `--version`, and override values with `--set` or `-f values.yaml`:
+
+```bash
+helm install octopus oci://ghcr.io/xraph/charts/octopus \
+  -n octopus --create-namespace \
+  --set replicaCount=3 \
+  --set autoscaling.enabled=true \
+  --set metrics.serviceMonitor.enabled=true \
+  --set-string discovery.namespace=default \
+  --set rbac.clusterScoped=false
+```
+
+The chart can also be installed from a local checkout (`helm install octopus deploy/helm/octopus`).
+See the [Helm chart](/docs/kubernetes/helm-chart) page for the full values reference.
+
+</div>
+<div title="Raw manifests">
+
+For a quick, Helm-free install, apply the bundled manifests. They create a `Namespace`,
+`ServiceAccount`, cluster-scoped RBAC, a `ConfigMap`, a `Deployment` (with probes), a `Service`, and
+a `PodDisruptionBudget`:
+
+```bash
+kubectl apply -f deploy/kubernetes/octopus.yaml
+```
+
+The gateway configuration lives in the `octopus-config` `ConfigMap` and is mounted at
+`/etc/octopus/config.yaml`. Edit it to add upstreams, routes, plugins, and auth.
+
+</div>
+</Tabs>
+
+## Install the Octopus CRDs
+
+The Octopus CRDs live in the `gateway.octopus.io` API group (`OctopusGateway`, `OctopusRoute`,
+`OctopusUpstream`, `OctopusPolicy`). Install them one of two ways.
+
+<Steps>
+<Step>
+
+### Generate from the CLI
+
+The `octopus crd` command prints all four CRDs as a single multi-document YAML stream:
+
+```bash
+octopus crd | kubectl apply -f -
+```
+
+This is the source of truth — the YAML is generated directly from the Rust CRD types.
+
+</Step>
+<Step>
+
+### Or apply the vendored bundle
+
+The chart vendors the same CRDs at `deploy/helm/octopus/crds/octopus-crds.yaml`:
+
+```bash
+kubectl apply -f deploy/helm/octopus/crds/octopus-crds.yaml
+```
+
+<Callout type="info">
+  Helm installs files under a chart's `crds/` directory automatically on first install, but it does
+  **not** upgrade or delete them on later `helm upgrade`/`helm uninstall`. Re-apply the bundle (or
+  re-run `octopus crd | kubectl apply -f -`) when CRDs change.
+</Callout>
+
+</Step>
+</Steps>
+
+## Install the upstream Gateway API CRDs
+
+If you use `HTTPRoute`, `GRPCRoute`, `Gateway`, or `ReferenceGrant`, install the upstream Gateway API
+CRDs from the Gateway API project release (they are not part of Octopus):
+
+```bash
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/<version>/standard-install.yaml
+```
+
+Octopus reconciles `Gateway`/`HTTPRoute`/`GRPCRoute` (`gateway.networking.k8s.io/v1`) and
+`ReferenceGrant` (`gateway.networking.k8s.io/v1beta1`). If these CRDs are absent, the operator's
+Gateway API watchers have nothing to watch — the Octopus CRDs still work on their own.
+
+## Enable the operator
+
+Installing the gateway does not by itself start the operator. Set `kubernetes.enabled: true` in the
+gateway config (the `config` block of the chart, or the mounted `config.yaml`) to run the in-process
+controller. See [Operator](/docs/kubernetes/operator) for what it watches and how reconciliation
+works.
+
+```yaml
+kubernetes:
+  enabled: true
+  gateway_class: octopus
+```
+
+## Next steps
+
+<Cards>
+  <Card title="Operator" description="Enable the controller and understand the reconcile pipeline." href="/docs/kubernetes/operator" />
+  <Card title="Probes & drain" description="Wire liveness/readiness/startup probes and graceful shutdown." href="/docs/kubernetes/probes-and-drain" />
+  <Card title="Helm chart" description="The full values reference." href="/docs/kubernetes/helm-chart" />
+  <Card title="Discovery" description="EndpointSlice-based service discovery and RBAC." href="/docs/kubernetes/discovery" />
+</Cards>

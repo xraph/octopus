@@ -1,0 +1,52 @@
+---
+title: Observability
+description: The observability section — logging, Prometheus metrics, and distributed tracing.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Observability
+
+The `observability` section configures logging, metrics, and tracing. The whole block is optional
+and has sensible defaults. For conceptual coverage, see the [Observability](/docs/observability)
+section.
+
+```yaml
+observability:
+  logging:
+    level: info
+    format: json
+  metrics:
+    enabled: true
+    endpoint: /metrics
+  tracing:
+    enabled: true
+    jaeger_endpoint: http://jaeger:14268/api/traces
+```
+
+## `logging`
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `level` | string | `info` | Log level (e.g. `trace`, `debug`, `info`, `warn`, `error`). |
+| `format` | string | `text` | Log format: `json` or `text`. |
+
+## `metrics`
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `enabled` | boolean | `true` | Enable metrics collection and the metrics endpoint. |
+| `endpoint` | string | `/metrics` | Path the metrics are served on. |
+
+## `tracing`
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `enabled` | boolean | `false` | Enable distributed tracing. |
+| `jaeger_endpoint` | string | none | Jaeger collector endpoint. |
+
+<Callout type="info">
+  The metrics endpoint is served under the gateway's internal route prefix (see
+  `gateway.internal_route_prefix` in [Gateway](/docs/configuration/gateway)). See
+  [Observability](/docs/observability) for dashboards and trace propagation details.
+</Callout>

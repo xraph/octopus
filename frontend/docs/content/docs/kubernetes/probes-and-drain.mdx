@@ -1,0 +1,119 @@
+---
+title: Probes & drain
+description: How Octopus serves /livez, /readyz, and /startupz, how to map them to Kubernetes probes, and how pre_stop_delay and shutdown_timeout drive a zero-drop graceful drain.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Probes & drain
+
+Octopus serves Kubernetes-style health probe endpoints directly on the gateway **listen port** (the
+port kubelet targets) and drains gracefully on `SIGTERM`. The probes are handled before request
+accounting, so polling them during a drain never inflates the in-flight counter or blocks shutdown.
+
+## Probe endpoints
+
+All three endpoints are served on the listen port and return `200 OK` (with a small JSON body) when
+healthy, or `503 Service Unavailable` otherwise.
+
+| Endpoint | Probe | `200` when | Notes |
+|----------|-------|-----------|-------|
+| `/livez` | liveness | The process has not fully stopped. | Stays `200` while draining — a draining-but-healthy pod must not be killed mid-drain. |
+| `/readyz` | readiness | Running **and** config loaded **and** not draining **and** (if required) discovery has synced. | Flips to `503` the instant `SIGTERM` is received. |
+| `/startupz` | startup | The listener has bound. | Gates liveness/readiness while the process boots. |
+
+`/healthz` and `/health` are accepted as back-compat aliases for readiness. The paths are
+configurable under `gateway.probes` (`liveness_path`, `readiness_path`, `startup_path`), and the
+endpoints can be turned off with `gateway.probes.enabled: false`.
+
+<Callout type="warn">
+  Liveness must never depend on readiness. Pointing the liveness probe at `/readyz` would cause
+  Kubernetes to kill the pod the moment it starts draining, cutting off in-flight requests. Use
+  `/livez` for liveness and `/readyz` for readiness.
+</Callout>
+
+## Readiness gating on discovery sync
+
+When `gateway.probes.require_discovery_sync` is `true` (the default) **and** service discovery is
+configured, `/readyz` stays `503` until the discovery watcher completes its first sync. This keeps a
+freshly started pod out of the Service's EndpointSlice until it actually knows where its upstreams
+are. When discovery is not configured, this gate is treated as already satisfied, so readiness only
+depends on the server running with config loaded.
+
+```yaml
+gateway:
+  probes:
+    enabled: true
+    liveness_path: /livez
+    readiness_path: /readyz
+    startup_path: /startupz
+    require_discovery_sync: true
+```
+
+## Mapping to Kubernetes probes
+
+Point all three probes at the listen port. The chart wires this automatically; the equivalent
+Deployment spec is:
+
+```yaml
+ports:
+  - name: http
+    containerPort: 8080
+startupProbe:
+  httpGet:
+    path: /startupz
+    port: http
+  periodSeconds: 2
+  failureThreshold: 30   # ~60s startup budget
+livenessProbe:
+  httpGet:
+    path: /livez
+    port: http
+  periodSeconds: 10
+  failureThreshold: 3
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: http
+  periodSeconds: 5
+  failureThreshold: 2
+```
+
+## Graceful drain on SIGTERM
+
+On `SIGTERM`, the gateway runs an ordered drain so that traffic stops flowing **before** the socket
+closes:
+
+1. **Readiness flips to `503` immediately.** `begin_draining()` is called as soon as the signal
+   arrives, so the very next `/readyz` poll fails and Kubernetes removes the pod from the Service
+   EndpointSlice. Liveness stays `200`.
+2. **Keep accepting for `gateway.pre_stop_delay`** (default `5s`). The server *continues to accept*
+   during this window so that connections opened before kube-proxy / the EndpointSlice controller
+   observed the pod going NotReady are still served. This closes the race where a client is routed
+   to a pod that has already stopped listening.
+3. **Stop accepting and drain in-flight up to `gateway.shutdown_timeout`.** After the delay, the
+   accept loop exits and the server waits for in-flight requests to finish, bounded by the timeout.
+   Then the process marks itself stopped (liveness `503`) and exits.
+
+```yaml
+gateway:
+  pre_stop_delay: 5s       # keep accepting this long after SIGTERM (0 disables)
+  shutdown_timeout: 30s    # max wait for in-flight requests after we stop accepting
+```
+
+Set `pre_stop_delay: 0` if you instead use a Kubernetes `preStop` hook to own the delay (the chart's
+`preStopHook` option does this) — otherwise the delay is counted twice.
+
+<Callout type="warn">
+  `terminationGracePeriodSeconds` must be **≥ `pre_stop_delay` + `shutdown_timeout`**, or the
+  kubelet `SIGKILL`s the pod before it finishes draining. The chart defaults to
+  `terminationGracePeriodSeconds: 45` for a `5s` delay plus `30s` timeout (with headroom).
+</Callout>
+
+The chart's Service also sets `publishNotReadyAddresses: false`, so NotReady (draining) pods are
+removed from the EndpointSlice — which is what makes `pre_stop_delay` actually drain traffic before
+the socket closes.
+
+See [Discovery](/docs/kubernetes/discovery) for how the readiness discovery gate ties into
+EndpointSlice-based service discovery, and the [configuration](/docs/configuration) section for the
+full `gateway` block.

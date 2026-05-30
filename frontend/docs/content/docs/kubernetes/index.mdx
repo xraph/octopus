@@ -35,14 +35,18 @@ and reach for Octopus CRDs only where you need gateway-specific behaviour.
 
 ## In this section
 
-- **Install** — Helm (OCI), raw manifests, CRD installation, and Gateway API prerequisites.
-- **Probes & drain** — liveness/readiness/startup semantics and graceful shutdown tuning.
-- **Discovery** — EndpointSlice-based service discovery inside the cluster.
-- **Operator** — watchers, the reconcile → merge → apply pipeline, precedence, and leader election.
-- **Gateway API** — `GatewayClass`/`Gateway`/`HTTPRoute`/`GRPCRoute`/`ReferenceGrant` and how they map to routes.
-- **Octopus CRDs** — `OctopusGateway`/`OctopusRoute`/`OctopusUpstream`/`OctopusPolicy` and GEP-713 policy attachment.
-- **TLS & cert-manager** — `terminate_tls`, listener Secrets, SNI, and cross-namespace `ReferenceGrant`.
-- **Helm chart** — the values reference, RBAC, HPA, PDB, and `ServiceMonitor`.
+<Cards>
+  <Card title="Install" description="Helm (OCI), raw manifests, CRD installation, and Gateway API prerequisites." href="/docs/kubernetes/install" />
+  <Card title="Probes & drain" description="liveness/readiness/startup semantics and graceful shutdown tuning." href="/docs/kubernetes/probes-and-drain" />
+  <Card title="Discovery" description="EndpointSlice-based service discovery inside the cluster." href="/docs/kubernetes/discovery" />
+  <Card title="Operator" description="Watchers, the reconcile → merge → apply pipeline, precedence, and leader election." href="/docs/kubernetes/operator" />
+  <Card title="Gateway API" description="GatewayClass / Gateway / HTTPRoute / GRPCRoute / ReferenceGrant and how they map to routes." href="/docs/kubernetes/gateway-api" />
+  <Card title="Octopus CRDs" description="OctopusGateway / OctopusRoute / OctopusUpstream / OctopusPolicy and GEP-713 policy attachment." href="/docs/kubernetes/octopus-crds" />
+  <Card title="TLS & cert-manager" description="terminate_tls, listener Secrets, SNI, and cross-namespace ReferenceGrant." href="/docs/kubernetes/tls-cert-manager" />
+  <Card title="Helm chart" description="The values reference, RBAC, HPA, PDB, and ServiceMonitor." href="/docs/kubernetes/helm-chart" />
+</Cards>
+
+## Related
 
 <Cards>
   <Card title="Kubernetes configuration" description="The kubernetes section: gateway_class, watch_namespaces, leader_election, terminate_tls." href="/docs/configuration" />

@@ -1,0 +1,47 @@
+---
+title: TLS
+description: The gateway.tls section — certificate and key files, mutual TLS, minimum TLS version, and certificate hot reload.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# TLS
+
+TLS is configured under `gateway.tls`. When present, the gateway terminates TLS on its listener.
+The section is optional; without it the listener serves plain HTTP (unless TLS is supplied by the
+Kubernetes operator — see [`kubernetes.terminate_tls`](/docs/configuration/kubernetes)). For the
+security model, see the [Security](/docs/security) section.
+
+```yaml
+gateway:
+  listen: "0.0.0.0:8443"
+  tls:
+    cert_file: /etc/octopus/tls/cert.pem
+    key_file: /etc/octopus/tls/key.pem
+    min_tls_version: "1.2"
+    enable_cert_reload: true
+    reload_interval_secs: 300
+    # Mutual TLS:
+    client_ca_file: /etc/octopus/tls/ca.pem
+    require_client_cert: true
+```
+
+## `gateway.tls`
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `cert_file` | string | — | Certificate file path. **Required** (must be non-empty). |
+| `key_file` | string | — | Private key file path. **Required** (must be non-empty). |
+| `client_ca_file` | string | none | Client CA certificate for mutual TLS. |
+| `require_client_cert` | boolean | `false` | Require client certificates (mutual TLS). |
+| `min_tls_version` | string | `1.2` | Minimum TLS version. Must be `1.2` or `1.3`. |
+| `enable_cert_reload` | boolean | `true` | Watch and hot-reload the certificate without restarting. |
+| `reload_interval_secs` | integer (seconds) | `300` | Certificate reload check interval. Must be greater than zero when reload is enabled. |
+
+<Callout type="info">
+  `min_tls_version` is validated: only `1.2` and `1.3` are accepted. When `enable_cert_reload` is
+  true, `reload_interval_secs` must be greater than zero or validation fails.
+</Callout>
+
+For mutual TLS as an authentication source (mapping client certificate CNs to roles), see the mTLS
+provider in [Authentication & authorization](/docs/configuration/auth).

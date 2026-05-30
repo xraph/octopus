@@ -1,0 +1,152 @@
+---
+title: FARP & discovery
+description: The farp section — service discovery and auto-routing, with mDNS, DNS, Consul, and Kubernetes discovery backends.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tabs } from 'fumadocs-ui/components/tabs';
+
+# FARP & discovery
+
+FARP (the Forge API Gateway Registration Protocol) provides service discovery and automatic
+routing. The `farp` section is optional and disabled by default. For conceptual depth, see the
+[FARP](/docs/farp) section.
+
+```yaml
+farp:
+  enabled: true
+  watch_interval: 5s
+  schema_cache_ttl: 5m
+  discovery:
+    backends:
+      - type: kubernetes
+        enabled: true
+        config:
+          namespace: default
+          label_selector: "app.kubernetes.io/part-of=myapp"
+          watch_interval: 10s
+```
+
+## `farp`
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `enabled` | boolean | `false` | Enable FARP service discovery and auto-routing. |
+| `watch_interval` | duration | `5s` | Interval for discovering service changes. |
+| `schema_cache_ttl` | duration | `5m` | Schema cache time-to-live. |
+| `discovery` | object | none | Discovery backend configuration. See [below](#discovery). |
+
+## Discovery
+
+`farp.discovery` holds a list of discovery backends.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `backends` | array | `[]` | Discovery backends. Each is tagged by `type`. |
+
+Each backend entry has a `type` (`mdns`, `dns`, `consul`, or `kubernetes`), an `enabled` flag
+(default `true`), and a backend-specific `config` object.
+
+<Tabs items={['mDNS', 'DNS', 'Consul', 'Kubernetes']}>
+
+<div title="mDNS">
+
+```yaml
+- type: mdns
+  enabled: true
+  config:
+    service_type: _http._tcp
+    domain: local.
+    watch_interval: 10s
+    query_timeout: 2s
+    enable_ipv6: true
+```
+
+`type: mdns` — mDNS/Bonjour discovery.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `service_type` | string | — | Service type to discover. **Required.** |
+| `domain` | string | — | mDNS domain. **Required.** |
+| `watch_interval` | duration | — | Watch interval. **Required.** |
+| `query_timeout` | duration | — | Query timeout. **Required.** |
+| `enable_ipv6` | boolean | `true` | Enable IPv6 discovery. |
+
+</div>
+
+<div title="DNS">
+
+```yaml
+- type: dns
+  enabled: true
+  config:
+    servers: ["10.0.0.53:53"]
+    domain: services.internal
+    watch_interval: 30s
+```
+
+`type: dns` — DNS-based discovery.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `servers` | array of string | — | DNS server addresses. **Required.** |
+| `domain` | string | — | Domain to query. **Required.** |
+| `watch_interval` | duration | — | Watch interval. **Required.** |
+
+</div>
+
+<div title="Consul">
+
+```yaml
+- type: consul
+  enabled: true
+  config:
+    address: http://consul:8500
+    datacenter: dc1
+    token: "${CONSUL_TOKEN}"
+    watch_interval: 10s
+```
+
+`type: consul` — Consul discovery.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `address` | string | — | Consul address. **Required.** |
+| `datacenter` | string | — | Datacenter. **Required.** |
+| `token` | string | none | ACL token. |
+| `watch_interval` | duration | — | Watch interval. **Required.** |
+
+</div>
+
+<div title="Kubernetes">
+
+```yaml
+- type: kubernetes
+  enabled: true
+  config:
+    namespace: default
+    label_selector: "app.kubernetes.io/part-of=myapp"
+    watch_interval: 10s
+    use_endpoint_slices: true
+    include_not_ready: false
+```
+
+`type: kubernetes` — Kubernetes discovery.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `namespace` | string | — | Namespace to watch. **Required.** |
+| `label_selector` | string | none | Label selector for filtering. |
+| `watch_interval` | duration | — | Watch interval. **Required.** |
+| `use_endpoint_slices` | boolean | `true` | Prefer the `discovery.k8s.io/v1` EndpointSlice API (falls back to Endpoints if unavailable). |
+| `include_not_ready` | boolean | `false` | Include endpoints whose `ready` condition is false/unknown. |
+
+</div>
+
+</Tabs>
+
+<Callout type="info">
+  The `farp.discovery.kubernetes` backend is independent of the in-process Gateway API controller
+  configured under [`kubernetes`](/docs/configuration/kubernetes). See [Kubernetes](/docs/kubernetes)
+  for how the two relate.
+</Callout>

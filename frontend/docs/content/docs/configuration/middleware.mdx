@@ -1,0 +1,79 @@
+---
+title: Middleware
+description: How middleware is configured in Octopus — through typed configuration fields and the plugin system, not a free-form middleware list.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Middleware
+
+<Callout type="warn">
+  There is **no top-level `middleware:` array** in Octopus. The root configuration object has no
+  such field, so a `middleware:` list at the top level is silently ignored. Middleware behavior is
+  configured through **typed fields** and the **plugin system**, described below. (Some older
+  example files show a `middleware:` array — disregard it.)
+</Callout>
+
+## How the request pipeline is built
+
+When the gateway starts it assembles a global middleware chain. Only two middleware are added to
+that global chain, and only when enabled:
+
+1. **Compression** — added when `gateway.compression.enabled` is true (the default).
+2. **Auth gateway** — added when any `auth_providers` are defined **or** `auth.global_enforce` is
+   true. This single middleware performs authentication and authorization for every request,
+   honoring the per-route auth fields.
+
+Everything else is configured declaratively on the objects it applies to (the gateway, a route, or
+an upstream) or supplied through plugins.
+
+## Where each behavior lives
+
+| Behavior | Where it is configured |
+| --- | --- |
+| Compression | `gateway.compression` — see [Gateway](/docs/configuration/gateway). |
+| Authentication | `auth_providers` + `auth` (global), plus per-route `auth_provider` / `skip_auth` — see [Auth](/docs/configuration/auth). |
+| Authorization | `auth.authz` (global), plus per-route `require_roles` / `require_scopes` / `authz_rule` — see [Auth](/docs/configuration/auth). |
+| CORS | Global `cors`, plus per-route `routes[].cors` — see [Auth](/docs/configuration/auth) and [Routes](/docs/configuration/routes). |
+| Rate limiting | Per-route `routes[].rate_limit` — see [Routes](/docs/configuration/routes). |
+| Request timeout | `gateway.request_timeout`, overridable per route via `routes[].timeout` — see [Gateway](/docs/configuration/gateway) and [Routes](/docs/configuration/routes). |
+| Body size limit | `gateway.max_body_size` — see [Gateway](/docs/configuration/gateway). |
+| TLS / mTLS termination | `gateway.tls` — see [TLS](/docs/configuration/tls). |
+| Health checks / circuit breaking | Per-upstream `health_check` / `circuit_breaker` — see [Upstreams](/docs/configuration/upstreams). |
+| Everything else | The `plugins` array — see [below](#plugins). |
+
+## Available middleware implementations
+
+The `octopus-middleware` crate ships many more middleware than the two wired into the global chain.
+These are exposed through the typed fields above and through the plugin system — not through a
+free-form list. They include: compression, an auth gateway, forward auth, JWT, CORS, rate limiting,
+circuit breaker, retry, timeout, request/connection limits, IP filtering, a WAF, bot detection,
+security headers, header and body transforms, request ID injection, request deduplication, response
+caching, redirects, canary routing, and audit logging.
+
+See the [Middleware](/docs/middleware) section for conceptual coverage of each.
+
+## Plugins
+
+The `plugins` array attaches plugin instances to the gateway. Plugins are the extension point for
+middleware not covered by the typed fields.
+
+```yaml
+plugins:
+  - name: request-id
+    plugin_type: static
+    enabled: true
+    priority: 100
+    config:
+      header: X-Request-Id
+```
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `name` | string | — | Plugin name. **Required.** |
+| `plugin_type` | string | `static` | Plugin type: `static` or `dynamic`. |
+| `enabled` | boolean | `true` | Whether the plugin is active. |
+| `priority` | integer | `0` | Execution priority — higher runs first. |
+| `config` | map of string→value | `{}` | Plugin-specific configuration (arbitrary JSON values). |
+
+See [Plugins](/docs/plugins) for authoring and loading plugins.

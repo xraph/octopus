@@ -1,0 +1,275 @@
+---
+title: Authentication & authorization
+description: The auth_providers, auth, authz, and global cors schema — JWT, OIDC, API key, forward auth, and mTLS providers, global enforcement, and the Rhai/OPA authorization engines.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tabs } from 'fumadocs-ui/components/tabs';
+
+# Authentication & authorization
+
+This page is the configuration reference for the `auth_providers`, `auth`, and `cors` sections. For
+the request flow and conceptual depth, see the [Security](/docs/security) section.
+
+Authentication providers are declared once under `auth_providers` (a map keyed by provider name)
+and referenced by name from the global `auth` block or from a route's `auth_provider` field. A
+single auth-gateway middleware enforces both authentication and authorization; it is enabled when
+any provider is defined or when `auth.global_enforce` is true.
+
+```yaml
+auth_providers:
+  primary-jwt:
+    type: jwt
+    secret: "${JWT_SECRET}"
+    algorithm: HS256
+    issuer: https://auth.example.com
+
+auth:
+  default_provider: primary-jwt
+  global_enforce: true
+  skip_paths: ["/health", "/public/*"]
+  authz:
+    engine: rhai
+```
+
+## Auth providers
+
+`auth_providers` is a map from provider name to a provider definition. Each definition is tagged by
+a `type` field (`jwt`, `oidc`, `api_key`, `forward_auth`, or `mtls`).
+
+<Tabs items={['JWT', 'OIDC', 'API key', 'Forward auth', 'mTLS']}>
+
+<div title="JWT">
+
+```yaml
+auth_providers:
+  primary-jwt:
+    type: jwt
+    secret: "${JWT_SECRET}"
+    algorithm: HS256
+    issuer: https://auth.example.com
+    audience: my-api
+```
+
+`type: jwt` — validate JWTs against a static key.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `secret` | string | none | HMAC secret for HS256/HS384/HS512. |
+| `public_key` | string | none | RSA/ECDSA public key as a PEM string. |
+| `public_key_file` | string | none | Path to a public key file. |
+| `algorithm` | string | `HS256` | Signing algorithm (`HS256`, `RS256`, `ES256`, …). |
+| `issuer` | string | none | Expected `iss` claim. |
+| `audience` | string | none | Expected `aud` claim. |
+| `header_name` | string | `Authorization` | Header to read the token from. |
+| `token_prefix` | string | `Bearer ` | Prefix stripped from the header value. |
+
+</div>
+
+<div title="OIDC">
+
+```yaml
+auth_providers:
+  google:
+    type: oidc
+    issuer_url: https://accounts.google.com
+    audience: my-client-id
+    jwks_refresh_interval: 1h
+```
+
+`type: oidc` — discover an OpenID Connect provider and validate its tokens with auto-refreshed JWKS.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `issuer_url` | string | — | OIDC issuer URL. **Required.** |
+| `audience` | string | none | Expected audience. |
+| `jwks_refresh_interval` | duration | `1h` | JWKS key refresh interval. |
+| `required_scopes` | array of string | `[]` | Scopes the token must carry. |
+| `header_name` | string | `Authorization` | Header to read the token from. |
+| `token_prefix` | string | `Bearer ` | Prefix stripped from the header value. |
+| `fallback_provider` | string | none | Provider name to fall back to if OIDC discovery fails. |
+
+</div>
+
+<div title="API key">
+
+```yaml
+auth_providers:
+  service-keys:
+    type: api_key
+    header_name: X-API-Key
+    keys:
+      - key: "${PARTNER_KEY}"
+        name: partner-a
+        scopes: [read]
+        rate_limit: 600
+```
+
+`type: api_key` — match keys presented in a header or query parameter.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `header_name` | string | `X-API-Key` | Header carrying the API key. |
+| `query_param` | string | none | Optional query parameter carrying the API key. |
+| `keys` | array | `[]` | Static API key entries. See below. |
+| `external_validator` | string | none | URL to validate keys against (POST with the key in the body). |
+
+**`keys[]` entries:**
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `key` | string | — | The API key value. **Required.** |
+| `name` | string | — | Human-readable name for the key holder. **Required.** |
+| `scopes` | array of string | `[]` | Scopes granted to this key. |
+| `rate_limit` | integer | none | Per-key rate limit (requests per minute). |
+
+</div>
+
+<div title="Forward auth">
+
+```yaml
+auth_providers:
+  external:
+    type: forward_auth
+    endpoint: http://authsvc:9000/verify
+    forward_headers: [Authorization, Cookie, X-Forwarded-For]
+    response_headers: [X-Auth-Subject, X-Auth-Role, X-Auth-Scopes]
+    timeout: 5s
+    cache_ttl: 30s
+```
+
+`type: forward_auth` — delegate the decision to an external HTTP service.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `endpoint` | string | — | External auth service endpoint. **Required.** |
+| `forward_headers` | array of string | `[Authorization, Cookie, X-Forwarded-For]` | Headers forwarded to the auth service. |
+| `response_headers` | array of string | `[X-Auth-Subject, X-Auth-Role, X-Auth-Scopes]` | Headers copied from the auth response onto the upstream request. |
+| `timeout` | duration | `5s` | Auth service timeout. |
+| `cache_ttl` | duration | none | Cache auth responses by token hash for this duration. |
+
+</div>
+
+<div title="mTLS">
+
+```yaml
+auth_providers:
+  client-certs:
+    type: mtls
+    client_ca_file: /etc/octopus/ca.pem
+    require_client_cert: true
+    extract_cn_as_principal: true
+    cn_to_roles:
+      "admin.*": [admin]
+```
+
+`type: mtls` — authenticate clients by their presented certificate.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `client_ca_file` | string | — | Client CA certificate file. **Required.** |
+| `require_client_cert` | boolean | `true` | Require a client certificate. |
+| `extract_cn_as_principal` | boolean | `true` | Use the certificate CN as the principal ID. |
+| `cn_to_roles` | map of string→array | `{}` | Map CN patterns to roles. |
+
+</div>
+
+</Tabs>
+
+## `auth`
+
+Global authentication settings. All fields have defaults, so the whole block is optional.
+
+```yaml
+auth:
+  default_provider: primary-jwt
+  global_enforce: true
+  skip_paths: ["/health", "/public/*"]
+  token_cache_ttl: 60s
+  error_format: json
+```
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `default_provider` | string | none | Provider applied to routes without an explicit `auth_provider`. |
+| `global_enforce` | boolean | `false` | Require auth on all routes unless `skip_auth` or matched by `skip_paths`. |
+| `skip_paths` | array of string | `[]` | Paths exempt from authentication (supports wildcards). |
+| `principal_header` | string | `X-Auth-Principal` | Header injected with the authenticated principal ID. |
+| `roles_header` | string | `X-Auth-Roles` | Header injected with the principal's roles. |
+| `scopes_header` | string | `X-Auth-Scopes` | Header injected with the authenticated scopes. |
+| `token_cache_ttl` | duration | `60s` | Cache validated tokens for this duration. |
+| `error_format` | string | `json` | Error response format: `json` or `text`. |
+| `authz` | object | Rhai engine | Authorization settings. See [below](#authz). |
+
+## Authz
+
+`auth.authz` selects the authorization engine and holds global rules.
+
+```yaml
+auth:
+  authz:
+    engine: both
+    global_rules:
+      - name: deny-internal
+        rule: 'request.path.starts_with("/internal")'
+        action: deny
+    opa:
+      endpoint: http://opa:8181/v1/data/octopus/allow
+      timeout: 100ms
+      cache_ttl: 5m
+      fail_open: false
+```
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `engine` | string | `rhai` | Authorization engine: `rhai`, `opa`, or `both`. |
+| `global_rules` | array | `[]` | Rules applied to all authenticated requests. See below. |
+| `opa` | object | none | OPA integration settings. See below. |
+
+**`global_rules[]` entries (`AuthzRule`):**
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `name` | string | — | Rule name. **Required.** |
+| `description` | string | none | Optional description. |
+| `engine` | string | inherits | Override engine for this rule (`rhai`, `opa`, or `both`). |
+| `rule` | string | — | Rhai expression or OPA policy path. **Required.** |
+| `action` | string | `allow` | Action when the rule matches: `allow` or `deny`. |
+
+**`opa` object (`OpaConfig`):**
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `endpoint` | string | — | OPA REST API endpoint. **Required.** |
+| `timeout` | duration | `100ms` | Request timeout. |
+| `cache_ttl` | duration | `5m` | Cache OPA decisions for this duration. |
+| `fail_open` | boolean | `false` | Allow the request if OPA is unreachable. |
+
+## Global CORS
+
+The top-level `cors` section sets a global CORS policy. Individual routes can override it with
+`routes[].cors` (see [Routes](/docs/configuration/routes)).
+
+```yaml
+cors:
+  allowed_origins: ["https://app.example.com"]
+  allowed_methods: [GET, POST, PUT, DELETE, OPTIONS]
+  allowed_headers: [Authorization, Content-Type]
+  exposed_headers: [X-Request-Id]
+  max_age: 3600
+  allow_credentials: true
+```
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `allowed_origins` | array of string | `[]` | Permitted origins (use `["*"]` with care). |
+| `allowed_methods` | array of string | `[GET, POST, PUT, DELETE, OPTIONS]` | Permitted HTTP methods. |
+| `allowed_headers` | array of string | `[]` | Permitted request headers. |
+| `exposed_headers` | array of string | `[]` | Response headers exposed to the browser. |
+| `max_age` | integer (seconds) | `3600` | Preflight cache max age. |
+| `allow_credentials` | boolean | `false` | Allow credentials (cookies, auth headers). |
+
+<Callout type="info">
+  Authorization rules use the embedded Rhai engine, an external OPA service, or both. See
+  [Security](/docs/security) for guidance on writing rules and policies.
+</Callout>

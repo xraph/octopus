@@ -1,0 +1,101 @@
+---
+title: Routes
+description: The routes section — path matching, method filtering, prefix rewriting, priority, per-route authentication and authorization, per-route timeout, rate limiting, and CORS.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Routes
+
+A route maps an incoming request to an upstream. The `routes` field is an array; it defaults to
+empty. Each route must reference an upstream that exists in [`upstreams`](/docs/configuration/upstreams)
+(validation fails otherwise), and its `path` must start with `/`.
+
+```yaml
+routes:
+  - path: /api/users
+    methods: [GET, POST]
+    upstream: user-service
+    priority: 10
+    strip_prefix: /api
+    timeout: 15s
+    auth_provider: primary-jwt
+    require_roles: [admin]
+    rate_limit:
+      requests_per_window: 100
+      window_size: 1m
+    cors:
+      allowed_origins: ["https://app.example.com"]
+      allow_credentials: true
+```
+
+## `routes[]`
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `path` | string | — | Path pattern to match. **Required** (must start with `/`). |
+| `methods` | array of string | `[]` | HTTP methods to match. Empty means all methods. |
+| `upstream` | string | — | Target upstream name. **Required** (must exist in `upstreams`). |
+| `priority` | integer | `0` | Higher priority routes are matched first. |
+| `strip_prefix` | string | none | Prefix removed from the path before proxying. |
+| `add_prefix` | string | none | Prefix prepended to the path before proxying. |
+| `metadata` | map of string→string | `{}` | Arbitrary route metadata. |
+| `auth_provider` | string | none | Auth provider name for this route (overrides the global `auth.default_provider`). |
+| `skip_auth` | boolean | `false` | Skip authentication for this route. |
+| `require_roles` | array of string | `[]` | Roles required for authorization. |
+| `require_scopes` | array of string | `[]` | Scopes required for authorization. |
+| `authz_rule` | string | none | Custom authorization rule (a Rhai expression). |
+| `timeout` | duration | none | Per-route request timeout, overriding `gateway.request_timeout`. |
+| `rate_limit` | object | none | Per-route rate limit. See [below](#rate-limit). |
+| `cors` | object | none | Per-route CORS override. See [below](#cors). |
+
+<Callout type="info">
+  Routes have no `retry` or `canary` fields. Authentication and authorization behavior set here is
+  evaluated by the auth middleware — see [Authentication & authorization](/docs/configuration/auth)
+  and the [Security](/docs/security) section for the request flow.
+</Callout>
+
+## Rate limit
+
+The per-route `rate_limit` object uses a fixed window: a number of requests allowed per window
+duration.
+
+```yaml
+rate_limit:
+  requests_per_window: 100
+  window_size: 1m
+```
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `requests_per_window` | integer | — | Requests allowed per window. **Required.** |
+| `window_size` | duration | — | Window length. **Required.** |
+
+<Callout type="warn">
+  This is the real schema. Older example files use `rate_limit: { requests_per_second: ... }`,
+  which is **not** a valid field and is silently ignored.
+</Callout>
+
+## CORS
+
+The per-route `cors` object overrides the global [`cors`](/docs/configuration/auth) policy for this
+route.
+
+```yaml
+cors:
+  allowed_origins: ["https://app.example.com"]
+  allowed_methods: [GET, POST]
+  allowed_headers: [Authorization, Content-Type]
+  allow_credentials: true
+  max_age: 3600
+```
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `allowed_origins` | array of string | `[]` | Permitted origins. |
+| `allowed_methods` | array of string | `[]` | Permitted HTTP methods. |
+| `allowed_headers` | array of string | `[]` | Permitted request headers. |
+| `allow_credentials` | boolean | `false` | Allow credentials (cookies, auth headers). |
+| `max_age` | integer (seconds) | `3600` | Preflight cache max age. |
+
+See [Routing](/docs/concepts/routing) for how path matching and priority resolve to a single route.

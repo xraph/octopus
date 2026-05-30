@@ -1,0 +1,106 @@
+---
+title: Discovery
+description: In-cluster service discovery from the discovery.k8s.io/v1 EndpointSlice API, the RBAC it needs, namespace scoping, include_not_ready, and the legacy Endpoints fallback.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Discovery
+
+Inside the cluster, Octopus discovers upstream Pod endpoints from the Kubernetes API. The primary
+path uses the **`discovery.k8s.io/v1` EndpointSlice** API, which reflects Pod scale up/down — events
+a Service-only watch would miss. The legacy `Endpoints` API is retained as a fallback for clusters
+where the EndpointSlice API is unavailable.
+
+This is configured as a FARP discovery backend of type `kubernetes`. It is independent of the
+[operator](/docs/kubernetes/operator): the operator programs *routes* from Gateway API / Octopus
+CRDs, while discovery populates *upstream instances*.
+
+## How it works
+
+- It lists `Service` objects (honoring the label selector) and the EndpointSlices that own them
+  (matched via the `kubernetes.io/service-name` label), then groups slices by their owning
+  `(namespace, service)`.
+- For each Service that passed the selector, it emits one upstream instance **per ready endpoint
+  address × port**. Slices of `addressType: FQDN` are skipped (no routable IPs).
+- A watch on EndpointSlices keeps instances current: applied/updated slices re-discover the owning
+  Service, deleted slices deregister it. Because slices change on scale events, scaling a Deployment
+  up or down is reflected without a Service event.
+- Each endpoint's `ready` condition maps to instance health: `ready: true` → healthy, `false` →
+  unhealthy, unset → unknown.
+
+## Configuration
+
+Discovery is enabled under `farp.discovery.backends` as a `kubernetes` backend:
+
+```yaml
+farp:
+  enabled: true
+  discovery:
+    backends:
+      - type: kubernetes
+        enabled: true
+        config:
+          # "" = watch all namespaces (needs cluster-scoped RBAC).
+          namespace: ""
+          # label_selector: "app.kubernetes.io/part-of=my-platform"
+          watch_interval: 30s
+          use_endpoint_slices: true
+          include_not_ready: false
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `namespace` | string | (required) | Namespace to watch. Empty string watches **all** namespaces (requires cluster-scoped RBAC). |
+| `label_selector` | string | _(unset)_ | Label selector filtering which Services are discovered. |
+| `watch_interval` | duration | (required) | Resync/poll interval. |
+| `use_endpoint_slices` | bool | `true` | Prefer the EndpointSlice API; fall back to `Endpoints` if it's unavailable. |
+| `include_not_ready` | bool | `false` | Also emit endpoints whose `ready` condition is `false`/unknown. |
+
+<Callout type="info">
+  When `namespace` is empty (all namespaces) the discovery client lists/watches cluster-wide; when
+  set, it scopes the API calls to that one namespace. Single-namespace discovery only needs a
+  namespaced `Role`.
+</Callout>
+
+## `include_not_ready`
+
+By default only **ready** endpoints become upstream instances, so traffic is never sent to a Pod
+that is still starting or failing its readiness probe. Set `include_not_ready: true` to also surface
+not-ready endpoints (for example, to drive your own health-aware load balancing); they are emitted
+with unhealthy/unknown health rather than being dropped.
+
+## EndpointSlice vs. Endpoints fallback
+
+With `use_endpoint_slices: true` (the default), discovery runs the EndpointSlice path and only falls
+back to the legacy `Endpoints` API if that path errors (e.g. the API is not served). The
+EndpointSlice path is preferred because it reflects scale up/down; the `Endpoints` fallback lists
+ready addresses per Service subset and treats all listed addresses as healthy.
+
+## RBAC
+
+Discovery needs `get`/`list`/`watch` on the following. The Helm chart's RBAC already grants these:
+
+```yaml
+- apiGroups: [""]
+  resources: ["services", "endpoints"]   # Service metadata + legacy Endpoints fallback
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["discovery.k8s.io"]
+  resources: ["endpointslices"]          # primary discovery source
+  verbs: ["get", "list", "watch"]
+```
+
+To watch across all namespaces you need a `ClusterRole`/`ClusterRoleBinding`
+(`rbac.clusterScoped=true`, the chart default). To restrict discovery to one namespace, set
+`rbac.clusterScoped=false` and `discovery.namespace=<ns>`; the chart then creates a namespaced
+`Role`/`RoleBinding` covering just `services`, `endpoints`, and `endpointslices`. You can confirm
+access with:
+
+```bash
+kubectl auth can-i list endpointslices \
+  --as=system:serviceaccount:octopus:octopus
+```
+
+See [Probes & drain](/docs/kubernetes/probes-and-drain) for how the first discovery sync gates
+readiness, and the [Helm chart](/docs/kubernetes/helm-chart) page for the RBAC and discovery-scope
+values.

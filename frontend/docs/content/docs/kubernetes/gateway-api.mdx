@@ -1,0 +1,221 @@
+---
+title: Gateway API
+description: How Octopus reconciles the standard Kubernetes Gateway API — GatewayClass, Gateway listeners, HTTPRoute and GRPCRoute matches/filters/backendRefs, and ReferenceGrant for cross-namespace backends — and exactly which fields are honored.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Gateway API
+
+Octopus reconciles a subset of the standard Kubernetes Gateway API
+(`gateway.networking.k8s.io/v1`, plus `ReferenceGrant` at `v1beta1`) into its router. This page
+documents **only the fields the translators actually honor** — examples avoid fields that are parsed
+but ignored, or not modeled at all.
+
+Install the upstream Gateway API CRDs separately (see [Install](/docs/kubernetes/install)); Octopus
+does not ship them.
+
+## GatewayClass
+
+Octopus claims the `controllerName` **`gateway.octopus.io/gateway-controller`**. Create a
+`GatewayClass` pointing at it, and point your `Gateway` at that class:
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: octopus
+spec:
+  controllerName: gateway.octopus.io/gateway-controller
+```
+
+<Callout type="info">
+  The operator does not currently reconcile `GatewayClass` objects or write status onto them. The
+  class name is a selector: set the gateway's `kubernetes.gateway_class` (default `octopus`) to match
+  the class you intend this instance to serve. The honored `GatewayClassSpec` field is
+  `controllerName`.
+</Callout>
+
+## Gateway
+
+A `Gateway` declares listeners. Octopus reads listener **hostnames** (to constrain attached routes)
+and, when [TLS termination](/docs/kubernetes/tls-cert-manager) is enabled, listener **TLS** config.
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: octopus-gateway
+  namespace: infra
+spec:
+  gatewayClassName: octopus
+  listeners:
+    - name: web
+      hostname: "*.example.com"
+      port: 8080
+      protocol: HTTP
+    - name: websecure
+      hostname: api.example.com
+      port: 443
+      protocol: HTTPS
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: api-tls
+```
+
+Honored `GatewaySpec` fields: `gatewayClassName`, and per-listener `name`, `hostname`, `port`,
+`protocol`, and `tls` (`mode`, `certificateRefs`). A listener's `hostname` is intersected with each
+attached route's `hostnames` (see [hostname intersection](#hostnames-and-listener-intersection)).
+
+## HTTPRoute
+
+An `HTTPRoute` attaches to one or more parent gateways and declares routing rules. Each **rule**
+produces one upstream cluster (from its `backendRefs`) and a set of routes — one per
+host × match × path × method.
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: api-route
+  namespace: default
+spec:
+  parentRefs:
+    - name: octopus-gateway
+      namespace: infra
+  hostnames:
+    - api.example.com
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api
+          method: GET
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /v2
+      backendRefs:
+        - name: api-svc
+          port: 8080
+          weight: 100
+```
+
+### Honored fields
+
+| Field | Honored | Notes |
+|-------|---------|-------|
+| `parentRefs[].name` / `.namespace` / `.sectionName` | Yes | Used to find the parent `Gateway`'s listeners; `sectionName` selects a specific listener by name. |
+| `hostnames` | Yes | Intersected with the parent listener hostnames. |
+| `rules[].matches[].path` | Yes — `Exact` and `PathPrefix` only | `PathPrefix /p` matches both `/p` and `/p/...`. `RegularExpression` is **not** supported (such a match is skipped with a warning). A match with no `path` defaults to `PathPrefix /`. |
+| `rules[].matches[].method` | Yes | An unset method expands to `GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS`. |
+| `rules[].filters[]` — `URLRewrite` with `path.type: ReplacePrefixMatch` | Yes | Strips the matched prefix and adds `replacePrefixMatch`. |
+| `rules[].backendRefs[].name` / `.namespace` / `.port` / `.weight` | Yes | Builds the rule's upstream cluster. `port` defaults to `80`. Multiple backends → weighted round-robin. |
+
+### Not honored
+
+These are parsed (so manifests using them still apply) but **do not currently affect routing**, so
+don't rely on them:
+
+- `matches[].headers` (header matching).
+- `URLRewrite` `hostname` rewrite and `path.type: ReplaceFullPath`; non-`URLRewrite` filters such as
+  `RequestRedirect` and `RequestHeaderModifier`.
+
+A rule with **no `backendRefs`** is skipped with a warning.
+
+### Backend resolution
+
+A `backendRef` resolves to the in-cluster Service DNS name `<name>.<namespace>.svc` on the given
+port (the route's own namespace is used when `backendRef.namespace` is omitted). With multiple
+backends in a rule, the cluster uses weighted round-robin and each backend's `weight` (default `1`)
+sets its share.
+
+### Hostnames and listener intersection
+
+The effective hosts for a route are the Gateway API intersection of the route's `hostnames` with its
+parent listener's `hostname`:
+
+- both empty → matches any host;
+- one empty → the non-empty side constrains;
+- both set → pairwise overlap (exact vs. wildcard `*.x`); a non-overlapping pair attaches nothing.
+
+So an `HTTPRoute` with `hostnames: [api.acme.com, evil.com]` attached to a listener with
+`hostname: "*.acme.com"` only serves `api.acme.com`.
+
+## GRPCRoute
+
+A `GRPCRoute` is reconciled like an `HTTPRoute`, but gRPC calls are HTTP/2 `POST`s to
+`/{service}/{method}`. Each rule produces one upstream cluster and one route per match.
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: GRPCRoute
+metadata:
+  name: echo-route
+  namespace: default
+spec:
+  parentRefs:
+    - name: octopus-gateway
+      namespace: infra
+  rules:
+    - matches:
+        - method:
+            service: echo.Echo
+            method: Ping
+      backendRefs:
+        - name: echo-svc
+          port: 50051
+```
+
+Honored fields: `parentRefs`, `hostnames` (same intersection as HTTPRoute), `rules[].matches[].method`
+(`service` + `method`), and `rules[].backendRefs[]`. The method match maps to a path:
+
+| Match | Router path |
+|-------|-------------|
+| `service` + `method` | `/{service}/{method}` |
+| `service` only | `/{service}/...` (all methods of that service) |
+| no `method` match | `/...` (all gRPC calls) |
+
+`GRPCRoute` `matches[].headers` and any `filters[]` are parsed but not honored; a rule with no
+`backendRefs` is skipped.
+
+## ReferenceGrant (cross-namespace backends)
+
+A reference from a resource in one namespace to a target in another (e.g. a backend `Service`, or a
+TLS `Secret`) requires a `ReferenceGrant` **in the target's namespace**. Same-namespace references
+never need a grant. The grant's `from` lists the permitted referencing `(group, kind, namespace)`
+tuples; `to` lists the permitted target `(group, kind, [name])` — omitting `name` permits all names
+of that kind.
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-routes-from-app
+  namespace: backends            # lives in the TARGET namespace
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: app             # who may reference
+  to:
+    - group: ""
+      kind: Service              # what may be referenced (here, all Services in `backends`)
+```
+
+<Callout type="info">
+  ReferenceGrant also gates a Gateway's cross-namespace TLS `Secret` refs (see
+  [TLS & cert-manager](/docs/kubernetes/tls-cert-manager)) and an `OctopusRoute` convention's
+  cross-namespace `scriptRef` `ConfigMap` (see [Octopus CRDs](/docs/kubernetes/octopus-crds)).
+</Callout>
+
+## How it reconciles into the router
+
+Every honored Gateway API resource is translated into the same intermediate route table that Octopus
+CRDs and your static config feed into, then applied to the live router — see
+[Operator](/docs/kubernetes/operator) for the merge pipeline, and [Octopus CRDs](/docs/kubernetes/octopus-crds)
+for layering Octopus-specific behavior (auth, rate limiting) onto these routes with `OctopusPolicy`.

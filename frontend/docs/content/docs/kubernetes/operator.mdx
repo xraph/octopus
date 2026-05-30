@@ -1,0 +1,134 @@
+---
+title: Operator
+description: The in-process Octopus operator — what it watches, the reconcile → merge → apply pipeline into the live router, source precedence, namespace scoping, and RBAC.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Operator
+
+Octopus runs its controller **in-process**: the same binary that serves traffic also watches the
+cluster and programs its own router. There is no sidecar and no separate control plane. The operator
+reconciles two resource models — the standard Gateway API and the [Octopus
+CRDs](/docs/kubernetes/octopus-crds) — into one merged route table that it applies to the live
+router.
+
+## Enabling it
+
+The operator is off by default. Enable it in the gateway config:
+
+```yaml
+kubernetes:
+  enabled: true
+  gateway_class: octopus       # GatewayClass name this instance reconciles
+  watch_namespaces: []         # empty = all namespaces (needs cluster-scoped RBAC)
+  leader_election: true
+  terminate_tls: false
+```
+
+The `controllerName` Octopus claims for GatewayClasses is `gateway.octopus.io/gateway-controller`;
+the Octopus CRD API group is `gateway.octopus.io`. See [Gateway API](/docs/kubernetes/gateway-api)
+for the GatewayClass wiring.
+
+## What it watches
+
+For each watch scope (see [namespace scoping](#namespace-scoping)) the operator spawns watchers for:
+
+- **Gateway API routes** — `HTTPRoute` and `GRPCRoute` (`gateway.networking.k8s.io/v1`).
+- **`Gateway`** — used to resolve listener hostnames so routes can intersect their `hostnames` with
+  the parent listener's, and (with `terminate_tls`) to source listener TLS Secrets.
+- **Octopus CRDs** — `OctopusRoute`, `OctopusUpstream`, `OctopusPolicy`.
+- **`ConfigMap`** — to resolve an `OctopusRoute` convention's `scriptRef` to an inline script.
+- **`ReferenceGrant`** (`gateway.networking.k8s.io/v1beta1`) — to authorize cross-namespace
+  references (a convention's `scriptRef`, or a Gateway's TLS Secret).
+
+When `terminate_tls` is enabled, an additional set of watchers (Gateway, TLS `Secret`,
+ReferenceGrant) drives the TLS reconciler — see [TLS & cert-manager](/docs/kubernetes/tls-cert-manager).
+
+<Callout type="info">
+  The controller watches `Gateway` resources to read their listeners, but it does not currently
+  reconcile `GatewayClass` objects or write status back to any resource. Treat the GatewayClass as a
+  selector/marker (Octopus matches on its own `gateway_class`) rather than something the operator
+  acknowledges via status conditions.
+</Callout>
+
+## The reconcile → merge → apply pipeline
+
+The reconciler keeps a `RouteStore` keyed by **source**. Every watch event upserts or removes that
+source's contribution and then re-applies the whole table:
+
+1. **Translate.** Each resource is translated into an intermediate, source-agnostic route
+   representation (plus any upstream clusters it implies). For example an `HTTPRoute` rule becomes
+   one upstream cluster and a set of per-host, per-method, per-path routes; an `OctopusRoute` becomes
+   one route per method referencing its upstream by name. See
+   [Gateway API](/docs/kubernetes/gateway-api) and [Octopus CRDs](/docs/kubernetes/octopus-crds) for
+   the exact field mappings.
+2. **Merge.** The store merges every source into one routing table.
+3. **Overlay policies.** `OctopusPolicy` overlays are applied to the merged routes they target
+   (GEP-713 policy attachment) — enriching them with auth/rate-limit, either filling gaps or
+   overriding inline settings.
+4. **Apply.** The resulting table is programmed into the live `Router`. The router is swapped
+   atomically, so requests continue to be served against the previous table until the new one is in
+   place.
+
+Re-translation is incremental but dependency-aware: changing a parent `Gateway` re-translates the
+routes attached to it (their hostname intersection may have changed), and changing a `ConfigMap` or
+`ReferenceGrant` re-resolves the `OctopusRoute`s that depend on it.
+
+## Source precedence and merge
+
+Routes carry their originating **source**: `Static` (the gateway config file), `GatewayApi`
+(`HTTPRoute`/`GRPCRoute`), or `OctopusRoute`. Static config routes are **seeded** into the store at
+startup so they survive every subsequent merge — reconciling Gateway API or Octopus resources adds
+to, and never erases, your static configuration. Each source is stored under its own key, so
+upserting or deleting one resource only replaces that resource's slice of the table.
+
+When two routes collide on the same host/method/path, `OctopusRoute.priority` (higher wins) breaks
+the tie; Gateway API routes do not set an explicit priority.
+
+## Namespace scoping
+
+`watch_namespaces` controls the watch scope:
+
+- **Empty (default)** — watch **all** namespaces. This requires cluster-scoped RBAC
+  (`rbac.clusterScoped=true`).
+- **A list** — one set of watchers is spawned **per listed namespace**, and the operator only sees
+  resources in those namespaces.
+
+```yaml
+kubernetes:
+  enabled: true
+  watch_namespaces: [team-a, team-b]
+```
+
+## Leader election
+
+`leader_election` defaults to `true`. It is intended so that, when the gateway is scaled to multiple
+replicas, only one replica owns status writes (via a `coordination.k8s.io/v1` Lease). Each replica
+still watches and programs **its own** in-process router, so routing works on every replica
+regardless — leader election concerns shared cluster-side writes, not the data path.
+
+## RBAC
+
+The operator needs `get`/`list`/`watch` on the resources it reconciles. The chart's cluster-scoped
+RBAC grants:
+
+```yaml
+- apiGroups: ["gateway.networking.k8s.io"]
+  resources: ["httproutes", "grpcroutes", "gateways", "gatewayclasses"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["gateway.octopus.io"]
+  resources: ["octopusgateways", "octopusroutes", "octopusupstreams", "octopuspolicies"]
+  verbs: ["get", "list", "watch"]
+# Only needed for operator-managed TLS termination:
+- apiGroups: ["gateway.networking.k8s.io"]
+  resources: ["referencegrants"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list", "watch"]
+```
+
+(Discovery additionally needs `services`/`endpoints`/`endpointslices`, and `configmaps` access is
+required for convention `scriptRef` resolution.) See [Discovery](/docs/kubernetes/discovery) for the
+discovery RBAC and the [Helm chart](/docs/kubernetes/helm-chart) page for the full role.

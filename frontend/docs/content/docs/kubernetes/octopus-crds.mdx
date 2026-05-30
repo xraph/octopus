@@ -1,0 +1,205 @@
+---
+title: Octopus CRDs
+description: The OctopusGateway, OctopusRoute, OctopusUpstream, and OctopusPolicy custom resources — their spec fields, example manifests, and how OctopusPolicy attaches as a GEP-713 policy overlay.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Octopus CRDs
+
+The Octopus CRDs live in the API group **`gateway.octopus.io`**, version **`v1alpha1`**, and are all
+**namespaced**. They expose Octopus-native features (auth providers, plugin chains, rate limiting,
+Rhai scripting, subdomain conventions) that the portable Gateway API does not model. Install them
+with `octopus crd | kubectl apply -f -` or the vendored bundle — see
+[Install](/docs/kubernetes/install).
+
+| Kind | Short name | Purpose |
+|------|-----------|---------|
+| `OctopusGateway` | `ogw` | A logical Octopus gateway instance (listen address, class, default auth). |
+| `OctopusRoute` | `ort` | A full-fidelity route with auth/rate-limit/plugins/scripting. |
+| `OctopusUpstream` | `oup` | An upstream cluster with explicit targets and an LB strategy. |
+| `OctopusPolicy` | `opol` | A GEP-713 policy overlay attaching behavior onto another resource. |
+
+## OctopusGateway
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `listen` | string | (required) | Listen address, e.g. `0.0.0.0:8080`. |
+| `gatewayClassName` | string | _(unset)_ | The GatewayClass this gateway serves. |
+| `defaultAuthProvider` | string | _(unset)_ | Default auth provider applied to attached routes. |
+
+```yaml
+apiVersion: gateway.octopus.io/v1alpha1
+kind: OctopusGateway
+metadata:
+  name: edge
+  namespace: default
+spec:
+  listen: "0.0.0.0:8080"
+  gatewayClassName: octopus
+  defaultAuthProvider: jwt
+```
+
+## OctopusRoute
+
+A full route. The `path` is used **as-is** as a native router pattern (it supports `:param` and
+`*wildcard`), and `upstream` references an [`OctopusUpstream`](#octopusupstream) by name (or a
+discovered service). One route is produced per method.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `parentRefs` | string[] | `[]` | Names of `OctopusGateway`/`Gateway` resources this route attaches to. |
+| `path` | string | (required) | Match path; supports `:param` and `*wildcard`. |
+| `methods` | string[] | `[]` | HTTP methods matched. Empty expands to `GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS`. |
+| `upstream` | string | (required) | Target upstream (an `OctopusUpstream` name or discovered service). |
+| `priority` | int32 | `0` | Higher wins on identical path collisions. |
+| `stripPrefix` | string | _(unset)_ | Strip this prefix before proxying. |
+| `addPrefix` | string | _(unset)_ | Add this prefix before proxying. |
+| `authProvider` | string | _(unset)_ | Named auth provider to enforce. |
+| `skipAuth` | bool | `false` | Skip authentication for this route. |
+| `requireRoles` | string[] | `[]` | Required roles. |
+| `requireScopes` | string[] | `[]` | Required scopes. |
+| `authzRule` | string | _(unset)_ | Authorization rule expression. |
+| `timeoutSeconds` | uint64 | _(unset)_ | Per-route timeout (seconds). |
+| `rateLimit` | object | _(unset)_ | Token-bucket rate limit: `requests`, `windowSeconds`. |
+| `plugins` | string[] | `[]` | Ordered plugin chain (plugin ids). |
+| `scriptRef` | string | _(unset)_ | Reference to a Rhai script (e.g. a ConfigMap name). |
+| `convention` | object | _(unset)_ | Host-to-backend convention (subdomain routing) — see below. |
+
+```yaml
+apiVersion: gateway.octopus.io/v1alpha1
+kind: OctopusRoute
+metadata:
+  name: orders
+  namespace: shop
+spec:
+  parentRefs: ["edge"]
+  path: /orders
+  methods: ["GET", "POST"]
+  upstream: orders-up
+  priority: 5
+  stripPrefix: /orders
+  authProvider: jwt
+  requireScopes: ["orders:read"]
+  timeoutSeconds: 30
+  rateLimit:
+    requests: 100
+    windowSeconds: 60
+  plugins: ["request-id"]
+```
+
+### Convention (subdomain routing)
+
+When `convention` is set, the route becomes a single wildcard-host route (`*.<baseDomain>`) whose
+backend is **derived per request from the host** — instead of declaring a route per tenant.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `baseDomain` | string | (required) | Base domain; the route matches `*.<baseDomain>`. |
+| `layout` | string[] | (required) | Label roles for the tenant prefix, left to right: `service`, `namespace` (alias `tenant`), or `ignore`. |
+| `defaultService` | string | _(unset)_ | Service name when `layout` has no `service` entry. |
+| `port` | uint16 | `80` | Upstream port for the derived Service. |
+| `script` | string | _(unset)_ | Inline Rhai script mapping `host` → `#{namespace, service[, port]}`, overriding `layout` when it returns a mapping. |
+| `scriptRef` | object | _(unset)_ | Load the host-resolution script from a ConfigMap (`name`, `key`, optional `namespace`); ignored when `script` is set. Cross-namespace refs require a `ReferenceGrant`. |
+| `backendStrategy` | string | `ServiceDNS` | `ServiceDNS` routes to the cluster Service DNS name; `EndpointSlice` balances across Pod IPs directly. |
+
+```yaml
+apiVersion: gateway.octopus.io/v1alpha1
+kind: OctopusRoute
+metadata:
+  name: tenants
+  namespace: default
+spec:
+  path: /*rest
+  methods: ["GET"]
+  upstream: unused           # ignored when a convention derives the backend
+  convention:
+    baseDomain: platform.com
+    layout: ["service", "namespace"]   # orders.acme.platform.com → svc `orders` in ns `acme`
+    port: 8080
+    backendStrategy: ServiceDNS
+```
+
+<Callout type="info">
+  A convention's `scriptRef` is resolved from a `ConfigMap`. Same-namespace refs work directly; a
+  cross-namespace ref requires a `ReferenceGrant` (kind `OctopusRoute`, group `gateway.octopus.io`)
+  in the ConfigMap's namespace permitting access to `ConfigMap`. An inline `script` always wins over
+  a `scriptRef`.
+</Callout>
+
+## OctopusUpstream
+
+An explicit upstream cluster, referenced by name from `OctopusRoute.upstream`.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `targets` | object[] | `[]` | Targets: `host`, `port`, optional `weight` (default `1`). |
+| `lbStrategy` | string | `round_robin` | One of `round_robin`, `least_conn`/`least_connections`, `weighted`/`weighted_round_robin`, `random`, `ip_hash`. |
+
+```yaml
+apiVersion: gateway.octopus.io/v1alpha1
+kind: OctopusUpstream
+metadata:
+  name: orders-up
+  namespace: shop
+spec:
+  lbStrategy: least_conn
+  targets:
+    - host: 10.0.0.1
+      port: 8080
+      weight: 3
+    - host: 10.0.0.2
+      port: 8080
+```
+
+## OctopusPolicy
+
+`OctopusPolicy` is a **GEP-713 policy attachment**: it never creates routes, it *enriches* the
+routes produced by the resource it targets via `targetRef`. With `overrideRoute: true` it overrides
+the target's inline settings; otherwise it only fills gaps ("default" semantics).
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `targetRef` | object | (required) | The resource to attach to: `group`, `kind`, `name`, optional `sectionName`. |
+| `authProvider` | string | _(unset)_ | Auth provider to enforce on the target's routes. |
+| `plugins` | string[] | `[]` | Ordered plugin chain to apply. |
+| `rateLimit` | object | _(unset)_ | Rate limit to apply (`requests`, `windowSeconds`). |
+| `scriptRef` | string | _(unset)_ | Reference to a Rhai script. |
+| `overrideRoute` | bool | `false` | `true` overrides route-inline settings; default only fills gaps. |
+
+Supported `targetRef.kind` values are **`HTTPRoute`**, **`GRPCRoute`** (both in group
+`gateway.networking.k8s.io`), and **`OctopusRoute`** (group `gateway.octopus.io`). A policy targets
+routes in **its own namespace**. Other kinds are ignored.
+
+```yaml
+apiVersion: gateway.octopus.io/v1alpha1
+kind: OctopusPolicy
+metadata:
+  name: orders-auth
+  namespace: shop
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: api-route
+  authProvider: jwt
+  rateLimit:
+    requests: 100
+    windowSeconds: 60
+  overrideRoute: false
+```
+
+<Callout type="warn">
+  The overlay currently applies `authProvider` and `rateLimit` to the targeted routes. `plugins` and
+  `scriptRef` are accepted on the spec but are not yet applied by the overlay — prefer setting those
+  inline on an `OctopusRoute` for now.
+</Callout>
+
+## Reconciling alongside Gateway API
+
+Octopus CRDs and Gateway API resources are translated into the **same** intermediate route table and
+merged into one live router (alongside your static config). A common pattern: define portable routing
+with `HTTPRoute`/`GRPCRoute`, then layer Octopus-specific behavior onto those routes with an
+`OctopusPolicy`. Or skip the Gateway API entirely and use `OctopusRoute` + `OctopusUpstream` for
+full-fidelity Octopus routing. See [Operator](/docs/kubernetes/operator) for the merge and precedence
+model and [Gateway API](/docs/kubernetes/gateway-api) for the Gateway API field mappings.

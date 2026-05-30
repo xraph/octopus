@@ -1,0 +1,118 @@
+---
+title: Upstreams
+description: The upstreams section — backend services, their instances, load-balancing policy, active health checks, and circuit breakers.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Upstreams
+
+An upstream is a named backend service made up of one or more instances. Routes target an upstream
+by name. The `upstreams` field is an array; it defaults to empty.
+
+```yaml
+upstreams:
+  - name: user-service
+    lb_policy: round_robin
+    instances:
+      - id: user-1
+        host: 10.0.0.11
+        port: 8080
+        weight: 1
+      - id: user-2
+        host: 10.0.0.12
+        port: 8080
+        weight: 2
+    health_check:
+      type: http
+      path: /healthz
+      interval: 10s
+      timeout: 2s
+      healthy_threshold: 2
+      unhealthy_threshold: 3
+    circuit_breaker:
+      error_threshold: 50.0
+      min_requests: 20
+      timeout: 30s
+```
+
+## `upstreams[]`
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `name` | string | — | Unique upstream name, referenced by `routes[].upstream`. **Required.** |
+| `instances` | array | — | Service instances. **Required** (may be empty, but routing then has no target). |
+| `lb_policy` | string | `round_robin` | Load-balancing policy. See [valid values](#load-balancing-policy). |
+| `health_check` | object | none | Active health checking. See [below](#health-check). |
+| `circuit_breaker` | object | none | Circuit breaker. See [below](#circuit-breaker). |
+
+## Load-balancing policy
+
+`lb_policy` is a string. The recognized values are:
+
+| Value | Strategy |
+| --- | --- |
+| `round_robin` | Round-robin (default). |
+| `least_connections` (alias `least_conn`) | Fewest in-flight connections. |
+| `weighted_round_robin` (alias `weighted`) | Round-robin weighted by instance `weight`. |
+| `random` | Random selection. |
+| `ip_hash` | Consistent hash on client IP. |
+
+<Callout type="warn">
+  Only the Kubernetes/operator-driven path currently maps `lb_policy` (and instance `weight`) to a
+  live balancer. When upstreams are registered from a **static config file**, the gateway uses
+  round-robin regardless of `lb_policy`, and `health_check` / `circuit_breaker` on the upstream are
+  parsed and validated but not yet wired into the static registration path. See
+  [Load balancing](/docs/concepts/load-balancing), [Health checks](/docs/concepts/health-checks),
+  and [Circuit breaker](/docs/concepts/circuit-breaker) for the runtime model.
+</Callout>
+
+## `instances[]`
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `id` | string | — | Unique instance ID. **Required** (must be non-empty). |
+| `host` | string | — | Host or IP address. **Required** (must be non-empty). |
+| `port` | integer | — | Port number. **Required** (must be greater than zero). |
+| `weight` | integer | `1` | Relative weight for weighted load balancing. |
+| `metadata` | map of string→string | `{}` | Arbitrary instance metadata. |
+
+## Health check
+
+The `health_check` object configures active health checking for the upstream.
+
+```yaml
+health_check:
+  type: http
+  path: /healthz
+  interval: 10s
+  timeout: 2s
+  healthy_threshold: 2
+  unhealthy_threshold: 3
+```
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `type` | string | — | Check type: `http`, `tcp`, or `grpc`. **Required.** (YAML key is `type`.) |
+| `path` | string | none | Path for HTTP checks. |
+| `interval` | duration | — | Time between checks. **Required.** |
+| `timeout` | duration | — | Timeout for each check. **Required.** |
+| `healthy_threshold` | integer | `2` | Consecutive successes before marking healthy. |
+| `unhealthy_threshold` | integer | `3` | Consecutive failures before marking unhealthy. |
+
+## Circuit breaker
+
+The `circuit_breaker` object trips the upstream after a sustained error rate.
+
+```yaml
+circuit_breaker:
+  error_threshold: 50.0
+  min_requests: 20
+  timeout: 30s
+```
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `error_threshold` | float | — | Error-rate percentage that opens the breaker. **Required.** |
+| `min_requests` | integer | — | Minimum requests in the window before the breaker can trip. **Required.** |
+| `timeout` | duration | — | How long the breaker stays open before probing again. **Required.** |

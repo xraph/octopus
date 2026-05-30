@@ -1,0 +1,34 @@
+---
+title: Admin
+description: The admin section — protecting the admin dashboard with an auth provider and an IP allowlist.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Admin
+
+The `admin` section controls access to the built-in admin dashboard. The block is optional; by
+default the dashboard has no auth provider and an empty IP allowlist (all IPs permitted).
+
+```yaml
+admin:
+  auth_provider: client-certs
+  allowed_ips:
+    - 10.0.0.0/8
+    - 192.168.1.10
+```
+
+## `admin`
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `auth_provider` | string | none | Name of an [auth provider](/docs/configuration/auth) used to protect the dashboard. When unset, the dashboard requires no authentication. |
+| `allowed_ips` | array of string | `[]` | IP allowlist for admin access. Empty means all IPs are allowed. |
+
+<Callout type="warn">
+  With no `auth_provider` and an empty `allowed_ips`, the admin dashboard is reachable without
+  authentication. Set at least one of these in any non-local deployment.
+</Callout>
+
+The dashboard is served under the gateway's internal route prefix (see
+`gateway.internal_route_prefix` in [Gateway](/docs/configuration/gateway)).
