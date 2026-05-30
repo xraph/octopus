@@ -17,12 +17,16 @@
 
 pub mod admin;
 pub mod handler;
+pub mod lifecycle;
+pub mod probes;
 pub mod server;
 pub mod shutdown;
 pub mod worker;
 
 pub use admin::AdminHandler;
 pub use handler::RequestHandler;
+pub use lifecycle::LifecycleState;
+pub use probes::ProbeRoutes;
 pub use server::{Server, ServerBuilder};
 pub use shutdown::{ShutdownSignal, SignalHandler};
 
@@ -41,6 +45,7 @@ pub enum RuntimeState {
 
 /// Re-export commonly used types
 pub mod prelude {
+    pub use crate::lifecycle::LifecycleState;
     pub use crate::server::{Server, ServerBuilder};
     pub use crate::shutdown::{ShutdownSignal, SignalHandler};
     pub use crate::RuntimeState;

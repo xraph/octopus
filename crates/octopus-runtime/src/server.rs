@@ -1,5 +1,6 @@
 //! HTTP server implementation
 
+use crate::lifecycle::LifecycleState;
 use crate::shutdown::ShutdownSignal;
 use crate::worker::{WorkerConfig, WorkerPool};
 use crate::RuntimeState;
@@ -11,7 +12,7 @@ use octopus_protocols::{GraphQLHandler, GrpcHandler, ProtocolHandler};
 use octopus_proxy::{HttpClient, HttpProxy, ProxyConfig};
 use octopus_router::Router;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -30,6 +31,8 @@ pub struct Server {
     protocol_handlers: Vec<Arc<dyn ProtocolHandler>>,
     /// Optional config file paths for hot-reload support.
     config_paths: Option<Vec<std::path::PathBuf>>,
+    /// Lifecycle state backing the health probes.
+    lifecycle: LifecycleState,
 }
 
 impl std::fmt::Debug for Server {
@@ -73,6 +76,11 @@ impl Server {
         self.shutdown.clone()
     }
 
+    /// Get the lifecycle state (liveness/readiness/startup).
+    pub fn lifecycle(&self) -> LifecycleState {
+        self.lifecycle.clone()
+    }
+
     /// Run the server
     pub async fn run(&self) -> Result<()> {
         // Set state to running
@@ -80,6 +88,7 @@ impl Server {
             let mut state = self.state.write().await;
             *state = RuntimeState::Running;
         }
+        self.lifecycle.mark_running();
 
         tracing::info!(
             listen = %self.listen_addr(),
@@ -93,6 +102,8 @@ impl Server {
             .map_err(|e| {
                 Error::Runtime(format!("Failed to bind to {}: {}", self.listen_addr(), e))
             })?;
+        // Listener is bound — startup probe can now pass.
+        self.lifecycle.mark_bind_complete();
 
         // Create TLS acceptor if configured
         let tls_acceptor = if let Some(ref tls_config) = self.config.gateway.tls {
@@ -281,6 +292,18 @@ impl Server {
             );
         }
 
+        // Wire health probes (/livez, /readyz, /startupz).
+        {
+            let probes_cfg = &self.config.gateway.probes;
+            let probe_routes = crate::probes::ProbeRoutes {
+                enabled: probes_cfg.enabled,
+                liveness: probes_cfg.liveness_path.clone(),
+                readiness: probes_cfg.readiness_path.clone(),
+                startup: probes_cfg.startup_path.clone(),
+            };
+            handler.set_lifecycle(self.lifecycle.clone(), probe_routes);
+        }
+
         let mut shutdown_rx = self.shutdown.subscribe();
 
         // Optionally start the config file watcher for hot-reload.
@@ -299,6 +322,13 @@ impl Server {
             } else {
                 None
             };
+
+        // A pinned timer for the graceful-drain window. It starts far in the
+        // future and is only armed (reset) once shutdown begins; the `draining`
+        // guard keeps it inert until then.
+        let drain_deadline = tokio::time::sleep(Duration::from_secs(31_536_000));
+        tokio::pin!(drain_deadline);
+        let mut draining = false;
 
         loop {
             tokio::select! {
@@ -493,25 +523,44 @@ impl Server {
                     );
                 }
 
-                // Handle shutdown signal
-                _ = shutdown_rx.recv() => {
+                // Handle shutdown signal — begin draining but KEEP accepting for
+                // pre_stop_delay so connections that arrive before kube-proxy /
+                // the EndpointSlice controller deregister this pod still succeed,
+                // and the readiness probe can observe 503 before we halt.
+                _ = shutdown_rx.recv(), if !draining => {
                     tracing::info!("Shutdown signal received");
+                    // Readiness → NotReady immediately.
+                    self.lifecycle.begin_draining();
+                    {
+                        let mut state = self.state.write().await;
+                        *state = RuntimeState::ShuttingDown;
+                    }
+                    let pre_stop_delay = self.config.gateway.pre_stop_delay;
+                    if pre_stop_delay.is_zero() {
+                        break;
+                    }
+                    tracing::info!(
+                        delay_secs = pre_stop_delay.as_secs(),
+                        "Draining: readiness now NotReady; serving during pre-stop delay"
+                    );
+                    draining = true;
+                    drain_deadline
+                        .as_mut()
+                        .reset(tokio::time::Instant::now() + pre_stop_delay);
+                }
+
+                // Pre-stop delay elapsed: stop accepting and drain in-flight.
+                _ = &mut drain_deadline, if draining => {
+                    tracing::info!("Pre-stop delay elapsed; halting accept loop");
                     break;
                 }
             }
         }
 
-        // Set state to shutting down
-        {
-            let mut state = self.state.write().await;
-            *state = RuntimeState::ShuttingDown;
-        }
-
+        // Readiness is NotReady, state is ShuttingDown, and we have stopped
+        // accepting (the accept loop exited after the pre-stop drain window).
+        // Now wait for in-flight requests to drain.
         tracing::info!("Server shutting down gracefully");
-
-        // Graceful shutdown implementation:
-        // 1. Stop accepting new connections (already done by breaking the loop)
-        // 2. Wait for active requests to complete with timeout
 
         let shutdown_timeout = self.config.gateway.shutdown_timeout;
         let start = std::time::Instant::now();
@@ -555,6 +604,7 @@ impl Server {
             let mut state = self.state.write().await;
             *state = RuntimeState::Stopped;
         }
+        self.lifecycle.mark_stopped();
 
         tracing::info!(
             shutdown_duration_ms = start.elapsed().as_millis(),
@@ -637,6 +687,15 @@ impl ServerBuilder {
 
         // Create worker pool (only if not in test mode)
         let worker_pool = Arc::new(WorkerPool::new(self.worker_config)?);
+
+        // Lifecycle state backing the health probes. Readiness waits for the
+        // first discovery sync only when discovery is configured and the
+        // operator asked for it.
+        let discovery_required = config.farp.enabled
+            && self.enable_farp
+            && config.farp.discovery.is_some()
+            && config.gateway.probes.require_discovery_sync;
+        let lifecycle = LifecycleState::new(discovery_required);
 
         // Create router
         let router = Arc::new(Router::new());
@@ -724,6 +783,7 @@ impl ServerBuilder {
                     Arc::clone(&router),
                     discovery_config,
                     config.farp.watch_interval,
+                    lifecycle.discovery_synced_flag(),
                 )
                 .await;
             }
@@ -770,6 +830,9 @@ impl ServerBuilder {
             "Server components initialized"
         );
 
+        // Configuration is fully loaded and applied.
+        lifecycle.mark_config_loaded();
+
         Ok(Server {
             config,
             router,
@@ -782,6 +845,7 @@ impl ServerBuilder {
             plugin_manager,
             protocol_handlers,
             config_paths: self.config_paths,
+            lifecycle,
         })
     }
 
@@ -792,6 +856,7 @@ impl ServerBuilder {
         router: Arc<octopus_router::Router>,
         discovery_config: &octopus_config::types::FarpDiscoveryConfig,
         watch_interval: std::time::Duration,
+        discovery_synced: Arc<AtomicBool>,
     ) {
         use octopus_config::types::DiscoveryBackendConfig;
 
@@ -806,7 +871,8 @@ impl ServerBuilder {
             3, // max_missed_discoveries
             federation,
         )
-        .with_router(router);
+        .with_router(router)
+        .with_readiness_flag(Arc::clone(&discovery_synced));
 
         let mut enabled_backends = 0;
 
@@ -929,6 +995,8 @@ impl ServerBuilder {
                                 Some(config.namespace.clone())
                             },
                             label_selector: config.label_selector.clone(),
+                            use_endpoint_slices: config.use_endpoint_slices,
+                            include_not_ready: config.include_not_ready,
                         };
 
                         match K8sDiscovery::new(k8s_config).await {
@@ -972,6 +1040,9 @@ impl ServerBuilder {
             });
         } else {
             tracing::warn!("No discovery backends enabled, FARP discovery watcher will not start");
+            // No watcher will run to flip the readiness flag, so mark discovery
+            // as synced now — otherwise readiness would be blocked forever.
+            discovery_synced.store(true, Ordering::Release);
         }
     }
 }
@@ -989,17 +1060,19 @@ mod tests {
     use std::time::Duration;
 
     fn test_config() -> Config {
-        use octopus_config::types::CompressionConfig;
+        use octopus_config::types::{CompressionConfig, ProbeConfig};
         ConfigBuilder::new()
             .gateway(GatewayConfig {
                 listen: "127.0.0.1:8080".parse().unwrap(),
                 workers: 4,
                 request_timeout: Duration::from_secs(30),
                 shutdown_timeout: Duration::from_secs(30),
+                pre_stop_delay: Duration::from_secs(5),
                 max_body_size: 10 * 1024 * 1024,
                 tls: None,
                 compression: CompressionConfig::default(),
                 internal_route_prefix: Some("__".to_string()),
+                probes: ProbeConfig::default(),
             })
             .build()
             .unwrap()

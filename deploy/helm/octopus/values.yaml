@@ -1,0 +1,172 @@
+# Default values for the Octopus API Gateway chart.
+
+replicaCount: 2
+
+image:
+  repository: ghcr.io/xraph/octopus
+  # Overrides the image tag (defaults to the chart appVersion).
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Extra args appended to the container command. The entrypoint is the `octopus`
+# binary; the chart always runs `serve --config /etc/octopus/config.yaml`.
+extraArgs: []
+
+# RUST_LOG / log level for the gateway.
+logLevel: info
+
+# ── Gateway configuration ────────────────────────────────────────────────────
+# Rendered verbatim into a ConfigMap as `config.yaml` and mounted at
+# /etc/octopus/config.yaml. Add upstreams/routes/plugins/auth here as needed.
+config:
+  gateway:
+    listen: "0.0.0.0:8080"
+    workers: 0
+    request_timeout: 30s
+    shutdown_timeout: 30s
+    # Delay after SIGTERM before we stop accepting, so kube-proxy / the
+    # EndpointSlice controller deregisters this pod first. Keep
+    # terminationGracePeriodSeconds >= pre_stop_delay + shutdown_timeout.
+    pre_stop_delay: 5s
+    probes:
+      enabled: true
+      liveness_path: /livez
+      readiness_path: /readyz
+      startup_path: /startupz
+      require_discovery_sync: true
+  farp:
+    enabled: true
+    discovery:
+      backends:
+        - type: kubernetes
+          enabled: true
+          config:
+            # "" = watch all namespaces (needs cluster-scoped RBAC).
+            namespace: ""
+            # label_selector: "app.kubernetes.io/part-of=my-platform"
+            watch_interval: 30s
+            use_endpoint_slices: true
+            include_not_ready: false
+  observability:
+    logging:
+      level: info
+      format: json
+
+# ── Service discovery scope ──────────────────────────────────────────────────
+discovery:
+  # Namespace the gateway watches. Empty watches all namespaces and requires a
+  # ClusterRole (rbac.clusterScoped=true).
+  namespace: ""
+
+# ── Service account & RBAC ───────────────────────────────────────────────────
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+rbac:
+  create: true
+  # true → ClusterRole + ClusterRoleBinding (required to watch across
+  # namespaces). false → namespaced Role + RoleBinding in the release namespace.
+  clusterScoped: true
+
+# ── Service ──────────────────────────────────────────────────────────────────
+service:
+  type: ClusterIP
+  port: 8080
+  adminPort: 9090
+  annotations: {}
+
+# ── Pod / container ──────────────────────────────────────────────────────────
+# Must be >= pre_stop_delay + shutdown_timeout.
+terminationGracePeriodSeconds: 45
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+# Spread replicas across nodes/zones for availability.
+topologySpreadConstraints: []
+
+# Optional preStop hook. If enabled, set config.gateway.pre_stop_delay to 0 so
+# the delay isn't counted twice.
+preStopHook:
+  enabled: false
+  sleepSeconds: 5
+
+# ── Probes ───────────────────────────────────────────────────────────────────
+probes:
+  startup:
+    path: /startupz
+    periodSeconds: 2
+    failureThreshold: 30 # ~60s startup budget
+  liveness:
+    path: /livez
+    periodSeconds: 10
+    failureThreshold: 3
+  readiness:
+    path: /readyz
+    periodSeconds: 5
+    failureThreshold: 2
+
+# ── Metrics ──────────────────────────────────────────────────────────────────
+metrics:
+  # Path the gateway serves Prometheus metrics on (gateway port).
+  path: /metrics
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    labels: {}
+
+# ── Autoscaling ──────────────────────────────────────────────────────────────
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+# ── Disruption budget ────────────────────────────────────────────────────────
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+  # maxUnavailable: 1
+
+# ── Ingress (optional; for fronting the gateway with another ingress) ─────────
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: gateway.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []

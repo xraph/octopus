@@ -42,6 +42,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         libssl3 \
+        curl \
     && rm -rf /var/lib/apt/lists/* \
     && useradd -m -u 1000 -s /bin/bash octopus \
     && mkdir -p /etc/octopus /var/log/octopus \
@@ -65,9 +66,9 @@ USER octopus
 
 EXPOSE 8080 9090
 
-# TCP liveness on the default gateway listen port (config default 0.0.0.0:8080).
+# HTTP liveness on the gateway's /livez probe (config default 0.0.0.0:8080).
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080' || exit 1
+    CMD curl -fsS http://127.0.0.1:8080/livez || exit 1
 
 ENTRYPOINT ["octopus"]
-CMD ["--config", "/etc/octopus/config.yaml"]
+CMD ["serve", "--config", "/etc/octopus/config.yaml"]

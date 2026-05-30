@@ -17,7 +17,26 @@ gateway:
   
   # Graceful shutdown timeout (wait for in-flight requests)
   shutdown_timeout: 30s
-  
+
+  # Delay after SIGTERM before we stop accepting connections. On Kubernetes this
+  # gives kube-proxy / the EndpointSlice controller time to observe the pod going
+  # NotReady and stop routing new traffic to it before in-flight draining begins.
+  # Keep terminationGracePeriodSeconds >= pre_stop_delay + shutdown_timeout.
+  # Set to 0 if a preStop hook owns the delay instead.
+  pre_stop_delay: 5s
+
+  # Kubernetes-style health probes (served on the gateway listen port).
+  #   /livez   — liveness  (200 while the process is alive, even while draining)
+  #   /readyz  — readiness (200 only when ready; flips to 503 on SIGTERM)
+  #   /startupz — startup  (200 once the listener has bound)
+  probes:
+    enabled: true
+    liveness_path: /livez
+    readiness_path: /readyz
+    startup_path: /startupz
+    # When true, readiness waits for the first service-discovery sync.
+    require_discovery_sync: true
+
   # Max request body size (in bytes)
   max_body_size: 10485760  # 10MB
   
@@ -119,12 +138,16 @@ farp:
       #     watch_interval: 10s
       
       # Kubernetes service discovery (for K8s deployments)
+      # Uses the discovery.k8s.io/v1 EndpointSlice API, which reflects pod
+      # scale up/down (the legacy Endpoints + Service watch misses those).
       # - type: kubernetes
       #   enabled: false
       #   config:
-      #     namespace: "default"
+      #     namespace: "default"           # "" watches all namespaces (needs cluster-scoped RBAC)
       #     label_selector: "app=octopus-service"
       #     watch_interval: 10s
+      #     use_endpoint_slices: true      # prefer EndpointSlice; falls back to Endpoints
+      #     include_not_ready: false       # include endpoints whose ready condition is false/unknown
       
       # DNS-based discovery (for simple deployments)
       # - type: dns

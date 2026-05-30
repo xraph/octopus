@@ -1,0 +1,65 @@
+{{- if .Values.rbac.create -}}
+{{- if .Values.rbac.clusterScoped }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "octopus.fullname" . }}
+  labels:
+    {{- include "octopus.labels" . | nindent 4 }}
+rules:
+  # Service metadata + legacy Endpoints fallback.
+  - apiGroups: [""]
+    resources: ["services", "endpoints"]
+    verbs: ["get", "list", "watch"]
+  # Primary discovery source — reflects pod scale up/down.
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "octopus.fullname" . }}
+  labels:
+    {{- include "octopus.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "octopus.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "octopus.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- else }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "octopus.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "octopus.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["services", "endpoints"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "octopus.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "octopus.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "octopus.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "octopus.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- end }}

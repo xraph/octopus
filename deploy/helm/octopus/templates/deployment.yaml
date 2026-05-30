@@ -1,0 +1,116 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "octopus.fullname" . }}
+  labels:
+    {{- include "octopus.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "octopus.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # Roll pods when the rendered config changes.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "octopus.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "octopus.serviceAccountName" . }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: octopus
+          image: {{ include "octopus.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - serve
+            - --config
+            - /etc/octopus/config.yaml
+            {{- with .Values.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          env:
+            - name: RUST_LOG
+              value: {{ .Values.logLevel | quote }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: admin
+              containerPort: 9090
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              path: {{ .Values.probes.startup.path }}
+              port: http
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.liveness.path }}
+              port: http
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readiness.path }}
+              port: http
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+          {{- if .Values.preStopHook.enabled }}
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep {{ .Values.preStopHook.sleepSeconds }}"]
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/octopus
+              readOnly: true
+            - name: logs
+              mountPath: /var/log/octopus
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "octopus.fullname" . }}-config
+        - name: logs
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

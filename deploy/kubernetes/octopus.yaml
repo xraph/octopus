@@ -1,0 +1,207 @@
+# Octopus API Gateway — raw Kubernetes manifests.
+#
+# A self-contained, Helm-free deployment. Edit the namespace, image, and the
+# ConfigMap `config.yaml` to suit your environment, then:
+#
+#   kubectl apply -f deploy/kubernetes/octopus.yaml
+#
+# For a parameterized install, prefer the Helm chart in deploy/helm/octopus.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: octopus
+  labels:
+    app.kubernetes.io/name: octopus
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: octopus
+  namespace: octopus
+  labels:
+    app.kubernetes.io/name: octopus
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: octopus
+  labels:
+    app.kubernetes.io/name: octopus
+rules:
+  - apiGroups: [""]
+    resources: ["services", "endpoints"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: octopus
+  labels:
+    app.kubernetes.io/name: octopus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: octopus
+subjects:
+  - kind: ServiceAccount
+    name: octopus
+    namespace: octopus
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: octopus-config
+  namespace: octopus
+  labels:
+    app.kubernetes.io/name: octopus
+data:
+  config.yaml: |
+    gateway:
+      listen: "0.0.0.0:8080"
+      workers: 0
+      request_timeout: 30s
+      shutdown_timeout: 30s
+      pre_stop_delay: 5s
+      probes:
+        enabled: true
+        liveness_path: /livez
+        readiness_path: /readyz
+        startup_path: /startupz
+        require_discovery_sync: true
+    farp:
+      enabled: true
+      discovery:
+        backends:
+          - type: kubernetes
+            enabled: true
+            config:
+              namespace: ""
+              watch_interval: 30s
+              use_endpoint_slices: true
+              include_not_ready: false
+    observability:
+      logging:
+        level: info
+        format: json
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: octopus
+  namespace: octopus
+  labels:
+    app.kubernetes.io/name: octopus
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: octopus
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: octopus
+    spec:
+      serviceAccountName: octopus
+      # >= pre_stop_delay + shutdown_timeout.
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: octopus
+          image: ghcr.io/xraph/octopus:latest
+          imagePullPolicy: IfNotPresent
+          args: ["serve", "--config", "/etc/octopus/config.yaml"]
+          env:
+            - name: RUST_LOG
+              value: info
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: admin
+              containerPort: 9090
+          startupProbe:
+            httpGet:
+              path: /startupz
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 2
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/octopus
+              readOnly: true
+            - name: logs
+              mountPath: /var/log/octopus
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: octopus-config
+        - name: logs
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: octopus
+  namespace: octopus
+  labels:
+    app.kubernetes.io/name: octopus
+spec:
+  type: ClusterIP
+  publishNotReadyAddresses: false
+  selector:
+    app.kubernetes.io/name: octopus
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+    - name: admin
+      port: 9090
+      targetPort: admin
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: octopus
+  namespace: octopus
+  labels:
+    app.kubernetes.io/name: octopus
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: octopus

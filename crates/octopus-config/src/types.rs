@@ -70,6 +70,15 @@ pub struct GatewayConfig {
     #[serde(default = "default_shutdown_timeout", with = "humantime_serde")]
     pub shutdown_timeout: Duration,
 
+    /// Delay after SIGTERM before the server stops accepting connections.
+    ///
+    /// Gives Kubernetes (kube-proxy / the EndpointSlice controller) time to
+    /// observe the pod going NotReady and stop routing new traffic to it,
+    /// before in-flight draining begins. Set to 0 to disable (e.g. when a
+    /// `preStop` hook owns the delay instead).
+    #[serde(default = "default_pre_stop_delay", with = "humantime_serde")]
+    pub pre_stop_delay: Duration,
+
     /// Max request body size (bytes)
     #[serde(default = "default_max_body_size")]
     pub max_body_size: usize,
@@ -87,10 +96,72 @@ pub struct GatewayConfig {
     /// Example: "/__admin", "/__metrics", "/__farp"
     #[serde(default = "default_internal_prefix")]
     pub internal_route_prefix: Option<String>,
+
+    /// Kubernetes-style health probe endpoints (`/livez`, `/readyz`, `/startupz`).
+    #[serde(default)]
+    pub probes: ProbeConfig,
 }
 
 fn default_internal_prefix() -> Option<String> {
     Some("__".to_string())
+}
+
+/// Health probe configuration.
+///
+/// These endpoints are served on the gateway listen port and are intended for
+/// Kubernetes liveness/readiness/startup probes (and any external load
+/// balancer health checks).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProbeConfig {
+    /// Whether the probe endpoints are served.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+
+    /// Liveness probe path (200 while the process is alive).
+    #[serde(default = "default_liveness_path")]
+    pub liveness_path: String,
+
+    /// Readiness probe path (200 only when ready to serve new traffic).
+    #[serde(default = "default_readiness_path")]
+    pub readiness_path: String,
+
+    /// Startup probe path (200 once the listener has bound).
+    #[serde(default = "default_startup_path")]
+    pub startup_path: String,
+
+    /// When true, readiness waits for the first service-discovery sync to
+    /// complete before reporting ready (only applies when discovery is
+    /// configured).
+    #[serde(default = "default_true")]
+    pub require_discovery_sync: bool,
+}
+
+impl Default for ProbeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            liveness_path: default_liveness_path(),
+            readiness_path: default_readiness_path(),
+            startup_path: default_startup_path(),
+            require_discovery_sync: true,
+        }
+    }
+}
+
+fn default_liveness_path() -> String {
+    "/livez".to_string()
+}
+
+fn default_readiness_path() -> String {
+    "/readyz".to_string()
+}
+
+fn default_startup_path() -> String {
+    "/startupz".to_string()
+}
+
+fn default_pre_stop_delay() -> Duration {
+    Duration::from_secs(5)
 }
 
 /// TLS configuration
@@ -291,6 +362,16 @@ pub struct KubernetesDiscoveryConfig {
     /// Watch interval
     #[serde(with = "humantime_serde")]
     pub watch_interval: Duration,
+    /// Prefer the `discovery.k8s.io/v1` EndpointSlice API (default: true).
+    ///
+    /// EndpointSlices reflect pod scale up/down (which the legacy Endpoints +
+    /// Service watch misses). Falls back to Endpoints if the API is
+    /// unavailable.
+    #[serde(default = "default_true")]
+    pub use_endpoint_slices: bool,
+    /// Include endpoints whose `ready` condition is false/unknown (default: false).
+    #[serde(default)]
+    pub include_not_ready: bool,
 }
 
 /// Helper function for default true

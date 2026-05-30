@@ -1,0 +1,25 @@
+Octopus API Gateway has been deployed.
+
+Release:   {{ .Release.Name }}
+Namespace: {{ .Release.Namespace }}
+Replicas:  {{ if .Values.autoscaling.enabled }}{{ .Values.autoscaling.minReplicas }}–{{ .Values.autoscaling.maxReplicas }} (HPA){{ else }}{{ .Values.replicaCount }}{{ end }}
+
+Probes (served on the gateway port):
+  startup:   {{ .Values.probes.startup.path }}
+  liveness:  {{ .Values.probes.liveness.path }}
+  readiness: {{ .Values.probes.readiness.path }}
+
+Reach the gateway from inside the cluster:
+  http://{{ include "octopus.fullname" . }}.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}
+
+Port-forward it locally:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "octopus.fullname" . }} 8080:{{ .Values.service.port }}
+  curl -i http://127.0.0.1:8080/readyz
+
+{{- if .Values.rbac.create }}
+{{- if and .Values.rbac.clusterScoped (eq .Values.discovery.namespace "") }}
+
+Discovery is cluster-scoped (watching all namespaces). Verify RBAC:
+  kubectl auth can-i list endpointslices --as=system:serviceaccount:{{ .Release.Namespace }}:{{ include "octopus.serviceAccountName" . }}
+{{- end }}
+{{- end }}

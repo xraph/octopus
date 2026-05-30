@@ -1,0 +1,20 @@
+apiVersion: v2
+name: octopus
+description: Octopus API Gateway — a high-performance, Kubernetes-first API gateway
+type: application
+# Chart version. Bump on every chart change.
+version: 0.1.0
+# Version of Octopus this chart deploys by default.
+appVersion: "0.1.0"
+home: https://github.com/xraph/octopus
+sources:
+  - https://github.com/xraph/octopus
+keywords:
+  - api-gateway
+  - proxy
+  - kubernetes
+  - farp
+  - microservices
+maintainers:
+  - name: xraph
+    url: https://github.com/xraph

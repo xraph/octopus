@@ -1,6 +1,8 @@
 //! HTTP request handler
 
 use crate::admin::AdminHandler;
+use crate::lifecycle::LifecycleState;
+use crate::probes::{self, ProbeRoutes};
 use bytes::Bytes;
 use http::{Request, Response, StatusCode};
 use http_body_util::{BodyExt, Either, Full};
@@ -51,6 +53,10 @@ pub struct RequestHandler {
     auth_registry: Option<Arc<octopus_auth::AuthProviderRegistry>>,
     /// Admin auth provider name
     admin_auth_provider: Option<String>,
+    /// Lifecycle state backing the health probes (None = probes disabled).
+    lifecycle: Option<LifecycleState>,
+    /// Resolved probe endpoint paths.
+    probe_routes: ProbeRoutes,
 }
 
 impl std::fmt::Debug for RequestHandler {
@@ -89,6 +95,8 @@ impl RequestHandler {
             sse_active_count: Arc::new(AtomicUsize::new(0)),
             auth_registry: None,
             admin_auth_provider: None,
+            lifecycle: None,
+            probe_routes: ProbeRoutes::default(),
         }
     }
 
@@ -133,6 +141,8 @@ impl RequestHandler {
             sse_active_count: Arc::new(AtomicUsize::new(0)),
             auth_registry: None,
             admin_auth_provider: None,
+            lifecycle: None,
+            probe_routes: ProbeRoutes::default(),
         }
     }
 
@@ -181,6 +191,8 @@ impl RequestHandler {
             sse_active_count: Arc::new(AtomicUsize::new(0)),
             auth_registry: None,
             admin_auth_provider: None,
+            lifecycle: None,
+            probe_routes: ProbeRoutes::default(),
         }
     }
 
@@ -210,6 +222,8 @@ impl RequestHandler {
             sse_active_count: Arc::new(AtomicUsize::new(0)),
             auth_registry: None,
             admin_auth_provider: None,
+            lifecycle: None,
+            probe_routes: ProbeRoutes::default(),
         }
     }
 
@@ -221,6 +235,13 @@ impl RequestHandler {
     ) {
         self.auth_registry = Some(registry);
         self.admin_auth_provider = admin_provider;
+    }
+
+    /// Enable Kubernetes-style health probe endpoints (`/livez`, `/readyz`,
+    /// `/startupz`) backed by the given lifecycle state.
+    pub fn set_lifecycle(&mut self, lifecycle: LifecycleState, probe_routes: ProbeRoutes) {
+        self.lifecycle = Some(lifecycle);
+        self.probe_routes = probe_routes;
     }
 
     /// Get the number of active WebSocket connections
@@ -245,6 +266,33 @@ impl RequestHandler {
 
     /// Handle an incoming HTTP request (from Hyper with Incoming body)
     pub async fn handle(&self, req: Request<Incoming>) -> Result<Response<Body>> {
+        // Health probes are answered before request accounting so a readiness
+        // poll during drain never inflates the in-flight counter or holds up
+        // graceful shutdown.
+        if let Some(ref lifecycle) = self.lifecycle {
+            if let Some(resp) =
+                probes::handle_probe(lifecycle, &self.probe_routes, req.uri().path())
+            {
+                return Ok(resp.map(Either::Left));
+            }
+        }
+
+        // Prometheus metrics, served on the gateway listener so a Kubernetes
+        // ServiceMonitor / scrape annotation can reach it. Handled before
+        // request accounting so scrapes don't skew gateway request metrics.
+        {
+            let req_path = req.uri().path();
+            if req_path == "/metrics" || req_path == "/__metrics" {
+                let method = req.method().clone();
+                let req_path = req_path.to_string();
+                return self
+                    .admin_handler
+                    .handle(&method, &req_path)
+                    .await
+                    .map(|r| r.map(Either::Left));
+            }
+        }
+
         // Increment request counter
         self.request_count.fetch_add(1, Ordering::Relaxed);
 

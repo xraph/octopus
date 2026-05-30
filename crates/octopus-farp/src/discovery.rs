@@ -12,6 +12,7 @@ use octopus_core::{Error, Result, UpstreamCluster, UpstreamInstance};
 use octopus_discovery::{DiscoveryProvider, ServiceInstance};
 use octopus_router::{RouteBuilder, Router};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time;
@@ -41,6 +42,9 @@ pub struct DiscoveryWatcher {
     router: Option<Arc<Router>>,
     /// Cached routes checksums for atomic route swap detection (v1.1.0)
     routes_checksums: Arc<dashmap::DashMap<String, String>>,
+    /// Readiness flag flipped to `true` after the first full discovery sync,
+    /// so the gateway's `/readyz` probe can wait for discovery to converge.
+    readiness_flag: Option<Arc<AtomicBool>>,
 }
 
 impl std::fmt::Debug for DiscoveryWatcher {
@@ -85,6 +89,7 @@ impl DiscoveryWatcher {
             federation: Arc::new(SchemaFederation::new()),
             router: None,
             routes_checksums: Arc::new(dashmap::DashMap::new()),
+            readiness_flag: None,
         }
     }
 
@@ -106,6 +111,7 @@ impl DiscoveryWatcher {
             federation,
             router: None,
             routes_checksums: Arc::new(dashmap::DashMap::new()),
+            readiness_flag: None,
         }
     }
 
@@ -113,6 +119,15 @@ impl DiscoveryWatcher {
     #[must_use]
     pub fn with_router(mut self, router: Arc<Router>) -> Self {
         self.router = Some(router);
+        self
+    }
+
+    /// Set a readiness flag that is flipped to `true` after the first full
+    /// discovery sync completes. Used to gate the gateway's `/readyz` probe so
+    /// it only reports ready once discovery has converged.
+    #[must_use]
+    pub fn with_readiness_flag(mut self, flag: Arc<AtomicBool>) -> Self {
+        self.readiness_flag = Some(flag);
         self
     }
 
@@ -136,12 +151,26 @@ impl DiscoveryWatcher {
         let mut interval = time::interval(self.watch_interval);
         interval.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
 
+        let mut first_pass = true;
+
         loop {
             interval.tick().await;
 
             for provider in &self.providers {
                 if let Err(e) = self.sync_provider(provider.clone()).await {
                     error!(error = %e, "Failed to sync discovery provider");
+                }
+            }
+
+            // After the first complete pass over all providers, signal readiness
+            // so the gateway's `/readyz` probe can report ready. We flip even if
+            // some providers errored — the system has converged as far as it can
+            // and should accept traffic rather than stay NotReady indefinitely.
+            if first_pass {
+                first_pass = false;
+                if let Some(ref flag) = self.readiness_flag {
+                    flag.store(true, Ordering::Release);
+                    info!("Initial discovery sync complete; gateway is ready");
                 }
             }
         }

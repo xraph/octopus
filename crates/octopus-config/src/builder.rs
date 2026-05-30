@@ -28,10 +28,12 @@ impl ConfigBuilder {
             workers: 0,
             request_timeout: std::time::Duration::from_secs(30),
             shutdown_timeout: std::time::Duration::from_secs(30),
+            pre_stop_delay: std::time::Duration::from_secs(5),
             max_body_size: 10 * 1024 * 1024,
             tls: None,
             compression: crate::types::CompressionConfig::default(),
             internal_route_prefix: Some("__".to_string()),
+            probes: crate::types::ProbeConfig::default(),
         });
         gateway.listen = addr;
         self

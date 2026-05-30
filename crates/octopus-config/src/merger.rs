@@ -78,10 +78,12 @@ fn merge_gateway_config(base: GatewayConfig, overlay: GatewayConfig) -> GatewayC
         },
         request_timeout: overlay.request_timeout,
         shutdown_timeout: overlay.shutdown_timeout,
+        pre_stop_delay: overlay.pre_stop_delay,
         max_body_size: overlay.max_body_size,
         tls: overlay.tls.or(base.tls),
         compression: overlay.compression,
         internal_route_prefix: overlay.internal_route_prefix.or(base.internal_route_prefix),
+        probes: overlay.probes,
     }
 }
 
@@ -143,10 +145,12 @@ mod tests {
                 workers,
                 request_timeout: Duration::from_secs(30),
                 shutdown_timeout: Duration::from_secs(10),
+                pre_stop_delay: Duration::from_secs(5),
                 max_body_size: 10 * 1024 * 1024,
                 tls: None,
                 compression: CompressionConfig::default(),
                 internal_route_prefix: None,
+                probes: crate::types::ProbeConfig::default(),
             },
             upstreams: vec![],
             routes: vec![],
