@@ -1,0 +1,479 @@
+{
+  "Octopus Full Config": {
+    "prefix": "octopus-config",
+    "description": "Complete Octopus API Gateway configuration boilerplate",
+    "body": [
+      "# Octopus API Gateway Configuration",
+      "",
+      "gateway:",
+      "  listen: \"${1:0.0.0.0:8080}\"",
+      "  workers: ${2:0}  # 0 = auto-detect CPU cores",
+      "  request_timeout: ${3:30s}",
+      "  shutdown_timeout: ${4:30s}",
+      "  max_body_size: ${5:10485760}  # 10MB",
+      "  compression:",
+      "    enabled: true",
+      "    level: 6",
+      "    min_size: 1024",
+      "    algorithms: [br, zstd, gzip]",
+      "",
+      "# Authentication providers",
+      "auth_providers:",
+      "  ${6:default-jwt}:",
+      "    type: jwt",
+      "    secret: \"\\${JWT_SECRET}\"",
+      "    algorithm: HS256",
+      "",
+      "# Global auth settings",
+      "auth:",
+      "  default_provider: \"${6:default-jwt}\"",
+      "  global_enforce: ${7|true,false|}",
+      "  skip_paths:",
+      "    - \"/health\"",
+      "    - \"/metrics\"",
+      "",
+      "# FARP service discovery",
+      "farp:",
+      "  enabled: ${8|true,false|}",
+      "  watch_interval: 5s",
+      "  schema_cache_ttl: 5m",
+      "",
+      "# Upstreams",
+      "upstreams:",
+      "  - name: ${9:my-service}",
+      "    lb_policy: round_robin",
+      "    instances:",
+      "      - id: ${9:my-service}-1",
+      "        host: ${10:localhost}",
+      "        port: ${11:8081}",
+      "",
+      "# Routes",
+      "routes:",
+      "  - path: \"/api/${9:my-service}/*\"",
+      "    methods: [GET, POST, PUT, DELETE]",
+      "    upstream: ${9:my-service}",
+      "",
+      "# Observability",
+      "observability:",
+      "  logging:",
+      "    level: ${12|info,debug,warn,error|}",
+      "    format: ${13|json,text|}",
+      "  metrics:",
+      "    enabled: true",
+      "    endpoint: \"/metrics\"",
+      "$0"
+    ]
+  },
+
+  "Octopus Route": {
+    "prefix": "octopus-route",
+    "description": "Route definition for Octopus gateway",
+    "body": [
+      "- path: \"${1:/api/resource}/*\"",
+      "  methods: [${2|GET,POST,PUT,DELETE,PATCH,OPTIONS,\"GET, POST, PUT, DELETE\"|}]",
+      "  upstream: ${3:upstream-name}",
+      "  priority: ${4:100}",
+      "  # strip_prefix: \"${1:/api/resource}\"  # Remove prefix before forwarding",
+      "  # add_prefix: \"/v1\"                    # Add prefix before forwarding",
+      "  # auth_provider: \"jwt-provider\"         # Override default auth provider",
+      "  # skip_auth: false                       # Set true to skip authentication",
+      "  # require_roles: [user]                  # Required roles for authorization",
+      "  # require_scopes: [read]                 # Required scopes",
+      "  # timeout: 60s                           # Per-route timeout override",
+      "$0"
+    ]
+  },
+
+  "Octopus Upstream": {
+    "prefix": "octopus-upstream",
+    "description": "Upstream service definition with health checks",
+    "body": [
+      "- name: ${1:service-name}",
+      "  lb_policy: ${2|round_robin,least_connections,random,ip_hash|}",
+      "  instances:",
+      "    - id: ${1:service-name}-1",
+      "      host: ${3:localhost}",
+      "      port: ${4:8081}",
+      "      weight: ${5:1}",
+      "  health_check:",
+      "    type: ${6|http,tcp,grpc|}",
+      "    path: ${7:/health}",
+      "    interval: ${8:10s}",
+      "    timeout: ${9:5s}",
+      "    healthy_threshold: ${10:2}",
+      "    unhealthy_threshold: ${11:3}",
+      "  # circuit_breaker:",
+      "  #   error_threshold: 0.5  # 50% error rate triggers open state",
+      "  #   min_requests: 10",
+      "  #   timeout: 30s",
+      "$0"
+    ]
+  },
+
+  "Octopus JWT Auth Provider": {
+    "prefix": "octopus-auth-jwt",
+    "description": "JWT authentication provider configuration",
+    "body": [
+      "${1:jwt-provider}:",
+      "  type: jwt",
+      "  secret: \"${2:\\${JWT_SECRET}}\"  # HMAC secret for HS256/HS384/HS512",
+      "  # public_key: \"\"               # RSA/ECDSA public key (PEM string)",
+      "  # public_key_file: \"\"          # Path to public key file",
+      "  algorithm: ${3|HS256,HS384,HS512,RS256,RS384,RS512,ES256,ES384|}",
+      "  issuer: \"${4:octopus-gateway}\"",
+      "  audience: \"${5:api}\"",
+      "  header_name: \"${6:Authorization}\"",
+      "  token_prefix: \"${7:Bearer }\"",
+      "$0"
+    ]
+  },
+
+  "Octopus OIDC Auth Provider": {
+    "prefix": "octopus-auth-oidc",
+    "description": "OIDC authentication provider with auto-discovery",
+    "body": [
+      "${1:oidc-provider}:",
+      "  type: oidc",
+      "  issuer_url: \"${2:https://accounts.google.com}\"",
+      "  audience: \"${3:your-app.example.com}\"",
+      "  jwks_refresh_interval: ${4:1h}",
+      "  required_scopes:",
+      "    - openid",
+      "    - ${5:email}",
+      "  header_name: \"Authorization\"",
+      "  token_prefix: \"Bearer \"",
+      "  # fallback_provider: \"jwt-provider\"  # Fallback if OIDC discovery fails",
+      "$0"
+    ]
+  },
+
+  "Octopus API Key Auth Provider": {
+    "prefix": "octopus-auth-apikey",
+    "description": "API key authentication provider",
+    "body": [
+      "${1:apikey-provider}:",
+      "  type: api_key",
+      "  header_name: \"${2:X-API-Key}\"",
+      "  # query_param: \"api_key\"  # Also accept API key as query parameter",
+      "  keys:",
+      "    - key: \"${3:\\${API_KEY_1}}\"",
+      "      name: \"${4:Client A}\"",
+      "      scopes: [${5:read}]",
+      "      rate_limit: ${6:100}  # requests/minute",
+      "  # external_validator: \"http://auth-svc:8080/validate-key\"",
+      "$0"
+    ]
+  },
+
+  "Octopus Forward Auth Provider": {
+    "prefix": "octopus-auth-forward",
+    "description": "Forward auth provider (delegate to external auth service)",
+    "body": [
+      "${1:forward-auth}:",
+      "  type: forward_auth",
+      "  endpoint: \"${2:http://auth-svc:8080/verify}\"",
+      "  forward_headers:",
+      "    - Authorization",
+      "    - Cookie",
+      "    - X-Forwarded-For",
+      "  response_headers:",
+      "    - X-Auth-Subject",
+      "    - X-Auth-Role",
+      "    - X-Auth-Scopes",
+      "  timeout: ${3:5s}",
+      "  # cache_ttl: 60s  # Cache auth responses by token hash",
+      "$0"
+    ]
+  },
+
+  "Octopus mTLS Auth Provider": {
+    "prefix": "octopus-auth-mtls",
+    "description": "Mutual TLS (mTLS) client certificate authentication",
+    "body": [
+      "${1:mtls-provider}:",
+      "  type: mtls",
+      "  client_ca_file: \"${2:/etc/octopus/tls/client-ca.pem}\"",
+      "  require_client_cert: ${3|true,false|}",
+      "  extract_cn_as_principal: true",
+      "  cn_to_roles:",
+      "    \"${4:service-a.internal}\": [${5:service, reader}]",
+      "    \"${6:*.admin.internal}\": [admin, service]",
+      "$0"
+    ]
+  },
+
+  "Octopus CORS Config": {
+    "prefix": "octopus-cors",
+    "description": "Global CORS configuration",
+    "body": [
+      "cors:",
+      "  allowed_origins:",
+      "    - \"${1:https://app.example.com}\"",
+      "  allowed_methods:",
+      "    - GET",
+      "    - POST",
+      "    - PUT",
+      "    - DELETE",
+      "    - OPTIONS",
+      "  allowed_headers:",
+      "    - content-type",
+      "    - authorization",
+      "    - x-request-id",
+      "  exposed_headers:",
+      "    - x-rate-limit-remaining",
+      "    - x-rate-limit-reset",
+      "  allow_credentials: ${2|true,false|}",
+      "  max_age: ${3:3600}",
+      "$0"
+    ]
+  },
+
+  "Octopus TLS Config": {
+    "prefix": "octopus-tls",
+    "description": "TLS/HTTPS and optional mTLS configuration",
+    "body": [
+      "tls:",
+      "  cert_file: \"${1:/etc/octopus/tls/cert.pem}\"",
+      "  key_file: \"${2:/etc/octopus/tls/key.pem}\"",
+      "  # client_ca_file: \"/etc/octopus/tls/client-ca.pem\"  # For mTLS",
+      "  # require_client_cert: false",
+      "  min_tls_version: \"${3|1.2,1.3|}\"",
+      "  enable_cert_reload: ${4|true,false|}",
+      "  reload_interval_secs: ${5:300}  # 5 minutes",
+      "$0"
+    ]
+  },
+
+  "Octopus Rate Limit": {
+    "prefix": "octopus-rate-limit",
+    "description": "Rate limiting configuration (global or per-route)",
+    "body": [
+      "rate_limit:",
+      "  strategy: ${1|token_bucket,fixed_window|}",
+      "  requests_per_window: ${2:1000}",
+      "  window_size: ${3:60s}",
+      "  key_extractor: ${4|ip,header,path,global,identity|}",
+      "  # header_name: \"X-API-Key\"  # Only used with key_extractor: header",
+      "$0"
+    ]
+  },
+
+  "Octopus Health Check": {
+    "prefix": "octopus-health-check",
+    "description": "Upstream health check configuration",
+    "body": [
+      "health_check:",
+      "  type: ${1|http,tcp,grpc|}",
+      "  path: ${2:/health}",
+      "  interval: ${3:10s}",
+      "  timeout: ${4:5s}",
+      "  healthy_threshold: ${5:2}",
+      "  unhealthy_threshold: ${6:3}",
+      "$0"
+    ]
+  },
+
+  "Octopus FARP Config": {
+    "prefix": "octopus-farp",
+    "description": "FARP service discovery and auto-routing configuration",
+    "body": [
+      "farp:",
+      "  enabled: ${1|true,false|}",
+      "  watch_interval: ${2:5s}",
+      "  schema_cache_ttl: ${3:5m}",
+      "  discovery:",
+      "    backends:",
+      "      # mDNS discovery (local development)",
+      "      # - type: mdns",
+      "      #   enabled: true",
+      "      #   config:",
+      "      #     service_type: \"_octopus._tcp\"",
+      "      #     domain: \"local.\"",
+      "      #     watch_interval: 30s",
+      "      #     query_timeout: 5s",
+      "      #     enable_ipv6: false",
+      "      ",
+      "      # Consul discovery (production)",
+      "      # - type: consul",
+      "      #   enabled: true",
+      "      #   config:",
+      "      #     address: \"localhost:8500\"",
+      "      #     datacenter: \"dc1\"",
+      "      #     watch_interval: 10s",
+      "      ",
+      "      # Kubernetes discovery",
+      "      # - type: kubernetes",
+      "      #   enabled: true",
+      "      #   config:",
+      "      #     namespace: \"default\"",
+      "      #     label_selector: \"app=octopus-service\"",
+      "      #     watch_interval: 10s",
+      "      ",
+      "      # DNS discovery",
+      "      # - type: dns",
+      "      #   enabled: true",
+      "      #   config:",
+      "      #     servers: [\"8.8.8.8\"]",
+      "      #     domain: \"service.consul\"",
+      "      #     watch_interval: 60s",
+      "$0"
+    ]
+  },
+
+  "Octopus Middleware Entry": {
+    "prefix": "octopus-middleware",
+    "description": "Middleware array entry (request_id, cors, jwt, rate_limit, script)",
+    "body": [
+      "- type: ${1|request_id,cors,jwt,rate_limit,script|}",
+      "  enabled: ${2|true,false|}",
+      "  config:",
+      "    ${3:# Add middleware-specific configuration here}",
+      "$0"
+    ]
+  },
+
+  "Octopus gRPC Config": {
+    "prefix": "octopus-grpc",
+    "description": "gRPC gateway configuration",
+    "body": [
+      "grpc:",
+      "  enabled: ${1|true,false|}",
+      "  max_message_size: ${2:4194304}  # 4MB",
+      "  enable_reflection: ${3|false,true|}",
+      "  enable_grpc_web: ${4|false,true|}  # HTTP/1.1 compatible gRPC-Web",
+      "  deadline_propagation: ${5|true,false|}",
+      "  # Explicit service-to-upstream mapping",
+      "  services:",
+      "    \"${6:package.ServiceName}\": \"${7:upstream-name}\"",
+      "$0"
+    ]
+  },
+
+  "Octopus Circuit Breaker": {
+    "prefix": "octopus-circuit-breaker",
+    "description": "Circuit breaker configuration for upstreams",
+    "body": [
+      "circuit_breaker:",
+      "  error_threshold: ${1:0.5}  # 50% error rate triggers open state",
+      "  min_requests: ${2:10}      # Minimum requests before activation",
+      "  timeout: ${3:30s}          # Open state duration before half-open",
+      "$0"
+    ]
+  },
+
+  "Octopus Observability": {
+    "prefix": "octopus-observability",
+    "description": "Observability configuration (logging, metrics, tracing)",
+    "body": [
+      "observability:",
+      "  logging:",
+      "    level: ${1|info,debug,warn,error|}",
+      "    format: ${2|json,text|}",
+      "  metrics:",
+      "    enabled: ${3|true,false|}",
+      "    endpoint: \"${4:/metrics}\"",
+      "  tracing:",
+      "    enabled: ${5|false,true|}",
+      "    jaeger_endpoint: \"${6:http://localhost:14268/api/traces}\"",
+      "$0"
+    ]
+  },
+
+  "Octopus Auth Global Settings": {
+    "prefix": "octopus-auth-global",
+    "description": "Global authentication and authorization settings",
+    "body": [
+      "auth:",
+      "  default_provider: \"${1:jwt-provider}\"",
+      "  global_enforce: ${2|true,false|}",
+      "  skip_paths:",
+      "    - \"/health\"",
+      "    - \"/metrics\"",
+      "    - \"/docs/*\"",
+      "  principal_header: \"X-Auth-Principal\"",
+      "  roles_header: \"X-Auth-Roles\"",
+      "  scopes_header: \"X-Auth-Scopes\"",
+      "  token_cache_ttl: ${3:60s}",
+      "  error_format: ${4|json,text|}",
+      "  authz:",
+      "    engine: ${5|rhai,opa,both|}",
+      "    global_rules: []",
+      "$0"
+    ]
+  },
+
+  "Octopus Authz Rule": {
+    "prefix": "octopus-authz-rule",
+    "description": "Authorization rule (Rhai expression or OPA policy)",
+    "body": [
+      "- name: \"${1:rule-name}\"",
+      "  description: \"${2:Rule description}\"",
+      "  # engine: rhai  # Override engine for this rule (rhai, opa)",
+      "  rule: |",
+      "    ${3:has_role(\"admin\") || request.method == \"GET\"}",
+      "  action: ${4|allow,deny|}",
+      "$0"
+    ]
+  },
+
+  "Octopus Admin Config": {
+    "prefix": "octopus-admin",
+    "description": "Admin dashboard configuration",
+    "body": [
+      "admin:",
+      "  auth_provider: \"${1:jwt-provider}\"  # Protect admin with auth (optional)",
+      "  allowed_ips:",
+      "    - \"${2:10.0.0.0/8}\"",
+      "$0"
+    ]
+  },
+
+  "Octopus Plugin": {
+    "prefix": "octopus-plugin",
+    "description": "Plugin configuration entry",
+    "body": [
+      "- name: ${1:plugin-name}",
+      "  plugin_type: ${2|static,dynamic|}",
+      "  enabled: ${3|true,false|}",
+      "  priority: ${4:100}",
+      "  config:",
+      "    ${5:key}: ${6:value}",
+      "$0"
+    ]
+  },
+
+  "Octopus Rhai Script Middleware": {
+    "prefix": "octopus-script",
+    "description": "Rhai script middleware for custom request/response processing",
+    "body": [
+      "- type: script",
+      "  enabled: true",
+      "  config:",
+      "    language: rhai",
+      "    on_request: ${1|true,false|}",
+      "    on_response: ${2|false,true|}",
+      "    timeout_ms: ${3:100}",
+      "    code: |",
+      "      // ${4:Add custom headers or transform requests}",
+      "      headers[\"X-Gateway\"] = \"Octopus\";",
+      "      true  // Return true to continue, false to short-circuit",
+      "$0"
+    ]
+  },
+
+  "Octopus Compression Config": {
+    "prefix": "octopus-compression",
+    "description": "Response compression configuration",
+    "body": [
+      "compression:",
+      "  enabled: ${1|true,false|}",
+      "  level: ${2:6}        # 1-9 for gzip/zstd, 1-11 for brotli",
+      "  min_size: ${3:1024}  # Minimum response size to compress (bytes)",
+      "  algorithms:",
+      "    - br      # Brotli  - best compression ratio",
+      "    - zstd    # Zstandard - fast with good compression",
+      "    - gzip    # Gzip - universal browser support",
+      "$0"
+    ]
+  }
+}

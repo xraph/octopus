@@ -47,6 +47,10 @@ pub struct RequestHandler {
     ws_active_count: Arc<AtomicUsize>,
     /// Active SSE connection count
     sse_active_count: Arc<AtomicUsize>,
+    /// Auth provider registry (for admin auth)
+    auth_registry: Option<Arc<octopus_auth::AuthProviderRegistry>>,
+    /// Admin auth provider name
+    admin_auth_provider: Option<String>,
 }
 
 impl std::fmt::Debug for RequestHandler {
@@ -83,6 +87,8 @@ impl RequestHandler {
             activity_log,
             ws_active_count: Arc::new(AtomicUsize::new(0)),
             sse_active_count: Arc::new(AtomicUsize::new(0)),
+            auth_registry: None,
+            admin_auth_provider: None,
         }
     }
 
@@ -98,17 +104,19 @@ impl RequestHandler {
         let metrics_collector = Arc::new(MetricsCollector::new());
         let activity_log = Arc::new(ActivityLog::default());
 
-        // For now, create AdminHandler without health tracker and plugin manager
-        // These will be None until we properly wire them from the proxy/health system
+        let farp_registry = farp_handler.as_ref().map(|h| Arc::clone(h.registry()));
+        let farp_federation = farp_handler.as_ref().map(|h| Arc::clone(h.federation()));
         let admin_handler = AdminHandler::with_all(
             Arc::clone(&router),
             Arc::clone(&request_count),
-            None, // health_tracker - Get from proxy if available
-            None, // circuit_breaker - Get from proxy if available
-            None, // plugin_manager - Pass from server
+            None,
+            None,
+            None,
             Some(Arc::clone(&metrics_collector)),
             Some(Arc::clone(&activity_log)),
-            None, // farp_registry
+            farp_registry,
+            farp_federation,
+            None, // config
         );
 
         Self {
@@ -123,6 +131,8 @@ impl RequestHandler {
             activity_log,
             ws_active_count: Arc::new(AtomicUsize::new(0)),
             sse_active_count: Arc::new(AtomicUsize::new(0)),
+            auth_registry: None,
+            admin_auth_provider: None,
         }
     }
 
@@ -139,8 +149,10 @@ impl RequestHandler {
         plugin_manager: Option<Arc<PluginManager>>,
         metrics_collector: Arc<MetricsCollector>,
         activity_log: Arc<ActivityLog>,
+        config: Option<Arc<octopus_config::Config>>,
     ) -> Self {
         let farp_registry = farp_handler.as_ref().map(|h| Arc::clone(h.registry()));
+        let farp_federation = farp_handler.as_ref().map(|h| Arc::clone(h.federation()));
         let admin_handler = AdminHandler::with_all(
             Arc::clone(&router),
             Arc::clone(&request_count),
@@ -150,6 +162,8 @@ impl RequestHandler {
             Some(Arc::clone(&metrics_collector)),
             Some(Arc::clone(&activity_log)),
             farp_registry,
+            farp_federation,
+            config,
         );
 
         Self {
@@ -164,6 +178,8 @@ impl RequestHandler {
             activity_log,
             ws_active_count: Arc::new(AtomicUsize::new(0)),
             sse_active_count: Arc::new(AtomicUsize::new(0)),
+            auth_registry: None,
+            admin_auth_provider: None,
         }
     }
 
@@ -191,7 +207,19 @@ impl RequestHandler {
             activity_log,
             ws_active_count: Arc::new(AtomicUsize::new(0)),
             sse_active_count: Arc::new(AtomicUsize::new(0)),
+            auth_registry: None,
+            admin_auth_provider: None,
         }
+    }
+
+    /// Set the auth registry and admin auth provider for admin endpoint protection
+    pub fn set_admin_auth(
+        &mut self,
+        registry: Arc<octopus_auth::AuthProviderRegistry>,
+        admin_provider: Option<String>,
+    ) {
+        self.auth_registry = Some(registry);
+        self.admin_auth_provider = admin_provider;
     }
 
     /// Get the number of active WebSocket connections
@@ -230,20 +258,61 @@ impl RequestHandler {
 
         // Handle internal API routes (built-in, not proxied)
         // Internal routes use __ prefix by default
-        if path.starts_with("/__admin") {
-            let internal_path = path.replacen("/__admin", "/admin", 1);
-            return self
-                .admin_handler
-                .handle(&method, &internal_path)
-                .await
-                .map(|r| r.map(Either::Left));
-        }
+        if path.starts_with("/__admin") || path.starts_with("/admin") {
+            // Check admin auth if configured
+            if let (Some(ref registry), Some(ref provider_name)) =
+                (&self.auth_registry, &self.admin_auth_provider)
+            {
+                // Skip auth for static assets (CSS, JS, fonts)
+                let is_asset = path.contains("/static/") || path.contains("/_next/");
+                if !is_asset {
+                    let tls_cn = req
+                        .extensions()
+                        .get::<octopus_tls::TlsClientCn>()
+                        .and_then(|cn| cn.0.clone());
+                    let auth_req = octopus_auth::AuthRequest {
+                        headers: req.headers(),
+                        method: req.method(),
+                        uri: req.uri(),
+                        tls_client_cn: tls_cn.as_deref(),
+                    };
+                    match registry.authenticate(provider_name, &auth_req).await {
+                        Ok(octopus_auth::AuthResult::Authenticated(_)) => {
+                            // Proceed
+                        }
+                        Ok(octopus_auth::AuthResult::Unauthenticated)
+                        | Ok(octopus_auth::AuthResult::Failed(_)) => {
+                            let body = serde_json::json!({
+                                "error": "unauthorized",
+                                "message": "Admin authentication required"
+                            });
+                            return Ok(Response::builder()
+                                .status(StatusCode::UNAUTHORIZED)
+                                .header("Content-Type", "application/json")
+                                .header("WWW-Authenticate", "Bearer")
+                                .body(buffered(
+                                    serde_json::to_vec(&body).unwrap_or_default(),
+                                ))
+                                .unwrap());
+                        }
+                        Err(_) => {
+                            return Ok(Response::builder()
+                                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                                .body(buffered("Auth error"))
+                                .unwrap());
+                        }
+                    }
+                }
+            }
 
-        // Also support legacy /admin paths for backwards compatibility
-        if path.starts_with("/admin") {
+            let admin_path = if path.starts_with("/__admin") {
+                path.replacen("/__admin", "/admin", 1)
+            } else {
+                path.clone()
+            };
             return self
                 .admin_handler
-                .handle(&method, &path)
+                .handle(&method, &admin_path)
                 .await
                 .map(|r| r.map(Either::Left));
         }
@@ -266,6 +335,13 @@ impl RequestHandler {
             return self.handle_sse_proxy(req).await;
         }
 
+        // ── gRPC proxy ────────────────────────────────────────────────
+        // Must intercept BEFORE body buffering to support streaming RPCs.
+        // gRPC over HTTP/2 streams request/response bodies.
+        if octopus_protocols::GrpcHandler::is_grpc_request_raw(&req) {
+            return self.handle_grpc_proxy(req).await;
+        }
+
         // Convert Incoming body to Full<Bytes>
         let (parts, body) = req.into_parts();
         let body_bytes = body
@@ -273,7 +349,7 @@ impl RequestHandler {
             .await
             .map_err(|e| Error::InvalidRequest(format!("Failed to read request body: {}", e)))?
             .to_bytes();
-        let req = Request::from_parts(parts, Full::new(body_bytes));
+        let mut req = Request::from_parts(parts, Full::new(body_bytes));
 
         // Handle FARP v1 push protocol routes (/_farp/v1/*)
         // Per FARP spec: /_farp/v1/register, /_farp/v1/heartbeat/{id}, etc.
@@ -385,6 +461,30 @@ impl RequestHandler {
                     .handle(req)
                     .await
                     .map(|r| r.map(Either::Left));
+            }
+        }
+
+        // Pre-match route to inject auth context into extensions for auth middleware
+        if let Ok(route) = self.router.find_route(req.method(), req.uri().path()) {
+            req.extensions_mut().insert(octopus_middleware::MatchedRouteAuth {
+                auth_provider: route.auth_provider.clone(),
+                skip_auth: route.skip_auth,
+                require_roles: route.require_roles.clone(),
+                require_scopes: route.require_scopes.clone(),
+                authz_rule: route.authz_rule.clone(),
+                upstream: route.upstream_name.clone(),
+                metadata: route.metadata.clone(),
+            });
+
+            // Inject per-route CORS override if configured
+            if let Some(ref cors_override) = route.cors {
+                req.extensions_mut().insert(octopus_middleware::MatchedRouteCors {
+                    allowed_origins: cors_override.allowed_origins.clone(),
+                    allowed_methods: cors_override.allowed_methods.clone(),
+                    allowed_headers: cors_override.allowed_headers.clone(),
+                    allow_credentials: cors_override.allow_credentials,
+                    max_age: cors_override.max_age,
+                });
             }
         }
 
@@ -745,13 +845,167 @@ impl RequestHandler {
         Ok(response)
     }
 
+    /// Handle gRPC proxy requests — transparent proxying over HTTP/2
+    ///
+    /// Called BEFORE body buffering so streaming RPCs work.
+    /// Routes gRPC requests to upstream services via HTTP/2 connections.
+    async fn handle_grpc_proxy(
+        &self,
+        req: Request<Incoming>,
+    ) -> Result<Response<Body>> {
+        let method = req.method().clone();
+        let path = req.uri().path().to_string();
+
+        info!(path = %path, "gRPC proxy request");
+
+        // Only POST is valid for gRPC
+        if method != http::Method::POST {
+            let resp = octopus_protocols::GrpcHandler::error_response(
+                octopus_protocols::grpc::status_codes::UNIMPLEMENTED,
+                "Only POST method is allowed for gRPC",
+            )?;
+            return Ok(resp.map(Either::Left));
+        }
+
+        // Parse service/method from path
+        let (service, rpc_method) = match octopus_protocols::GrpcHandler::parse_grpc_path(&path) {
+            Some(parsed) => parsed,
+            None => {
+                let resp = octopus_protocols::GrpcHandler::error_response(
+                    octopus_protocols::grpc::status_codes::UNIMPLEMENTED,
+                    "Invalid gRPC path format",
+                )?;
+                return Ok(resp.map(Either::Left));
+            }
+        };
+
+        debug!(service = %service, method = %rpc_method, "Routing gRPC request");
+
+        // Route to upstream — first check explicit gRPC services map, then fall back to router
+        let route = self.router.find_route(&method, &path).map_err(|e| {
+            warn!(service = %service, error = %e, "No route for gRPC service");
+            Error::RouteNotFound(format!("No route for gRPC service: {service}"))
+        })?;
+
+        let instance = self.router.select_instance(&route.upstream_name).map_err(|e| {
+            error!(upstream = %route.upstream_name, error = %e, "No upstream for gRPC");
+            Error::NoHealthyUpstream
+        })?;
+
+        // Build upstream URL
+        let upstream_base = instance.base_url();
+        let mut upstream_path = path.clone();
+        if let Some(ref prefix) = route.strip_prefix {
+            if let Some(stripped) = upstream_path.strip_prefix(prefix.as_str()) {
+                upstream_path = stripped.to_string();
+            }
+        }
+        if let Some(ref prefix) = route.add_prefix {
+            upstream_path = format!("{prefix}{upstream_path}");
+        }
+
+        // Parse deadline from grpc-timeout header
+        let deadline = req
+            .headers()
+            .get("grpc-timeout")
+            .and_then(|v| v.to_str().ok())
+            .and_then(octopus_protocols::GrpcHandler::parse_grpc_timeout);
+
+        // Build upstream gRPC headers
+        let upstream_headers = octopus_protocols::grpc::build_grpc_upstream_headers(req.headers());
+
+        // Decompose the request — keep the streaming body
+        let (_parts, body) = req.into_parts();
+
+        // Collect body for HTTP/2 send (gRPC unary messages are small; streaming will need
+        // a different approach but this works for the common unary case)
+        let body_bytes = body
+            .collect()
+            .await
+            .map_err(|e| Error::InvalidRequest(format!("Failed to read gRPC body: {e}")))?
+            .to_bytes();
+
+        // Build the upstream request
+        let upstream_uri: http::Uri = format!("{upstream_base}{upstream_path}")
+            .parse()
+            .map_err(|e| Error::InvalidRequest(format!("Invalid upstream URI: {e}")))?;
+
+        let mut upstream_req = Request::builder()
+            .method(http::Method::POST)
+            .uri(upstream_uri)
+            .body(Full::new(body_bytes))
+            .map_err(|e| Error::InvalidRequest(format!("Failed to build upstream request: {e}")))?;
+
+        // Copy headers
+        *upstream_req.headers_mut() = upstream_headers;
+
+        // Send via HTTP/2 with optional deadline
+        let proxy = self.proxy.clone();
+        let result = if let Some(deadline_duration) = deadline {
+            // Remaining deadline propagation
+            let remaining = format!(
+                "{}m",
+                deadline_duration.as_millis()
+            );
+            upstream_req
+                .headers_mut()
+                .insert("grpc-timeout", remaining.parse().unwrap());
+
+            tokio::time::timeout(
+                deadline_duration,
+                proxy.client().send_h2(upstream_req, &instance),
+            )
+            .await
+        } else {
+            // Default 30s timeout
+            tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                proxy.client().send_h2(upstream_req, &instance),
+            )
+            .await
+        };
+
+        match result {
+            Ok(Ok(resp)) => {
+                let status = resp.status();
+                debug!(
+                    service = %service,
+                    rpc_method = %rpc_method,
+                    status = %status,
+                    "gRPC upstream response received"
+                );
+
+                // Stream response back — convert Incoming to streaming Body
+                let (parts, body) = resp.into_parts();
+                let response = Response::from_parts(parts, streaming(body));
+                Ok(response)
+            }
+            Ok(Err(e)) => {
+                error!(service = %service, error = %e, "gRPC upstream error");
+                let resp = octopus_protocols::GrpcHandler::error_response(
+                    octopus_protocols::grpc::status_codes::UNAVAILABLE,
+                    &format!("Upstream unavailable: {e}"),
+                )?;
+                Ok(resp.map(Either::Left))
+            }
+            Err(_) => {
+                warn!(service = %service, "gRPC deadline exceeded");
+                let resp = octopus_protocols::GrpcHandler::error_response(
+                    octopus_protocols::grpc::status_codes::DEADLINE_EXCEEDED,
+                    "Deadline exceeded",
+                )?;
+                Ok(resp.map(Either::Left))
+            }
+        }
+    }
+
     /// Handle the actual proxying logic (called after middleware)
     ///
     /// Uses `Full<Bytes>` explicitly because this is always a buffered path —
     /// streaming (SSE) is handled separately before reaching here.
     async fn handle_proxy_request(
         &self,
-        req: Request<Full<Bytes>>,
+        mut req: Request<Full<Bytes>>,
     ) -> Result<Response<Full<Bytes>>> {
         let start_time = Instant::now();
         let method = req.method().clone();
@@ -830,8 +1084,32 @@ impl RequestHandler {
             "Upstream instance selected"
         );
 
-        // Proxy the request
-        let result = self.proxy.proxy(req, &instance).await;
+        // Apply path rewriting (strip_prefix / add_prefix) before proxying
+        let mut upstream_path = path.clone();
+        if let Some(ref prefix) = route.strip_prefix {
+            if let Some(stripped) = upstream_path.strip_prefix(prefix.as_str()) {
+                upstream_path = stripped.to_string();
+            }
+        }
+        if let Some(ref prefix) = route.add_prefix {
+            upstream_path = format!("{prefix}{upstream_path}");
+        }
+        if upstream_path != path {
+            // Rebuild the URI with the rewritten path
+            let mut parts = req.uri().clone().into_parts();
+            let query = req.uri().query().map(|q| format!("?{q}")).unwrap_or_default();
+            parts.path_and_query = Some(
+                format!("{upstream_path}{query}")
+                    .parse()
+                    .unwrap_or_else(|_| http::uri::PathAndQuery::from_static("/")),
+            );
+            if let Ok(new_uri) = http::Uri::from_parts(parts) {
+                *req.uri_mut() = new_uri;
+            }
+        }
+
+        // Proxy the request with retry support
+        let result = self.proxy.proxy_with_retry(req, &instance).await;
         let latency = start_time.elapsed();
 
         // Decrement active connections
@@ -865,11 +1143,8 @@ impl RequestHandler {
                     "Request completed"
                 );
 
-                // Convert Response<Incoming> to Response<Body>
-                let (parts, body) = response.into_parts();
-                let body_bytes = body.collect().await?.to_bytes();
-                let full_body = Full::new(body_bytes);
-                Ok(Response::from_parts(parts, full_body))
+                // Response is already Full<Bytes> from proxy_with_retry
+                Ok(response)
             }
             Err(e) => {
                 // Record failed request

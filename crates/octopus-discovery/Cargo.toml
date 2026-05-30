@@ -47,6 +47,9 @@ trust-dns-resolver = { version = "0.23", optional = true }
 # mDNS/Bonjour
 mdns-sd = { version = "0.11", optional = true }
 
+# etcd
+etcd-client = { version = "0.13", optional = true }
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["full", "test-util", "macros"] }
 
@@ -56,3 +59,4 @@ consul = []
 kubernetes = ["kube", "k8s-openapi", "futures"]
 dns = ["trust-dns-resolver"]
 mdns = ["mdns-sd"]
+etcd = ["etcd-client"]

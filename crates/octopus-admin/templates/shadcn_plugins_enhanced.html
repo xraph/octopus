@@ -256,7 +256,7 @@
 <script>
 function pluginManager() {
     return {
-        plugins: {{ plugins|json }},
+        plugins: {{ plugins|json|safe }},
         filteredPlugins: [],
         totalPlugins: {{ total_plugins }},
         activePlugins: {{ active_plugins }},

@@ -15,6 +15,7 @@ octopus-router = { path = "../octopus-router" }
 octopus-config = { path = "../octopus-config" }
 octopus-health = { path = "../octopus-health" }
 octopus-plugins = { path = "../octopus-plugins" }
+octopus-plugin-runtime = { path = "../octopus-plugin-runtime" }
 octopus-metrics = { path = "../octopus-metrics" }
 octopus-ui = { path = "../octopus-ui" }
 octopus-farp = { path = "../octopus-farp" }
@@ -49,6 +50,13 @@ once_cell.workspace = true
 uuid = { version = "1.6", features = ["v4", "serde"] }
 hostname = "0.4"
 num_cpus = "1.16"
+sysinfo = "0.31"
+clap = { version = "4", features = ["derive"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[[bin]]
+name = "octopus-admin"
+path = "src/bin/admin.rs"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

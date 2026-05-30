@@ -29,9 +29,10 @@ url.workspace = true
 humantime-serde.workspace = true
 regex = "1.10"
 
-# File watching for hot reload
-notify.workspace = true
+# Async runtime (for config watcher)
+tokio = { workspace = true, features = ["time", "sync", "fs", "macros"] }
 
 [dev-dependencies]
 tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util", "macros", "rt", "time", "sync", "fs"] }
 

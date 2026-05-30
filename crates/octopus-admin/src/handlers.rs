@@ -26,8 +26,8 @@ pub struct AppState {
     pub health_tracker: Option<Arc<octopus_health::HealthTracker>>,
     /// Circuit breaker (per-instance circuit state)
     pub circuit_breaker: Option<Arc<octopus_health::CircuitBreaker>>,
-    /// Plugin manager
-    pub plugin_manager: Option<Arc<octopus_plugins::PluginManager>>,
+    /// Plugin manager (runtime)
+    pub plugin_manager: Option<Arc<octopus_plugin_runtime::PluginManager>>,
     /// Gateway configuration
     pub config: Option<Arc<octopus_config::Config>>,
     /// FARP schema registry for federated API discovery
@@ -55,6 +55,69 @@ impl AppState {
             farp_federation: None,
             start_time: std::time::Instant::now(),
         }
+    }
+
+    /// Builder: set the gateway router
+    #[must_use]
+    pub fn with_router(mut self, r: Arc<octopus_router::Router>) -> Self {
+        self.router = Some(r);
+        self
+    }
+
+    /// Builder: set the metrics collector
+    #[must_use]
+    pub fn with_metrics(mut self, m: Arc<octopus_metrics::MetricsCollector>) -> Self {
+        self.metrics = Some(m);
+        self
+    }
+
+    /// Builder: set the activity log
+    #[must_use]
+    pub fn with_activity_log(mut self, a: Arc<octopus_metrics::ActivityLog>) -> Self {
+        self.activity_log = Some(a);
+        self
+    }
+
+    /// Builder: set the health tracker
+    #[must_use]
+    pub fn with_health_tracker(mut self, h: Arc<octopus_health::HealthTracker>) -> Self {
+        self.health_tracker = Some(h);
+        self
+    }
+
+    /// Builder: set the circuit breaker
+    #[must_use]
+    pub fn with_circuit_breaker(mut self, c: Arc<octopus_health::CircuitBreaker>) -> Self {
+        self.circuit_breaker = Some(c);
+        self
+    }
+
+    /// Builder: set the plugin manager
+    #[must_use]
+    pub fn with_plugin_manager(mut self, p: Arc<octopus_plugin_runtime::PluginManager>) -> Self {
+        self.plugin_manager = Some(p);
+        self
+    }
+
+    /// Builder: set the gateway configuration
+    #[must_use]
+    pub fn with_config(mut self, c: Arc<octopus_config::Config>) -> Self {
+        self.config = Some(c);
+        self
+    }
+
+    /// Builder: set the FARP schema registry
+    #[must_use]
+    pub fn with_farp_registry(mut self, r: Arc<octopus_farp::SchemaRegistry>) -> Self {
+        self.farp_registry = Some(r);
+        self
+    }
+
+    /// Builder: set the FARP schema federation
+    #[must_use]
+    pub fn with_farp_federation(mut self, f: Arc<octopus_farp::SchemaFederation>) -> Self {
+        self.farp_federation = Some(f);
+        self
     }
 }
 
@@ -249,7 +312,7 @@ pub async fn health_handler(State(state): State<Arc<AppState>>) -> impl IntoResp
 
 /// Plugins page handler
 pub async fn plugins_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let plugins = build_plugins_from_state(&state).await;
+    let plugins = build_plugins_from_state(&state);
     let active_plugins = plugins.iter().filter(|p| p.enabled).count();
 
     let template = PluginsTemplate {
@@ -383,6 +446,22 @@ pub(crate) fn build_dashboard_stats(state: &AppState) -> DashboardStats {
         "unknown".to_string()
     };
 
+    // Get real system metrics
+    let (cpu_usage, memory_usage) = {
+        use sysinfo::System;
+        let mut sys = System::new();
+        sys.refresh_memory();
+        sys.refresh_cpu_all();
+        let total = sys.total_memory();
+        let used = sys.used_memory();
+        let mem_pct = if total > 0 {
+            (used as f64 / total as f64) * 100.0
+        } else {
+            0.0
+        };
+        (sys.global_cpu_usage() as f64, mem_pct)
+    };
+
     DashboardStats {
         total_requests,
         active_routes,
@@ -391,8 +470,8 @@ pub(crate) fn build_dashboard_stats(state: &AppState) -> DashboardStats {
         requests_per_second: rps,
         error_rate,
         active_connections,
-        cpu_usage: 0.0,    // System metrics not yet collected
-        memory_usage: 0.0,  // System metrics not yet collected
+        cpu_usage,
+        memory_usage,
     }
 }
 
@@ -514,31 +593,30 @@ pub(crate) fn build_health_from_state(state: &AppState) -> Vec<HealthCheckInfo> 
     vec![]
 }
 
-/// Build plugin list from plugin manager
-pub(crate) async fn build_plugins_from_state(state: &AppState) -> Vec<PluginInfo> {
+/// Build plugin list from plugin manager (runtime)
+pub(crate) fn build_plugins_from_state(state: &AppState) -> Vec<PluginInfo> {
     let Some(ref pm) = state.plugin_manager else { return vec![] };
 
-    let names = pm.list_plugins().await;
-    let mut plugins = Vec::with_capacity(names.len());
-
-    for name in &names {
-        if let Some(handle) = pm.registry().get(name).await {
-            let guard = handle.read().await;
-            let meta = guard.metadata();
-            plugins.push(PluginInfo {
-                id: meta.name.clone(),
-                name: meta.name.clone(),
-                version: meta.version.clone(),
-                description: meta.description.clone(),
-                author: if meta.author.is_empty() { None } else { Some(meta.author.clone()) },
-                enabled: true, // If it's registered, it's enabled
+    pm.list()
+        .into_iter()
+        .map(|info| {
+            let enabled = info.state.is_started();
+            PluginInfo {
+                id: info.metadata.name.clone(),
+                name: info.metadata.name,
+                version: info.metadata.version,
+                description: info.metadata.description,
+                author: if info.metadata.author.is_empty() {
+                    None
+                } else {
+                    Some(info.metadata.author)
+                },
+                enabled,
                 has_dashboard: false,
                 config: None,
-            });
-        }
-    }
-
-    plugins
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]

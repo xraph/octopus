@@ -1,0 +1,1250 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://octopus.dev/schema/config/v1",
+  "title": "Octopus API Gateway Configuration",
+  "description": "Configuration schema for the Octopus API Gateway",
+  "type": "object",
+  "required": ["gateway"],
+  "properties": {
+    "gateway": {
+      "$ref": "#/$defs/GatewayConfig",
+      "description": "Core gateway settings including listen address, timeouts, TLS, and compression"
+    },
+    "upstreams": {
+      "type": "array",
+      "description": "Upstream backend services to route traffic to",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/UpstreamConfig"
+      }
+    },
+    "routes": {
+      "type": "array",
+      "description": "Route definitions mapping paths to upstream services",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/RouteConfig"
+      }
+    },
+    "plugins": {
+      "type": "array",
+      "description": "Plugin configurations for extending gateway functionality",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/PluginConfig"
+      }
+    },
+    "farp": {
+      "$ref": "#/$defs/FarpConfig",
+      "description": "FARP (Forge API Registration Protocol) service discovery and auto-routing"
+    },
+    "observability": {
+      "$ref": "#/$defs/ObservabilityConfig",
+      "description": "Logging, metrics, and distributed tracing settings"
+    },
+    "auth_providers": {
+      "type": "object",
+      "description": "Named authentication provider definitions keyed by provider name",
+      "additionalProperties": {
+        "$ref": "#/$defs/AuthProviderConfig"
+      },
+      "default": {}
+    },
+    "auth": {
+      "$ref": "#/$defs/AuthConfig",
+      "description": "Global authentication and authorization settings"
+    },
+    "cors": {
+      "$ref": "#/$defs/CorsGlobalConfig",
+      "description": "Global CORS (Cross-Origin Resource Sharing) configuration"
+    },
+    "admin": {
+      "$ref": "#/$defs/AdminConfig",
+      "description": "Admin dashboard access control configuration"
+    },
+    "grpc": {
+      "$ref": "#/$defs/GrpcConfig",
+      "description": "gRPC gateway proxy configuration"
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "Duration": {
+      "type": "string",
+      "description": "A duration string consisting of a number followed by a time unit suffix (ms, s, m, h, d)",
+      "pattern": "^[0-9]+(ms|s|m|h|d)$",
+      "examples": ["30s", "5m", "100ms", "1h", "300s", "7d"]
+    },
+
+    "GatewayConfig": {
+      "type": "object",
+      "description": "Core gateway configuration controlling the listener, worker threads, timeouts, TLS, and compression",
+      "required": ["listen"],
+      "properties": {
+        "listen": {
+          "type": "string",
+          "description": "Listen address in IP:PORT format",
+          "examples": ["0.0.0.0:8080", "127.0.0.1:3000", "[::]:8080"]
+        },
+        "workers": {
+          "type": "integer",
+          "description": "Number of worker threads (0 = auto-detect based on CPU cores)",
+          "default": 0,
+          "minimum": 0,
+          "examples": [0, 4, 8]
+        },
+        "request_timeout": {
+          "$ref": "#/$defs/Duration",
+          "description": "Maximum duration for a single request before timeout",
+          "default": "30s"
+        },
+        "shutdown_timeout": {
+          "$ref": "#/$defs/Duration",
+          "description": "Graceful shutdown timeout to wait for in-flight requests to complete",
+          "default": "30s"
+        },
+        "max_body_size": {
+          "type": "integer",
+          "description": "Maximum request body size in bytes",
+          "default": 10485760,
+          "minimum": 0,
+          "examples": [1048576, 10485760, 52428800]
+        },
+        "tls": {
+          "$ref": "#/$defs/TlsConfig",
+          "description": "Optional TLS configuration for HTTPS and mutual TLS"
+        },
+        "compression": {
+          "$ref": "#/$defs/CompressionConfig",
+          "description": "Response compression settings"
+        },
+        "internal_route_prefix": {
+          "type": "string",
+          "description": "Prefix for internal endpoints (admin, metrics, FARP). Endpoints become e.g. /__admin, /__metrics",
+          "default": "__",
+          "examples": ["__", "_internal", "gateway"]
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "TlsConfig": {
+      "type": "object",
+      "description": "TLS configuration for HTTPS termination and optional mutual TLS (mTLS)",
+      "required": ["cert_file", "key_file"],
+      "properties": {
+        "cert_file": {
+          "type": "string",
+          "description": "Path to the TLS certificate file (PEM format)",
+          "examples": ["/etc/octopus/tls/server.crt", "./certs/cert.pem"]
+        },
+        "key_file": {
+          "type": "string",
+          "description": "Path to the TLS private key file (PEM format)",
+          "examples": ["/etc/octopus/tls/server.key", "./certs/key.pem"]
+        },
+        "client_ca_file": {
+          "type": "string",
+          "description": "Path to the CA certificate file for verifying client certificates (mTLS)",
+          "examples": ["/etc/octopus/tls/ca.crt"]
+        },
+        "require_client_cert": {
+          "type": "boolean",
+          "description": "Require client certificates for mutual TLS authentication",
+          "default": false
+        },
+        "min_tls_version": {
+          "type": "string",
+          "description": "Minimum accepted TLS protocol version",
+          "enum": ["1.2", "1.3"],
+          "default": "1.2"
+        },
+        "enable_cert_reload": {
+          "type": "boolean",
+          "description": "Enable automatic reloading of TLS certificates when files change on disk",
+          "default": true
+        },
+        "reload_interval_secs": {
+          "type": "integer",
+          "description": "Interval in seconds between certificate file change checks",
+          "default": 300,
+          "minimum": 1,
+          "examples": [60, 300, 3600]
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "CompressionConfig": {
+      "type": "object",
+      "description": "Response compression configuration for reducing bandwidth usage",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable response compression",
+          "default": true
+        },
+        "level": {
+          "type": "integer",
+          "description": "Compression level (1-9 for gzip/zstd, 1-11 for brotli)",
+          "default": 6,
+          "minimum": 1,
+          "maximum": 11
+        },
+        "min_size": {
+          "type": "integer",
+          "description": "Minimum response body size in bytes before compression is applied",
+          "default": 1024,
+          "minimum": 0,
+          "examples": [0, 512, 1024, 4096]
+        },
+        "algorithms": {
+          "type": "array",
+          "description": "Preferred compression algorithms in priority order",
+          "default": ["br", "zstd", "gzip"],
+          "items": {
+            "type": "string",
+            "enum": ["br", "gzip", "zstd"]
+          },
+          "examples": [["br", "zstd", "gzip"], ["gzip"], ["br", "gzip"]]
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "UpstreamConfig": {
+      "type": "object",
+      "description": "Configuration for an upstream backend service with load balancing, health checks, and circuit breaking",
+      "required": ["name", "instances"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Unique name identifying this upstream service",
+          "examples": ["user-service", "api-backend", "auth-svc"]
+        },
+        "instances": {
+          "type": "array",
+          "description": "List of backend instances for this upstream",
+          "items": {
+            "$ref": "#/$defs/InstanceConfig"
+          },
+          "minItems": 1
+        },
+        "lb_policy": {
+          "type": "string",
+          "description": "Load balancing policy for distributing requests across instances",
+          "enum": [
+            "round_robin",
+            "weighted_round_robin",
+            "random",
+            "least_connections",
+            "ip_hash"
+          ],
+          "default": "round_robin"
+        },
+        "health_check": {
+          "$ref": "#/$defs/HealthCheckConfig",
+          "description": "Optional health check configuration for monitoring instance availability"
+        },
+        "circuit_breaker": {
+          "$ref": "#/$defs/CircuitBreakerConfig",
+          "description": "Optional circuit breaker to prevent cascading failures"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "InstanceConfig": {
+      "type": "object",
+      "description": "A single backend instance within an upstream service",
+      "required": ["id", "host", "port"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for this instance within its upstream",
+          "examples": ["instance-1", "us-east-1a", "pod-abc123"]
+        },
+        "host": {
+          "type": "string",
+          "description": "Hostname or IP address of the backend instance",
+          "examples": ["10.0.1.10", "backend.internal", "localhost"]
+        },
+        "port": {
+          "type": "integer",
+          "description": "Port number the backend instance is listening on",
+          "minimum": 1,
+          "maximum": 65535,
+          "examples": [8080, 3000, 443]
+        },
+        "weight": {
+          "type": "integer",
+          "description": "Relative weight for weighted load balancing (higher = more traffic)",
+          "default": 1,
+          "minimum": 1,
+          "examples": [1, 5, 10]
+        },
+        "metadata": {
+          "type": "object",
+          "description": "Arbitrary key-value metadata for this instance (e.g., region, version)",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "examples": [{"region": "us-east-1", "version": "v2.1.0"}]
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "HealthCheckConfig": {
+      "type": "object",
+      "description": "Health check configuration for monitoring upstream instance availability",
+      "required": ["type", "interval", "timeout"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Health check protocol type",
+          "enum": ["http", "tcp", "grpc"]
+        },
+        "path": {
+          "type": "string",
+          "description": "HTTP path for health check requests (only used when type is 'http')",
+          "examples": ["/health", "/healthz", "/ready"]
+        },
+        "interval": {
+          "$ref": "#/$defs/Duration",
+          "description": "Time between consecutive health check probes",
+          "examples": ["10s", "30s"]
+        },
+        "timeout": {
+          "$ref": "#/$defs/Duration",
+          "description": "Maximum time to wait for a health check response",
+          "examples": ["5s", "2s"]
+        },
+        "healthy_threshold": {
+          "type": "integer",
+          "description": "Number of consecutive successful checks required to mark an instance as healthy",
+          "default": 2,
+          "minimum": 1
+        },
+        "unhealthy_threshold": {
+          "type": "integer",
+          "description": "Number of consecutive failed checks required to mark an instance as unhealthy",
+          "default": 3,
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "CircuitBreakerConfig": {
+      "type": "object",
+      "description": "Circuit breaker configuration to prevent cascading failures by halting requests to failing upstreams",
+      "required": ["error_threshold", "min_requests", "timeout"],
+      "properties": {
+        "error_threshold": {
+          "type": "number",
+          "description": "Error rate threshold (0.0 to 1.0) that triggers the circuit breaker to open",
+          "minimum": 0,
+          "maximum": 1,
+          "examples": [0.5, 0.25, 0.8]
+        },
+        "min_requests": {
+          "type": "integer",
+          "description": "Minimum number of requests within the window before the circuit breaker can activate",
+          "minimum": 1,
+          "examples": [10, 20, 50]
+        },
+        "timeout": {
+          "$ref": "#/$defs/Duration",
+          "description": "Duration the circuit breaker remains open before transitioning to half-open state",
+          "examples": ["30s", "60s", "5m"]
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "RouteConfig": {
+      "type": "object",
+      "description": "Route definition mapping an HTTP path pattern to an upstream service with optional auth, rate limiting, and CORS",
+      "required": ["path", "upstream"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "URL path pattern for matching requests (must start with '/'). Supports wildcards and path parameters",
+          "pattern": "^/",
+          "examples": ["/api/v1/users", "/api/v1/users/{id}", "/static/*"]
+        },
+        "methods": {
+          "type": "array",
+          "description": "Allowed HTTP methods for this route. Empty array means all methods are allowed",
+          "default": [],
+          "items": {
+            "type": "string",
+            "enum": ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE", "CONNECT"]
+          },
+          "examples": [["GET", "POST"], ["GET"], ["GET", "POST", "PUT", "DELETE"]]
+        },
+        "upstream": {
+          "type": "string",
+          "description": "Name of the upstream service to route matching requests to",
+          "examples": ["user-service", "api-backend"]
+        },
+        "priority": {
+          "type": "integer",
+          "description": "Route matching priority (higher values are matched first)",
+          "default": 0,
+          "examples": [0, 10, 100]
+        },
+        "strip_prefix": {
+          "type": "string",
+          "description": "Prefix to strip from the request path before forwarding to the upstream",
+          "examples": ["/api/v1", "/public"]
+        },
+        "add_prefix": {
+          "type": "string",
+          "description": "Prefix to add to the request path before forwarding to the upstream",
+          "examples": ["/internal", "/v2"]
+        },
+        "metadata": {
+          "type": "object",
+          "description": "Arbitrary key-value metadata associated with this route",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "auth_provider": {
+          "type": "string",
+          "description": "Authentication provider name to use for this route (overrides the global default_provider)",
+          "examples": ["jwt-provider", "api-key-provider"]
+        },
+        "skip_auth": {
+          "type": "boolean",
+          "description": "Skip authentication for this route even when global enforcement is enabled",
+          "default": false
+        },
+        "require_roles": {
+          "type": "array",
+          "description": "List of roles that the authenticated principal must have to access this route",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "examples": [["admin"], ["editor", "admin"]]
+        },
+        "require_scopes": {
+          "type": "array",
+          "description": "List of OAuth scopes that the authenticated principal must have to access this route",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "examples": [["read:users"], ["write:users", "read:users"]]
+        },
+        "authz_rule": {
+          "type": "string",
+          "description": "Custom authorization rule as a Rhai expression evaluated at request time",
+          "examples": ["principal.roles.contains(\"admin\")", "request.headers[\"X-Tenant\"] == principal.tenant"]
+        },
+        "timeout": {
+          "$ref": "#/$defs/Duration",
+          "description": "Per-route request timeout override (takes precedence over gateway-level request_timeout)"
+        },
+        "rate_limit": {
+          "$ref": "#/$defs/RouteRateLimitConfig",
+          "description": "Per-route rate limiting configuration"
+        },
+        "cors": {
+          "$ref": "#/$defs/RouteCorsConfig",
+          "description": "Per-route CORS configuration override"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "RouteRateLimitConfig": {
+      "type": "object",
+      "description": "Per-route rate limiting using a sliding window",
+      "required": ["requests_per_window", "window_size"],
+      "properties": {
+        "requests_per_window": {
+          "type": "integer",
+          "description": "Maximum number of requests allowed within the window period",
+          "minimum": 1,
+          "examples": [100, 1000, 60]
+        },
+        "window_size": {
+          "$ref": "#/$defs/Duration",
+          "description": "Duration of the rate limit sliding window",
+          "examples": ["1m", "60s", "1h"]
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "RouteCorsConfig": {
+      "type": "object",
+      "description": "Per-route CORS configuration that overrides the global CORS settings",
+      "properties": {
+        "allowed_origins": {
+          "type": "array",
+          "description": "List of allowed origins for cross-origin requests",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "examples": [["https://example.com"], ["*"]]
+        },
+        "allowed_methods": {
+          "type": "array",
+          "description": "List of allowed HTTP methods for cross-origin requests",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "examples": [["GET", "POST", "PUT"]]
+        },
+        "allowed_headers": {
+          "type": "array",
+          "description": "List of allowed request headers for cross-origin requests",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "examples": [["Content-Type", "Authorization"]]
+        },
+        "allow_credentials": {
+          "type": "boolean",
+          "description": "Whether to allow credentials (cookies, authorization headers) in cross-origin requests",
+          "default": false
+        },
+        "max_age": {
+          "type": "integer",
+          "description": "Maximum time in seconds that preflight response can be cached by the browser",
+          "default": 3600,
+          "minimum": 0,
+          "examples": [3600, 7200, 86400]
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "PluginConfig": {
+      "type": "object",
+      "description": "Configuration for a gateway plugin that extends request/response processing",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Unique name of the plugin",
+          "examples": ["rate-limiter", "request-transform", "response-cache"]
+        },
+        "plugin_type": {
+          "type": "string",
+          "description": "Plugin loading type: 'static' for built-in plugins, 'dynamic' for dynamically loaded plugins",
+          "enum": ["static", "dynamic"],
+          "default": "static"
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether the plugin is enabled and should be loaded",
+          "default": true
+        },
+        "priority": {
+          "type": "integer",
+          "description": "Plugin execution priority (higher values run first in the request chain)",
+          "default": 0,
+          "examples": [0, 10, 100, -10]
+        },
+        "config": {
+          "type": "object",
+          "description": "Plugin-specific configuration as arbitrary key-value pairs",
+          "additionalProperties": true,
+          "default": {}
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "FarpConfig": {
+      "type": "object",
+      "description": "FARP (Forge API Registration Protocol) configuration for automatic service discovery and route registration",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable FARP service discovery and auto-routing",
+          "default": false
+        },
+        "watch_interval": {
+          "$ref": "#/$defs/Duration",
+          "description": "Interval between service discovery polling cycles",
+          "default": "5s"
+        },
+        "schema_cache_ttl": {
+          "$ref": "#/$defs/Duration",
+          "description": "Time-to-live for cached service schemas before re-fetching",
+          "default": "300s"
+        },
+        "discovery": {
+          "type": "object",
+          "description": "Discovery backend configuration",
+          "properties": {
+            "backends": {
+              "type": "array",
+              "description": "List of discovery backends to use for finding services",
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/DiscoveryBackendConfig"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "DiscoveryBackendConfig": {
+      "type": "object",
+      "description": "Configuration for a single discovery backend (mDNS, DNS, Consul, or Kubernetes)",
+      "required": ["type", "enabled", "config"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Discovery backend type",
+          "enum": ["mdns", "dns", "consul", "kubernetes"]
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether this discovery backend is enabled",
+          "default": true
+        },
+        "config": {
+          "type": "object",
+          "description": "Backend-specific configuration (varies by type)",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "AuthProviderConfig": {
+      "description": "Authentication provider definition, discriminated by the 'type' property",
+      "oneOf": [
+        { "$ref": "#/$defs/JwtAuthProvider" },
+        { "$ref": "#/$defs/OidcAuthProvider" },
+        { "$ref": "#/$defs/ApiKeyAuthProvider" },
+        { "$ref": "#/$defs/ForwardAuthProvider" },
+        { "$ref": "#/$defs/MtlsAuthProvider" }
+      ]
+    },
+
+    "JwtAuthProvider": {
+      "type": "object",
+      "description": "JWT token validation provider using static keys (HMAC, RSA, or ECDSA)",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Authentication provider type discriminator",
+          "const": "jwt"
+        },
+        "secret": {
+          "type": "string",
+          "description": "HMAC shared secret for HS256/HS384/HS512 algorithms"
+        },
+        "public_key": {
+          "type": "string",
+          "description": "RSA or ECDSA public key in PEM format (inline string)"
+        },
+        "public_key_file": {
+          "type": "string",
+          "description": "Path to a file containing the RSA or ECDSA public key in PEM format",
+          "examples": ["/etc/octopus/keys/public.pem"]
+        },
+        "algorithm": {
+          "type": "string",
+          "description": "JWT signing algorithm used to validate tokens",
+          "enum": ["HS256", "HS384", "HS512", "RS256", "RS384", "RS512", "ES256", "ES384"],
+          "default": "HS256"
+        },
+        "issuer": {
+          "type": "string",
+          "description": "Expected 'iss' (issuer) claim value in the JWT",
+          "examples": ["https://auth.example.com"]
+        },
+        "audience": {
+          "type": "string",
+          "description": "Expected 'aud' (audience) claim value in the JWT",
+          "examples": ["my-api", "https://api.example.com"]
+        },
+        "header_name": {
+          "type": "string",
+          "description": "HTTP header name to extract the JWT token from",
+          "default": "Authorization"
+        },
+        "token_prefix": {
+          "type": "string",
+          "description": "Prefix to strip from the header value before parsing the token",
+          "default": "Bearer "
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "OidcAuthProvider": {
+      "type": "object",
+      "description": "OpenID Connect provider with auto-discovery of JWKS endpoints and automatic key rotation",
+      "required": ["type", "issuer_url"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Authentication provider type discriminator",
+          "const": "oidc"
+        },
+        "issuer_url": {
+          "type": "string",
+          "description": "OIDC issuer URL used for .well-known/openid-configuration discovery",
+          "format": "uri",
+          "examples": ["https://accounts.google.com", "https://login.microsoftonline.com/tenant-id/v2.0", "https://auth0.example.com/"]
+        },
+        "audience": {
+          "type": "string",
+          "description": "Expected audience claim in the ID token",
+          "examples": ["my-client-id"]
+        },
+        "jwks_refresh_interval": {
+          "$ref": "#/$defs/Duration",
+          "description": "Interval between JWKS key set refresh fetches from the issuer",
+          "default": "3600s"
+        },
+        "required_scopes": {
+          "type": "array",
+          "description": "OAuth scopes that must be present in the token for authentication to succeed",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "examples": [["openid", "profile", "email"]]
+        },
+        "header_name": {
+          "type": "string",
+          "description": "HTTP header name to extract the token from",
+          "default": "Authorization"
+        },
+        "token_prefix": {
+          "type": "string",
+          "description": "Prefix to strip from the header value before parsing the token",
+          "default": "Bearer "
+        },
+        "fallback_provider": {
+          "type": "string",
+          "description": "Name of a fallback auth provider to use when OIDC discovery fails",
+          "examples": ["jwt-backup"]
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "ApiKeyAuthProvider": {
+      "type": "object",
+      "description": "API key authentication provider supporting static keys and external validation",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Authentication provider type discriminator",
+          "const": "api_key"
+        },
+        "header_name": {
+          "type": "string",
+          "description": "HTTP header name to extract the API key from",
+          "default": "X-API-Key"
+        },
+        "query_param": {
+          "type": "string",
+          "description": "Optional query parameter name to extract the API key from as a fallback",
+          "examples": ["api_key", "token"]
+        },
+        "keys": {
+          "type": "array",
+          "description": "List of statically configured API keys",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/ApiKeyEntry"
+          }
+        },
+        "external_validator": {
+          "type": "string",
+          "description": "URL of an external API key validation service (receives POST with key in body)",
+          "format": "uri",
+          "examples": ["https://auth.internal/validate-key"]
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "ApiKeyEntry": {
+      "type": "object",
+      "description": "A single static API key entry with associated identity and permissions",
+      "required": ["key", "name"],
+      "properties": {
+        "key": {
+          "type": "string",
+          "description": "The API key secret value"
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable name identifying the key holder",
+          "examples": ["mobile-app", "partner-acme", "internal-service"]
+        },
+        "scopes": {
+          "type": "array",
+          "description": "List of scopes granted to this API key",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "examples": [["read:users", "write:users"]]
+        },
+        "rate_limit": {
+          "type": "integer",
+          "description": "Per-key rate limit in requests per minute",
+          "minimum": 1,
+          "examples": [100, 1000, 60]
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "ForwardAuthProvider": {
+      "type": "object",
+      "description": "Forward authentication provider that delegates auth decisions to an external service",
+      "required": ["type", "endpoint"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Authentication provider type discriminator",
+          "const": "forward_auth"
+        },
+        "endpoint": {
+          "type": "string",
+          "description": "URL of the external authentication service",
+          "format": "uri",
+          "examples": ["https://auth.internal/verify", "http://auth-svc:4000/auth"]
+        },
+        "forward_headers": {
+          "type": "array",
+          "description": "Headers to forward from the original request to the auth service",
+          "default": ["Authorization", "Cookie", "X-Forwarded-For"],
+          "items": {
+            "type": "string"
+          }
+        },
+        "response_headers": {
+          "type": "array",
+          "description": "Headers to copy from the auth service response back into the upstream request",
+          "default": ["X-Auth-Subject", "X-Auth-Role", "X-Auth-Scopes"],
+          "items": {
+            "type": "string"
+          }
+        },
+        "timeout": {
+          "$ref": "#/$defs/Duration",
+          "description": "Timeout for the forward auth HTTP request",
+          "default": "5s"
+        },
+        "cache_ttl": {
+          "$ref": "#/$defs/Duration",
+          "description": "Duration to cache auth responses keyed by token hash"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "MtlsAuthProvider": {
+      "type": "object",
+      "description": "Mutual TLS (mTLS) authentication provider using client certificates",
+      "required": ["type", "client_ca_file"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Authentication provider type discriminator",
+          "const": "mtls"
+        },
+        "client_ca_file": {
+          "type": "string",
+          "description": "Path to the CA certificate file for verifying client certificates",
+          "examples": ["/etc/octopus/tls/client-ca.crt"]
+        },
+        "require_client_cert": {
+          "type": "boolean",
+          "description": "Whether to require a valid client certificate for every request",
+          "default": true
+        },
+        "extract_cn_as_principal": {
+          "type": "boolean",
+          "description": "Extract the certificate Common Name (CN) as the authenticated principal identity",
+          "default": true
+        },
+        "cn_to_roles": {
+          "type": "object",
+          "description": "Mapping of certificate CN patterns to role arrays for role-based access control",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "default": {},
+          "examples": [{"*.admin.example.com": ["admin"], "svc-*": ["service"]}]
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "AuthConfig": {
+      "type": "object",
+      "description": "Global authentication and authorization settings applied across all routes",
+      "properties": {
+        "default_provider": {
+          "type": "string",
+          "description": "Name of the default auth provider applied to routes without an explicit auth_provider",
+          "examples": ["jwt-provider", "oidc-provider"]
+        },
+        "global_enforce": {
+          "type": "boolean",
+          "description": "Enforce authentication on all routes globally (routes must set skip_auth to opt out)",
+          "default": false
+        },
+        "skip_paths": {
+          "type": "array",
+          "description": "URL path patterns to exclude from authentication (supports wildcards)",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "examples": [["/health", "/healthz", "/public/*", "/api/v1/docs/*"]]
+        },
+        "principal_header": {
+          "type": "string",
+          "description": "Header name to inject the authenticated principal identity into upstream requests",
+          "default": "X-Auth-Principal"
+        },
+        "roles_header": {
+          "type": "string",
+          "description": "Header name to inject the authenticated principal roles into upstream requests",
+          "default": "X-Auth-Roles"
+        },
+        "scopes_header": {
+          "type": "string",
+          "description": "Header name to inject the authenticated scopes into upstream requests",
+          "default": "X-Auth-Scopes"
+        },
+        "token_cache_ttl": {
+          "$ref": "#/$defs/Duration",
+          "description": "Duration to cache validated token results to avoid re-validation on every request",
+          "default": "60s"
+        },
+        "error_format": {
+          "type": "string",
+          "description": "Format for authentication/authorization error responses",
+          "enum": ["json", "text"],
+          "default": "json"
+        },
+        "authz": {
+          "$ref": "#/$defs/AuthzConfig",
+          "description": "Authorization engine and rules configuration"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "AuthzConfig": {
+      "type": "object",
+      "description": "Authorization configuration for evaluating access control rules using Rhai scripts and/or OPA",
+      "properties": {
+        "engine": {
+          "type": "string",
+          "description": "Authorization engine to use for evaluating rules",
+          "enum": ["rhai", "opa", "both"],
+          "default": "rhai"
+        },
+        "global_rules": {
+          "type": "array",
+          "description": "Global authorization rules applied to all authenticated requests",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AuthzRule"
+          }
+        },
+        "opa": {
+          "$ref": "#/$defs/OpaConfig",
+          "description": "Open Policy Agent (OPA) integration settings (required when engine is 'opa' or 'both')"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "AuthzRule": {
+      "type": "object",
+      "description": "A single authorization rule evaluated against the request and authenticated principal",
+      "required": ["name", "rule"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Human-readable name for identifying this rule in logs and errors",
+          "examples": ["require-admin-role", "tenant-isolation", "read-only-check"]
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional human-readable description of what this rule enforces",
+          "examples": ["Ensures only admin users can access management endpoints"]
+        },
+        "rule": {
+          "type": "string",
+          "description": "Authorization rule expression (Rhai script or OPA policy path depending on engine)",
+          "examples": ["principal.roles.contains(\"admin\")", "data.authz.allow"]
+        },
+        "action": {
+          "type": "string",
+          "description": "Action to take when the rule expression evaluates to true",
+          "enum": ["allow", "deny"],
+          "default": "deny"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "OpaConfig": {
+      "type": "object",
+      "description": "Open Policy Agent (OPA) integration configuration for external policy evaluation",
+      "required": ["endpoint"],
+      "properties": {
+        "endpoint": {
+          "type": "string",
+          "description": "OPA REST API endpoint URL for policy evaluation",
+          "format": "uri",
+          "examples": ["http://opa:8181/v1/data/authz/allow", "http://localhost:8181/v1/data/gateway/allow"]
+        },
+        "timeout": {
+          "$ref": "#/$defs/Duration",
+          "description": "Maximum time to wait for an OPA policy evaluation response",
+          "default": "100ms"
+        },
+        "cache_ttl": {
+          "$ref": "#/$defs/Duration",
+          "description": "Duration to cache OPA policy decisions",
+          "default": "300s"
+        },
+        "fail_open": {
+          "type": "boolean",
+          "description": "Allow requests to proceed when the OPA service is unreachable (fail-open vs fail-closed)",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "CorsGlobalConfig": {
+      "type": "object",
+      "description": "Global CORS (Cross-Origin Resource Sharing) configuration applied to all routes unless overridden",
+      "properties": {
+        "allowed_origins": {
+          "type": "array",
+          "description": "List of allowed origins for cross-origin requests (use [\"*\"] with caution)",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "examples": [["https://app.example.com", "https://admin.example.com"], ["*"]]
+        },
+        "allowed_methods": {
+          "type": "array",
+          "description": "List of allowed HTTP methods in cross-origin requests",
+          "default": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+          "items": {
+            "type": "string"
+          }
+        },
+        "allowed_headers": {
+          "type": "array",
+          "description": "List of allowed request headers in cross-origin requests",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "examples": [["Content-Type", "Authorization", "X-Request-ID"]]
+        },
+        "exposed_headers": {
+          "type": "array",
+          "description": "List of response headers that browsers are allowed to access in cross-origin responses",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "examples": [["X-Request-ID", "X-RateLimit-Remaining"]]
+        },
+        "max_age": {
+          "type": "integer",
+          "description": "Maximum time in seconds that the browser may cache preflight responses",
+          "default": 3600,
+          "minimum": 0,
+          "examples": [3600, 7200, 86400]
+        },
+        "allow_credentials": {
+          "type": "boolean",
+          "description": "Whether to allow credentials (cookies, authorization headers) in cross-origin requests",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "AdminConfig": {
+      "type": "object",
+      "description": "Admin dashboard access control configuration",
+      "properties": {
+        "auth_provider": {
+          "type": "string",
+          "description": "Name of the authentication provider to protect the admin dashboard (omit for no auth)",
+          "examples": ["jwt-admin", "api-key-admin"]
+        },
+        "allowed_ips": {
+          "type": "array",
+          "description": "IP allowlist for admin dashboard access (empty means all IPs are allowed)",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "examples": [["127.0.0.1", "10.0.0.0/8", "192.168.1.0/24"]]
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "ObservabilityConfig": {
+      "type": "object",
+      "description": "Observability configuration for logging, metrics, and distributed tracing",
+      "properties": {
+        "logging": {
+          "$ref": "#/$defs/LoggingConfig",
+          "description": "Logging level and format settings"
+        },
+        "metrics": {
+          "$ref": "#/$defs/MetricsConfig",
+          "description": "Prometheus metrics exposition settings"
+        },
+        "tracing": {
+          "$ref": "#/$defs/TracingConfig",
+          "description": "Distributed tracing (OpenTelemetry/Jaeger) settings"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "LoggingConfig": {
+      "type": "object",
+      "description": "Logging configuration for controlling output verbosity and format",
+      "properties": {
+        "level": {
+          "type": "string",
+          "description": "Minimum log level for output",
+          "enum": ["trace", "debug", "info", "warn", "error"],
+          "default": "info"
+        },
+        "format": {
+          "type": "string",
+          "description": "Log output format",
+          "enum": ["json", "text"],
+          "default": "text"
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "MetricsConfig": {
+      "type": "object",
+      "description": "Prometheus metrics exposition configuration",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable the Prometheus metrics endpoint",
+          "default": true
+        },
+        "endpoint": {
+          "type": "string",
+          "description": "HTTP path where Prometheus metrics are exposed",
+          "default": "/metrics",
+          "examples": ["/metrics", "/_metrics", "/internal/metrics"]
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "TracingConfig": {
+      "type": "object",
+      "description": "Distributed tracing configuration for OpenTelemetry-compatible backends",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable distributed tracing",
+          "default": false
+        },
+        "jaeger_endpoint": {
+          "type": "string",
+          "description": "Jaeger collector endpoint URL for sending trace spans",
+          "format": "uri",
+          "examples": ["http://jaeger:14268/api/traces", "http://localhost:14268/api/traces"]
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "GrpcConfig": {
+      "type": "object",
+      "description": "gRPC gateway configuration for proxying gRPC traffic to upstream services",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable gRPC proxying support",
+          "default": true
+        },
+        "max_message_size": {
+          "type": "integer",
+          "description": "Maximum gRPC message size in bytes",
+          "default": 4194304,
+          "minimum": 0,
+          "examples": [4194304, 16777216, 67108864]
+        },
+        "enable_reflection": {
+          "type": "boolean",
+          "description": "Enable gRPC server reflection proxy for service introspection",
+          "default": false
+        },
+        "enable_grpc_web": {
+          "type": "boolean",
+          "description": "Enable gRPC-Web support for HTTP/1.1 compatible gRPC calls from browsers",
+          "default": false
+        },
+        "deadline_propagation": {
+          "type": "boolean",
+          "description": "Propagate gRPC deadlines from client requests to upstream services",
+          "default": true
+        },
+        "services": {
+          "type": "object",
+          "description": "Explicit mapping of fully qualified gRPC service names to upstream names",
+          "additionalProperties": {
+            "type": "string",
+            "description": "Upstream name that handles this gRPC service"
+          },
+          "default": {},
+          "examples": [{"users.UserService": "user-service", "orders.OrderService": "order-service"}]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

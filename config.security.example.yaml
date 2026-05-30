@@ -1,275 +1,444 @@
 # Octopus API Gateway - Security Configuration Example
-# This file demonstrates how to configure the critical security features
+# This file demonstrates all security features including auth providers,
+# per-route auth, authorization rules, CORS, rate limiting, and mTLS.
 
-server:
-  host: "0.0.0.0"
-  port: 8080
-  admin_port: 9090
-
-# Request Size Limits (prevents resource exhaustion)
-request_limits:
-  # Maximum request body size in bytes (default: 10MB)
+gateway:
+  listen: "0.0.0.0:8080"
+  request_timeout: 30s
+  shutdown_timeout: 30s
   max_body_size: 10485760  # 10MB
-  
-  # Maximum total header size in bytes (default: 8KB)
-  max_header_size: 8192  # 8KB
-  
-  # Maximum URI length in bytes (default: 8KB)
-  max_uri_length: 8192  # 8KB
-  
-  # Custom error messages (optional)
-  body_size_error_message: "Request body too large (maximum 10MB)"
-  header_size_error_message: "Request headers too large (maximum 8KB)"
-  uri_length_error_message: "Request URI too long (maximum 8KB)"
 
-# Connection Limits (prevents DDoS)
-connection_limits:
-  # Maximum total concurrent connections (default: 10,000)
-  max_connections: 10000
-  
-  # Maximum concurrent connections per IP (default: 100)
-  max_connections_per_ip: 100
-  
-  # Connection idle timeout in seconds (default: 60)
-  idle_timeout: 60
-  
-  # IP whitelist (unlimited connections)
-  whitelist:
-    - "10.0.0.0/8"      # Internal network
-    - "192.168.0.0/16"  # Private network
-  
-  # IP blacklist (no connections allowed)
-  blacklist:
-    - "203.0.113.0"  # Example blocked IP
-  
-  # Custom error message
-  error_message: "Too many concurrent connections - please try again later"
+  # ========================================================================
+  # TLS & mTLS Configuration
+  # ========================================================================
+  tls:
+    cert_file: "/etc/octopus/tls/cert.pem"
+    key_file: "/etc/octopus/tls/key.pem"
 
-# Audit Logging (compliance & forensics)
-audit_logging:
-  # Output destination: "file", "stdout", or "stderr"
-  output: "file"
-  
-  # Log file path (if output is "file")
-  file_path: "/var/log/octopus/audit.log"
-  
-  # Event types to log
-  log_auth_success: false      # Too noisy for production
-  log_auth_failure: true       # Security critical
-  log_authz_failure: true      # Access control violations
-  log_rate_limit: true         # Rate limit violations
-  log_tls_failure: true        # TLS/SSL issues
-  log_admin_access: true       # Admin API usage
-  log_config_change: true      # Configuration changes
-  log_suspicious: true         # Suspicious activity
-  
-  # Pretty print JSON for readability (disable in production)
-  pretty_print: false
+    # Mutual TLS (mTLS) — require or accept client certificates
+    # Uncomment to enable client certificate verification:
+    client_ca_file: "/etc/octopus/tls/client-ca.pem"
+    require_client_cert: false  # false = optional (verify if presented)
 
-# Security Headers
-security_headers:
-  # Preset: "strict", "default", or "permissive"
-  preset: "strict"
-  
-  # Or configure manually:
-  # hsts: "max-age=31536000; includeSubDomains; preload"
-  # csp: "default-src 'self'; script-src 'self'; object-src 'none'"
-  # frame_options: "DENY"
-  # content_type_options: "nosniff"
-  # xss_protection: "1; mode=block"
-  # referrer_policy: "no-referrer"
-  # permissions_policy: "geolocation=(), microphone=(), camera=()"
+    min_tls_version: "1.2"
+    enable_cert_reload: true
+    reload_interval_secs: 3600
 
-# JWT Authentication
-jwt:
-  # Secret key for HS256 (at least 32 bytes)
-  secret: "${JWT_SECRET}"  # From environment variable
-  
-  # Or use RSA public key for RS256
-  # public_key_path: "/etc/octopus/jwt-public-key.pem"
-  
-  # Algorithm: HS256, HS384, HS512, RS256, RS384, RS512, ES256, ES384
-  algorithm: "HS256"
-  
-  # Paths to skip authentication
+# ============================================================================
+# Named Authentication Providers
+# Define reusable auth providers that can be referenced by routes
+# ============================================================================
+auth_providers:
+  # JWT with static secret (for internal services)
+  internal-jwt:
+    type: jwt
+    secret: "${JWT_SECRET}"
+    algorithm: HS256
+    issuer: "octopus-gateway"
+    audience: "api"
+    header_name: "Authorization"
+    token_prefix: "Bearer "
+
+  # OIDC provider with auto-discovery (for user-facing APIs)
+  google-oidc:
+    type: oidc
+    issuer_url: "https://accounts.google.com"
+    audience: "your-app.example.com"
+    jwks_refresh_interval: 1h
+    required_scopes:
+      - openid
+      - email
+    fallback_provider: "internal-jwt"
+
+  # API key auth (for partner integrations)
+  partner-api:
+    type: api_key
+    header_name: "X-API-Key"
+    keys:
+      - key: "${PARTNER_A_KEY}"
+        name: "Partner A"
+        scopes: [read]
+        rate_limit: 100  # requests/minute
+      - key: "${PARTNER_B_KEY}"
+        name: "Partner B"
+        scopes: [read, write]
+        rate_limit: 500
+
+  # Forward auth (delegate to external auth service)
+  auth-service:
+    type: forward_auth
+    endpoint: "http://auth-svc:8080/verify"
+    forward_headers:
+      - Authorization
+      - Cookie
+      - X-Forwarded-For
+    response_headers:
+      - X-Auth-Subject
+      - X-Auth-Role
+      - X-Auth-Scopes
+    timeout: 5s
+    cache_ttl: 60s
+
+  # mTLS provider — authenticate based on client certificate CN
+  # Requires gateway.tls.client_ca_file to be set above
+  mtls-internal:
+    type: mtls
+    client_ca_file: "/etc/octopus/tls/client-ca.pem"
+    require_client_cert: true
+    extract_cn_as_principal: true
+    # Map certificate Common Names to roles
+    cn_to_roles:
+      "service-a.internal": [service, reader]
+      "service-b.internal": [service, writer]
+      "deploy-bot.ci": [service, deployer]
+      "*.admin.internal": [admin, service]
+
+# ============================================================================
+# Global Authentication & Authorization Settings
+# ============================================================================
+auth:
+  # Default provider applied to all routes without explicit auth_provider
+  default_provider: "internal-jwt"
+
+  # When true, ALL routes require authentication unless skip_auth: true
+  global_enforce: true
+
+  # Paths that skip authentication globally
   skip_paths:
     - "/health"
     - "/metrics"
-    - "/docs"
+    - "/docs/*"
     - "/redoc"
-  
-  # Token validation
-  validate_exp: true      # Check expiration
-  validate_nbf: true      # Check not-before
-  validate_iss: true      # Check issuer
-  validate_aud: true      # Check audience
-  
-  # Expected values
-  issuer: "octopus-gateway"
-  audience: "api"
-  
-  # Leeway for clock skew (seconds)
-  leeway: 60
+    - "/swagger"
 
-# Rate Limiting
-rate_limiting:
-  # Global rate limit
-  requests_per_window: 1000
-  window_size: 60  # seconds
-  
-  # Strategy: "token_bucket" or "fixed_window"
-  strategy: "token_bucket"
-  
-  # Per-route rate limits (override global)
-  per_route_limits:
-    "/api/login":
-      requests_per_window: 5
-      window_size: 60
-      error_message: "Too many login attempts - please wait"
-    
-    "/api/expensive-operation":
-      requests_per_window: 10
-      window_size: 60
-      error_message: "Rate limit exceeded for this operation"
+  # Headers injected into upstream requests after authentication
+  principal_header: "X-Auth-Principal"
+  roles_header: "X-Auth-Roles"
+  scopes_header: "X-Auth-Scopes"
 
-# TLS/SSL Configuration
-tls:
-  enabled: true
-  cert_path: "/etc/octopus/tls/cert.pem"
-  key_path: "/etc/octopus/tls/key.pem"
-  
-  # Client certificate verification (mTLS)
-  client_ca_path: "/etc/octopus/tls/ca.pem"
-  verify_client: false  # Set to true for mTLS
-  
-  # Auto-reload certificates on change
-  auto_reload: true
-  reload_interval: 3600  # seconds
+  # Cache validated tokens to avoid re-validation on every request
+  token_cache_ttl: 60s
 
-# CORS Configuration
+  # Error response format: "json" or "text"
+  error_format: json
+
+  # Authorization settings
+  authz:
+    # Engine: rhai (built-in), opa (external), or both
+    engine: both
+
+    # OPA (Open Policy Agent) integration
+    opa:
+      endpoint: "http://opa:8181/v1/data/octopus/authz/allow"
+      timeout: 100ms
+      cache_ttl: 5m
+      fail_open: false  # Deny if OPA is unreachable
+
+    # Global authorization rules (applied to all authenticated requests)
+    global_rules:
+      - name: "block-suspended-users"
+        description: "Deny access to suspended accounts"
+        rule: '!principal.attributes.contains("suspended")'
+        action: deny
+
+      - name: "require-email-verified"
+        description: "Only verified emails can access the API"
+        rule: 'principal.attributes.get("email_verified") == true'
+        action: deny
+
+      - name: "read-only-outside-business-hours"
+        description: "Non-admin users can only read outside 9-17 UTC"
+        rule: |
+          let hour = timestamp().hour;
+          if hour < 9 || hour > 17 {
+            request.method == "GET" || has_role("admin")
+          } else {
+            true
+          }
+        action: deny
+
+      - name: "ip-restrict-admin-writes"
+        description: "Admin write operations only from trusted IPs"
+        rule: |
+          if has_role("admin") && request.method != "GET" {
+            let ip = request.headers.get("x-forwarded-for");
+            ip.starts_with("10.") || ip.starts_with("192.168.")
+          } else {
+            true
+          }
+        action: deny
+
+# ============================================================================
+# Admin Dashboard Configuration
+# ============================================================================
+admin:
+  # Protect admin dashboard with auth (optional, default: no auth)
+  auth_provider: "internal-jwt"
+  # allowed_ips: ["10.0.0.0/8"]
+
+# ============================================================================
+# CORS Configuration (global defaults)
+# Per-route overrides can be specified in the routes section below.
+# ============================================================================
 cors:
-  # Allowed origins (use ["*"] carefully!)
   allowed_origins:
     - "https://app.example.com"
     - "https://admin.example.com"
-  
-  # Allowed methods
   allowed_methods:
-    - "GET"
-    - "POST"
-    - "PUT"
-    - "DELETE"
-    - "OPTIONS"
-  
-  # Allowed headers
+    - GET
+    - POST
+    - PUT
+    - DELETE
+    - OPTIONS
   allowed_headers:
-    - "content-type"
-    - "authorization"
-    - "x-request-id"
-  
-  # Exposed headers
+    - content-type
+    - authorization
+    - x-request-id
+    - x-api-key
   exposed_headers:
-    - "x-rate-limit-remaining"
-    - "x-rate-limit-reset"
-  
-  # Allow credentials
+    - x-rate-limit-remaining
+    - x-rate-limit-reset
   allow_credentials: true
-  
-  # Max age for preflight cache (seconds)
   max_age: 3600
 
-# Compression
-compression:
-  enabled: true
-  
-  # Algorithms: gzip, brotli, zstd
-  algorithms:
-    - "brotli"
-    - "gzip"
-    - "zstd"
-  
-  # Minimum size to compress (bytes)
-  min_size: 1024  # 1KB
-  
-  # Compression level (1-11 for brotli, 1-9 for gzip)
-  level: 6
+# ============================================================================
+# Middleware Configuration
+# ============================================================================
+middleware:
+  # Global rate limiting — applies to all routes unless per-route override
+  rate_limit:
+    strategy: token_bucket
+    requests_per_window: 1000
+    window_size: 60s
+    # Key extraction: ip, header, path, global, or identity
+    # "identity" uses the authenticated user's ID from AuthRateLimitKey
+    # Falls back to global rate limiting for unauthenticated requests
+    key_extractor: identity
+    # header_name: "X-API-Key"  # only used when key_extractor: header
 
-# Timeouts
-timeouts:
-  # Request timeout (seconds)
-  request: 30
-  
-  # Idle connection timeout (seconds)
-  idle: 60
-  
-  # Keep-alive timeout (seconds)
-  keep_alive: 90
-
-# Logging
-logging:
-  level: "info"  # trace, debug, info, warn, error
-  format: "json"  # json or text
-  
-  # Include fields
-  include_request_id: true
-  include_client_ip: true
-  include_user_agent: false
-
-# Metrics
-metrics:
-  enabled: true
-  endpoint: "/metrics"  # Prometheus scraping endpoint
-
-# Routes (with security configuration)
+# ============================================================================
+# Routes with Per-Route Auth, CORS & Rate Limiting
+# ============================================================================
 routes:
+  # --------------------------------------------------------------------------
+  # Public routes - no authentication required
+  # --------------------------------------------------------------------------
   - path: "/api/public/*"
-    upstream: "http://backend:8080"
-    methods: ["GET"]
-    # No authentication required
+    methods: [GET]
+    upstream: backend
     skip_auth: true
-    
-  - path: "/api/private/*"
-    upstream: "http://backend:8080"
-    methods: ["GET", "POST", "PUT", "DELETE"]
-    # Requires JWT authentication
-    require_auth: true
-    # Per-route rate limit
-    rate_limit:
-      requests_per_window: 100
-      window_size: 60
-    
+    # Permissive CORS for public API — any origin, no credentials
+    cors:
+      allowed_origins: ["*"]
+      allowed_methods: [GET, OPTIONS]
+      allowed_headers: [content-type]
+      allow_credentials: false
+      max_age: 86400
+
+  # --------------------------------------------------------------------------
+  # Standard user routes - uses default JWT provider
+  # --------------------------------------------------------------------------
+  - path: "/api/users/*"
+    methods: [GET, POST, PUT, DELETE]
+    upstream: user-service
+    strip_prefix: "/api"
+    require_roles: [user]
+
+  # --------------------------------------------------------------------------
+  # Admin routes - requires admin role with custom authz rule
+  # Identity-based rate limiting at 50 req/min per admin user
+  # --------------------------------------------------------------------------
   - path: "/api/admin/*"
-    upstream: "http://admin-backend:8080"
-    methods: ["GET", "POST", "PUT", "DELETE"]
-    # Requires JWT and admin role
-    require_auth: true
-    require_roles: ["admin"]
-    # Stricter rate limit
+    methods: [GET, POST, PUT, DELETE]
+    upstream: admin-service
+    require_roles: [admin]
+    authz_rule: |
+      has_role("admin") && request.method != "DELETE" || has_role("super-admin")
     rate_limit:
       requests_per_window: 50
-      window_size: 60
-    # Audit all admin access
-    audit: true
+      window_size: 60s
+    # Restrictive CORS — admin UI origin only
+    cors:
+      allowed_origins: ["https://admin.example.com"]
+      allowed_methods: [GET, POST, PUT, DELETE, OPTIONS]
+      allowed_headers: [content-type, authorization, x-request-id]
+      allow_credentials: true
+      max_age: 600
 
-# Example deployment presets:
-# 
-# DEVELOPMENT:
-# - request_limits: permissive
-# - connection_limits: permissive
-# - security_headers: permissive
-# - audit_logging.output: stdout
-# - audit_logging.pretty_print: true
-#
-# STAGING:
-# - request_limits: default
-# - connection_limits: default
-# - security_headers: default
-# - audit_logging.output: file
-#
-# PRODUCTION:
-# - request_limits: strict
-# - connection_limits: strict
-# - security_headers: strict
-# - audit_logging.output: file
-# - All critical logging enabled
+  # --------------------------------------------------------------------------
+  # Partner API - uses API key auth instead of default JWT
+  # Scoped CORS to partner domain only
+  # --------------------------------------------------------------------------
+  - path: "/api/partner/*"
+    methods: [GET, POST]
+    upstream: partner-service
+    auth_provider: "partner-api"
+    require_scopes: [read]
+    cors:
+      allowed_origins: ["https://partner.example.com"]
+      allowed_methods: [GET, POST, OPTIONS]
+      allowed_headers: [content-type, x-api-key]
+      allow_credentials: false
+      max_age: 3600
 
+  # --------------------------------------------------------------------------
+  # Webhooks endpoint - no CORS (server-to-server only)
+  # High rate limit for webhook bursts
+  # --------------------------------------------------------------------------
+  - path: "/api/webhooks/*"
+    methods: [POST]
+    upstream: webhook-service
+    auth_provider: "partner-api"
+    require_scopes: [write]
+    rate_limit:
+      requests_per_window: 500
+      window_size: 60s
+    # Empty CORS = no cross-origin access allowed
+    cors:
+      allowed_origins: []
+      allowed_methods: []
+      allowed_headers: []
+      allow_credentials: false
+      max_age: 0
+
+  # --------------------------------------------------------------------------
+  # Internal service mesh routes - mTLS authentication
+  # Uses client certificate CN for identity
+  # --------------------------------------------------------------------------
+  - path: "/internal/*"
+    methods: [GET, POST, PUT, DELETE]
+    upstream: internal-service
+    auth_provider: "mtls-internal"
+    require_roles: [service]
+    # No CORS — internal traffic only
+
+  # --------------------------------------------------------------------------
+  # Google login endpoint - uses OIDC provider
+  # --------------------------------------------------------------------------
+  - path: "/api/auth/google"
+    methods: [POST]
+    upstream: auth-service
+    auth_provider: "google-oidc"
+
+  # --------------------------------------------------------------------------
+  # Health & monitoring (skip auth via global skip_paths)
+  # --------------------------------------------------------------------------
+  - path: "/health"
+    methods: [GET]
+    upstream: backend
+    skip_auth: true
+
+# ============================================================================
+# FARP (Federated API Route Protocol) Configuration
+# When services register via FARP, their manifest can declare auth_config
+# which is automatically applied to all auto-generated routes.
+# ============================================================================
+farp:
+  enabled: true
+  schema_cache_ttl: 300s
+
+  # Example: A FARP service manifest with auth_config would look like:
+  #
+  # {
+  #   "version": "1.1.0",
+  #   "service_name": "billing-service",
+  #   "service_version": "v2.1.0",
+  #   "instance_id": "billing-1",
+  #   "auth_config": {
+  #     "auth_provider": "internal-jwt",
+  #     "require_roles": ["billing-reader"],
+  #     "require_scopes": ["billing:read"]
+  #   },
+  #   "route_table": [
+  #     { "method": "GET", "path": "/invoices", "public": false },
+  #     { "method": "POST", "path": "/invoices", "public": false },
+  #     { "method": "GET", "path": "/health", "public": true }
+  #   ],
+  #   "schemas": [...],
+  #   "endpoints": { "health": "/health", "introspection": "/.well-known/schema" },
+  #   "capabilities": ["rest"],
+  #   "updated_at": 1700000000,
+  #   "checksum": "abc123..."
+  # }
+  #
+  # All routes generated from this manifest will inherit:
+  #   auth_provider: "internal-jwt"
+  #   require_roles: ["billing-reader"]
+  #   require_scopes: ["billing:read"]
+
+  discovery:
+    type: consul
+    consul:
+      address: "http://consul:8500"
+      datacenter: dc1
+      service_tag: "farp"
+      poll_interval: 30s
+
+# ============================================================================
+# Upstreams
+# ============================================================================
+upstreams:
+  - name: backend
+    lb_policy: round_robin
+    instances:
+      - id: backend-1
+        host: localhost
+        port: 8081
+    health_check:
+      type: http
+      path: /health
+      interval: 10s
+      timeout: 5s
+
+  - name: user-service
+    lb_policy: round_robin
+    instances:
+      - id: user-svc-1
+        host: localhost
+        port: 8082
+    health_check:
+      type: http
+      path: /health
+      interval: 10s
+      timeout: 5s
+
+  - name: admin-service
+    instances:
+      - id: admin-1
+        host: localhost
+        port: 8083
+
+  - name: partner-service
+    instances:
+      - id: partner-1
+        host: localhost
+        port: 8084
+
+  - name: auth-service
+    instances:
+      - id: auth-1
+        host: localhost
+        port: 8085
+
+  - name: webhook-service
+    instances:
+      - id: webhook-1
+        host: localhost
+        port: 8086
+
+  - name: internal-service
+    instances:
+      - id: internal-1
+        host: localhost
+        port: 8087
+
+# ============================================================================
+# Observability
+# ============================================================================
+observability:
+  logging:
+    level: info
+    format: json
+  metrics:
+    enabled: true
+    endpoint: /metrics

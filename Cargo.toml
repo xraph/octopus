@@ -39,8 +39,8 @@ keywords = ["api-gateway", "proxy", "farp", "kubernetes", "microservices"]
 categories = ["web-programming", "network-programming", "api-bindings"]
 
 [workspace.dependencies]
-# FARP - External protocol implementation
-farp = { path = "../farp/farp-rust", features = ["memory-registry", "gateway", "providers-openapi", "providers-asyncapi", "providers-graphql", "providers-grpc"] }
+# FARP - External protocol implementation (published on crates.io)
+farp = { version = "1.2.0", features = ["memory-registry", "gateway", "providers-openapi", "providers-asyncapi", "providers-graphql", "providers-grpc"] }
 
 # Async runtime
 tokio = { version = "1.35", features = ["full"] }

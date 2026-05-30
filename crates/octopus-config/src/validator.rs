@@ -150,7 +150,13 @@ mod tests {
             upstreams: vec![],
             routes: vec![],
             plugins: vec![],
+            farp: Default::default(),
             observability: ObservabilityConfig::default(),
+            auth_providers: Default::default(),
+            auth: Default::default(),
+            cors: None,
+            admin: Default::default(),
+            grpc: Default::default(),
         }
     }
 
@@ -187,6 +193,14 @@ mod tests {
             strip_prefix: None,
             add_prefix: None,
             metadata: std::collections::HashMap::new(),
+            auth_provider: None,
+            skip_auth: false,
+            require_roles: vec![],
+            require_scopes: vec![],
+            authz_rule: None,
+            timeout: None,
+            rate_limit: None,
+            cors: None,
         });
 
         assert!(validate_config(&config).is_err());

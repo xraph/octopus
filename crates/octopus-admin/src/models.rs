@@ -191,6 +191,42 @@ pub struct PluginStatsCard {
     pub value: String,
 }
 
+/// Upstream cluster information with per-instance health
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamClusterInfo {
+    pub name: String,
+    pub strategy: String,
+    pub instance_count: usize,
+    pub healthy_count: usize,
+    pub instances: Vec<UpstreamInstanceInfo>,
+}
+
+/// Per-instance upstream information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpstreamInstanceInfo {
+    pub id: String,
+    pub address: String,
+    pub port: u16,
+    pub url: String,
+    pub weight: u32,
+    pub healthy: bool,
+    pub active_connections: u32,
+    pub avg_latency_ms: f64,
+    pub error_rate: f64,
+}
+
+/// FARP service information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FarpServiceInfo {
+    pub name: String,
+    pub version: String,
+    pub instance_id: Option<String>,
+    pub schemas_count: usize,
+    pub capabilities: Vec<String>,
+    pub registered_at: String,
+    pub updated_at: String,
+}
+
 impl Default for DashboardStats {
     fn default() -> Self {
         Self {

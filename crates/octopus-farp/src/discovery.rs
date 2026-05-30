@@ -166,6 +166,23 @@ impl DiscoveryWatcher {
             if let Some(tracked_service) = tracked.get_mut(&instance.name) {
                 // Service found - reset missed count
                 tracked_service.missed_count = 0;
+                drop(tracked);
+
+                // Check if schemas need refreshing (cache TTL expired)
+                if self.registry.needs_schema_refresh(&instance.name) {
+                    debug!(
+                        service = %instance.name,
+                        "Schema cache expired, refreshing from service"
+                    );
+                    if let Err(e) = self.refresh_service_schemas(&instance).await {
+                        warn!(
+                            service = %instance.name,
+                            error = %e,
+                            "Failed to refresh stale schemas"
+                        );
+                    }
+                }
+
                 continue;
             }
             drop(tracked);
@@ -401,6 +418,53 @@ impl DiscoveryWatcher {
         self.trigger_federation().await
     }
 
+    /// Refresh schemas for an already-registered service (re-fetch from introspection endpoint)
+    async fn refresh_service_schemas(&self, instance: &ServiceInstance) -> Result<()> {
+        let base_url = format!("http://{}:{}", instance.address, instance.port);
+
+        // Get the OpenAPI path from the existing registration's manifest
+        let openapi_path = self
+            .registry
+            .get_service(&instance.name)
+            .ok()
+            .and_then(|reg| reg.manifest.endpoints.openapi.clone())
+            .unwrap_or_else(|| "/openapi.json".to_string());
+
+        let openapi_url = format!("{base_url}{openapi_path}");
+
+        info!(
+            service = %instance.name,
+            url = %openapi_url,
+            "Refreshing stale schema cache"
+        );
+
+        // Clear existing schemas before re-fetch so add_schema resets updated_at
+        if let Some(mut reg) = self.registry.services_mut().get_mut(&instance.name) {
+            reg.schemas.clear();
+        }
+
+        // Re-fetch and store the schema (this calls add_schema which resets updated_at)
+        self.fetch_and_store_schema(&instance.name, &openapi_url)
+            .await?;
+
+        // Re-generate routes if router is configured
+        if let Some(ref router) = self.router {
+            if let Err(e) = self
+                .register_routes_from_schema(router, &instance.name)
+                .await
+            {
+                warn!(
+                    service = %instance.name,
+                    error = %e,
+                    "Failed to re-register routes after schema refresh"
+                );
+            }
+        }
+
+        info!(service = %instance.name, "Schema cache refreshed successfully");
+        Ok(())
+    }
+
     /// Trigger federation of all registered schemas
     async fn trigger_federation(&self) -> Result<()> {
         crate::schema_ops::trigger_federation(&self.registry, &self.federation)
@@ -477,14 +541,27 @@ impl DiscoveryWatcher {
                     route_count = routes.len(),
                     "Generated routes from route_table (v1.1.0)"
                 );
+                // Apply auth config from manifest to generated routes
+                let auth_config = registration.manifest.auth_config.as_ref();
                 // Register each generated route with the router
+                let service_prefix = format!("/{}", service_name.to_lowercase());
                 for gen_route in &routes {
-                    let route = RouteBuilder::new()
+                    let mut builder = RouteBuilder::new()
                         .method(gen_route.method.parse().unwrap_or(Method::GET))
-                        .path(format!("/{service_name_lower}{}", gen_route.path, service_name_lower = service_name.to_lowercase()))
+                        .path(format!("{}{}", service_prefix, gen_route.path))
                         .upstream_name(service_name)
-                        .priority(100)
-                        .build();
+                        .strip_prefix(&service_prefix)
+                        .priority(100);
+
+                    // Apply auth config from manifest
+                    if let Some(auth) = auth_config {
+                        builder = builder
+                            .auth_provider(auth.auth_provider.as_deref())
+                            .require_roles(&auth.require_roles)
+                            .require_scopes(&auth.require_scopes);
+                    }
+
+                    let route = builder.build();
                     if let Ok(route) = route {
                         if let Err(e) = router.add_route(route) {
                             warn!(error = %e, "Failed to register route from route_table");
@@ -494,6 +571,13 @@ impl DiscoveryWatcher {
                 return Ok(());
             }
         }
+
+        // Extract auth config from manifest for OpenAPI fallback routes
+        let manifest_auth_config = self
+            .registry
+            .get_service(service_name)
+            .ok()
+            .and_then(|r| r.manifest.auth_config.clone());
 
         // Get the schema from registry
         let schemas = self.registry.get_schemas(service_name)?;
@@ -549,14 +633,25 @@ impl DiscoveryWatcher {
                 };
 
                 // Create route with lowercase service prefix
-                let prefixed_path = format!("/{service_name_lower}{path}", service_name_lower = service_name.to_lowercase());
+                let service_prefix = format!("/{}", service_name.to_lowercase());
+                let prefixed_path = format!("{service_prefix}{path}");
 
-                let route = RouteBuilder::new()
+                let mut builder = RouteBuilder::new()
                     .path(&prefixed_path)
                     .method(method.clone())
                     .upstream_name(service_name)
-                    .priority(100) // Default priority for FARP routes
-                    .build()?;
+                    .strip_prefix(&service_prefix)
+                    .priority(100); // Default priority for FARP routes
+
+                // Apply auth config from manifest
+                if let Some(ref auth) = manifest_auth_config {
+                    builder = builder
+                        .auth_provider(auth.auth_provider.as_deref())
+                        .require_roles(&auth.require_roles)
+                        .require_scopes(&auth.require_scopes);
+                }
+
+                let route = builder.build()?;
 
                 // Register the route
                 if let Err(e) = router.add_route(route) {

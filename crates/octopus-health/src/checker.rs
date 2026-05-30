@@ -287,6 +287,175 @@ impl HealthCheck for TcpHealthCheck {
     }
 }
 
+/// gRPC health check using the standard grpc.health.v1.Health/Check protocol
+///
+/// Sends an HTTP/2 POST to /grpc.health.v1.Health/Check with a protobuf-encoded
+/// HealthCheckRequest containing the service name. Parses the response to check
+/// the serving status.
+#[derive(Debug)]
+struct GrpcHealthCheck {
+    service: String,
+    timeout_duration: Duration,
+}
+
+impl GrpcHealthCheck {
+    fn new(service: String, timeout_duration: Duration) -> Self {
+        Self {
+            service,
+            timeout_duration,
+        }
+    }
+
+    /// Hand-craft a protobuf-encoded HealthCheckRequest
+    /// Proto: message HealthCheckRequest { string service = 1; }
+    /// Protobuf wire format: field 1, type 2 (length-delimited) = tag 0x0a
+    fn encode_health_request(&self) -> Vec<u8> {
+        let service_bytes = self.service.as_bytes();
+        let mut buf = Vec::new();
+        if !service_bytes.is_empty() {
+            buf.push(0x0a); // field 1, wire type 2 (length-delimited)
+            buf.push(service_bytes.len() as u8);
+            buf.extend_from_slice(service_bytes);
+        }
+        buf
+    }
+
+    /// Wrap protobuf message in gRPC frame: [compressed(1b)][length(4b)][message]
+    fn grpc_frame(msg: &[u8]) -> Vec<u8> {
+        let len = msg.len() as u32;
+        let mut frame = Vec::with_capacity(5 + msg.len());
+        frame.push(0); // not compressed
+        frame.extend_from_slice(&len.to_be_bytes());
+        frame.extend_from_slice(msg);
+        frame
+    }
+
+    /// Parse serving status from protobuf response
+    /// Proto: message HealthCheckResponse { ServingStatus status = 1; }
+    /// ServingStatus: UNKNOWN=0, SERVING=1, NOT_SERVING=2
+    fn parse_serving_status(body: &[u8]) -> Option<i32> {
+        // Skip gRPC 5-byte frame header
+        if body.len() < 5 {
+            return None;
+        }
+        let msg = &body[5..];
+        // Parse protobuf: field 1, wire type 0 (varint) = tag 0x08
+        if msg.len() >= 2 && msg[0] == 0x08 {
+            Some(msg[1] as i32)
+        } else if msg.is_empty() {
+            // Empty response body means SERVING (default value)
+            Some(1)
+        } else {
+            None
+        }
+    }
+}
+
+#[async_trait]
+impl HealthCheck for GrpcHealthCheck {
+    async fn check(&self, address: &str, port: u16) -> HealthCheckResult {
+        let start = Instant::now();
+        let addr = format!("{address}:{port}");
+
+        debug!(addr = %addr, service = %self.service, "Performing gRPC health check");
+
+        // Build gRPC health check request
+        let proto_msg = self.encode_health_request();
+        let body = Self::grpc_frame(&proto_msg);
+
+        let uri = format!("http://{addr}/grpc.health.v1.Health/Check");
+
+        // Connect via HTTP/2 and send request
+        let result = timeout(self.timeout_duration, async {
+            let stream = tokio::net::TcpStream::connect(&addr).await?;
+            stream.set_nodelay(true)?;
+
+            let io = hyper_util::rt::TokioIo::new(stream);
+            let (mut sender, conn) = hyper::client::conn::http2::Builder::new(
+                hyper_util::rt::TokioExecutor::new(),
+            )
+            .handshake(io)
+            .await
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::ConnectionRefused, e))?;
+
+            tokio::spawn(async move {
+                let _ = conn.await;
+            });
+
+            let req = http::Request::builder()
+                .method(Method::POST)
+                .uri(uri)
+                .header("content-type", "application/grpc")
+                .header("te", "trailers")
+                .body(http_body_util::Full::new(bytes::Bytes::from(body)))
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+
+            let resp = sender
+                .send_request(req)
+                .await
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::ConnectionAborted, e))?;
+
+            // Check grpc-status header (may be in headers for health check)
+            let grpc_status = resp
+                .headers()
+                .get("grpc-status")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse::<i32>().ok());
+
+            if let Some(status) = grpc_status {
+                if status != 0 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("gRPC status: {status}"),
+                    ));
+                }
+            }
+
+            // Collect response body
+            use http_body_util::BodyExt;
+            let body_bytes = resp
+                .into_body()
+                .collect()
+                .await
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?
+                .to_bytes();
+
+            // Parse serving status
+            let status = Self::parse_serving_status(&body_bytes).unwrap_or(0);
+
+            Ok::<i32, std::io::Error>(status)
+        })
+        .await;
+
+        match result {
+            Ok(Ok(status)) => {
+                if status == 1 {
+                    // SERVING
+                    debug!(addr = %addr, "gRPC health check passed (SERVING)");
+                    HealthCheckResult::healthy(start.elapsed())
+                } else {
+                    let msg = match status {
+                        0 => "UNKNOWN",
+                        2 => "NOT_SERVING",
+                        3 => "SERVICE_UNKNOWN",
+                        _ => "UNRECOGNIZED",
+                    };
+                    warn!(addr = %addr, status = %msg, "gRPC health check: not serving");
+                    HealthCheckResult::unhealthy(start.elapsed(), format!("Status: {msg}"))
+                }
+            }
+            Ok(Err(e)) => {
+                warn!(addr = %addr, error = %e, "gRPC health check failed");
+                HealthCheckResult::unhealthy(start.elapsed(), format!("Error: {e}"))
+            }
+            Err(_) => {
+                warn!(addr = %addr, "gRPC health check timeout");
+                HealthCheckResult::unhealthy(start.elapsed(), "Timeout".to_string())
+            }
+        }
+    }
+}
+
 /// Health checker that manages health checks for multiple instances
 #[derive(Debug)]
 pub struct HealthChecker {
@@ -312,9 +481,7 @@ impl HealthChecker {
             )),
             HealthCheckType::Tcp => Box::new(TcpHealthCheck::new(config.timeout)),
             HealthCheckType::Grpc { service } => {
-                // TODO: Implement gRPC health check
-                warn!(service = %service, "gRPC health checks not yet implemented, using TCP");
-                Box::new(TcpHealthCheck::new(config.timeout))
+                Box::new(GrpcHealthCheck::new(service.clone(), config.timeout))
             }
         };
 

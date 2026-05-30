@@ -52,6 +52,25 @@ pub struct SchemaManifest {
     /// SHA256 checksum of the route table for atomic route swaps (v1.1.0)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub routes_checksum: Option<String>,
+
+    /// Authentication requirements for this service's routes
+    /// When set, auto-generated routes from this service inherit these auth settings
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_config: Option<ServiceAuthConfig>,
+}
+
+/// Authentication configuration declared by a FARP service
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ServiceAuthConfig {
+    /// Auth provider name to use for this service's routes
+    #[serde(default)]
+    pub auth_provider: Option<String>,
+    /// Required roles
+    #[serde(default)]
+    pub require_roles: Vec<String>,
+    /// Required scopes
+    #[serde(default)]
+    pub require_scopes: Vec<String>,
 }
 
 impl SchemaManifest {
@@ -78,6 +97,7 @@ impl SchemaManifest {
             checksum: String::new(),
             route_table: Vec::new(),
             routes_checksum: None,
+            auth_config: None,
         }
     }
 

@@ -3,6 +3,7 @@
 use http::Method;
 use octopus_core::{Error, Result};
 use std::collections::HashMap;
+use std::time::Duration;
 
 /// Route definition
 #[derive(Debug, Clone)]
@@ -27,6 +28,45 @@ pub struct Route {
 
     /// Path prefix to add before forwarding
     pub add_prefix: Option<String>,
+
+    /// Auth provider name (overrides global default)
+    pub auth_provider: Option<String>,
+
+    /// Skip authentication for this route
+    pub skip_auth: bool,
+
+    /// Required roles for authorization
+    pub require_roles: Vec<String>,
+
+    /// Required scopes for authorization
+    pub require_scopes: Vec<String>,
+
+    /// Custom authorization rule (Rhai expression)
+    pub authz_rule: Option<String>,
+
+    /// Per-route request timeout override
+    pub timeout: Option<Duration>,
+
+    /// Per-route rate limit (requests_per_window, window_size)
+    pub rate_limit: Option<(u32, Duration)>,
+
+    /// Per-route CORS override
+    pub cors: Option<RouteCorsOverride>,
+}
+
+/// Per-route CORS override configuration
+#[derive(Debug, Clone)]
+pub struct RouteCorsOverride {
+    /// Allowed origins
+    pub allowed_origins: Vec<String>,
+    /// Allowed HTTP methods
+    pub allowed_methods: Vec<String>,
+    /// Allowed request headers
+    pub allowed_headers: Vec<String>,
+    /// Allow credentials
+    pub allow_credentials: bool,
+    /// Preflight cache max age in seconds
+    pub max_age: u64,
 }
 
 impl Route {
@@ -46,6 +86,14 @@ pub struct RouteBuilder {
     metadata: HashMap<String, String>,
     strip_prefix: Option<String>,
     add_prefix: Option<String>,
+    auth_provider: Option<String>,
+    skip_auth: bool,
+    require_roles: Vec<String>,
+    require_scopes: Vec<String>,
+    authz_rule: Option<String>,
+    timeout: Option<Duration>,
+    rate_limit: Option<(u32, Duration)>,
+    cors: Option<RouteCorsOverride>,
 }
 
 impl RouteBuilder {
@@ -96,6 +144,54 @@ impl RouteBuilder {
         self
     }
 
+    /// Set auth provider name
+    pub fn auth_provider(mut self, provider: Option<&str>) -> Self {
+        self.auth_provider = provider.map(String::from);
+        self
+    }
+
+    /// Set skip auth flag
+    pub fn skip_auth(mut self, skip: bool) -> Self {
+        self.skip_auth = skip;
+        self
+    }
+
+    /// Set required roles
+    pub fn require_roles(mut self, roles: &[String]) -> Self {
+        self.require_roles = roles.to_vec();
+        self
+    }
+
+    /// Set required scopes
+    pub fn require_scopes(mut self, scopes: &[String]) -> Self {
+        self.require_scopes = scopes.to_vec();
+        self
+    }
+
+    /// Set custom authz rule
+    pub fn authz_rule(mut self, rule: Option<&str>) -> Self {
+        self.authz_rule = rule.map(String::from);
+        self
+    }
+
+    /// Set per-route timeout
+    pub fn timeout(mut self, timeout: Option<Duration>) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
+    /// Set per-route rate limit
+    pub fn rate_limit(mut self, requests: u32, window: Duration) -> Self {
+        self.rate_limit = Some((requests, window));
+        self
+    }
+
+    /// Set per-route CORS override
+    pub fn cors(mut self, cors: Option<RouteCorsOverride>) -> Self {
+        self.cors = cors;
+        self
+    }
+
     /// Build the route
     pub fn build(self) -> Result<Route> {
         let method = self
@@ -123,6 +219,14 @@ impl RouteBuilder {
             metadata: self.metadata,
             strip_prefix: self.strip_prefix,
             add_prefix: self.add_prefix,
+            auth_provider: self.auth_provider,
+            skip_auth: self.skip_auth,
+            require_roles: self.require_roles,
+            require_scopes: self.require_scopes,
+            authz_rule: self.authz_rule,
+            timeout: self.timeout,
+            rate_limit: self.rate_limit,
+            cors: self.cors,
         })
     }
 }
@@ -180,5 +284,39 @@ mod tests {
 
         assert_eq!(route.strip_prefix, Some("/api".to_string()));
         assert_eq!(route.add_prefix, Some("/v1".to_string()));
+    }
+
+    #[test]
+    fn test_route_with_auth() {
+        let route = RouteBuilder::new()
+            .method(Method::GET)
+            .path("/api/admin/*")
+            .upstream_name("admin-service")
+            .auth_provider(Some("internal-jwt"))
+            .require_roles(&["admin".to_string()])
+            .require_scopes(&["read".to_string(), "write".to_string()])
+            .authz_rule(Some("has_role(\"admin\")"))
+            .build()
+            .unwrap();
+
+        assert_eq!(route.auth_provider, Some("internal-jwt".to_string()));
+        assert!(!route.skip_auth);
+        assert_eq!(route.require_roles, vec!["admin".to_string()]);
+        assert_eq!(route.require_scopes, vec!["read".to_string(), "write".to_string()]);
+        assert_eq!(route.authz_rule, Some("has_role(\"admin\")".to_string()));
+    }
+
+    #[test]
+    fn test_route_skip_auth() {
+        let route = RouteBuilder::new()
+            .method(Method::GET)
+            .path("/health")
+            .upstream_name("backend")
+            .skip_auth(true)
+            .build()
+            .unwrap();
+
+        assert!(route.skip_auth);
+        assert!(route.auth_provider.is_none());
     }
 }

@@ -1,5 +1,6 @@
 //! CORS (Cross-Origin Resource Sharing) middleware
 
+use crate::auth_gateway::MatchedRouteCors;
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::{header, HeaderValue, Method, Request, Response, StatusCode};
@@ -87,27 +88,45 @@ impl Cors {
         Self::with_config(config)
     }
 
+    /// Resolve effective CORS config: per-route override or global default
+    fn effective_config(&self, req: &Request<Body>) -> CorsConfig {
+        if let Some(route_cors) = req.extensions().get::<MatchedRouteCors>() {
+            CorsConfig {
+                allowed_origins: route_cors.allowed_origins.clone(),
+                allowed_methods: route_cors
+                    .allowed_methods
+                    .iter()
+                    .filter_map(|m| m.parse().ok())
+                    .collect(),
+                allowed_headers: route_cors.allowed_headers.clone(),
+                allow_credentials: route_cors.allow_credentials,
+                max_age: Duration::from_secs(route_cors.max_age),
+                // Inherit exposed_headers from global config
+                exposed_headers: self.config.exposed_headers.clone(),
+            }
+        } else {
+            self.config.clone()
+        }
+    }
+
     /// Check if origin is allowed
-    fn is_origin_allowed(&self, origin: &str) -> bool {
-        if self.config.allowed_origins.contains(&"*".to_string()) {
+    fn is_origin_allowed(config: &CorsConfig, origin: &str) -> bool {
+        if config.allowed_origins.contains(&"*".to_string()) {
             return true;
         }
-        self.config.allowed_origins.contains(&origin.to_string())
+        config.allowed_origins.contains(&origin.to_string())
     }
 
     /// Get the appropriate Access-Control-Allow-Origin value
-    fn get_allow_origin(&self, request_origin: Option<&str>) -> Option<String> {
-        if self.config.allowed_origins.contains(&"*".to_string()) {
-            // If allowing all origins
-            if self.config.allow_credentials {
-                // Can't use * with credentials, echo back the origin
+    fn get_allow_origin(config: &CorsConfig, request_origin: Option<&str>) -> Option<String> {
+        if config.allowed_origins.contains(&"*".to_string()) {
+            if config.allow_credentials {
                 request_origin.map(|s| s.to_string())
             } else {
                 Some("*".to_string())
             }
         } else if let Some(origin) = request_origin {
-            // If specific origins are allowed
-            if self.is_origin_allowed(origin) {
+            if Self::is_origin_allowed(config, origin) {
                 Some(origin.to_string())
             } else {
                 None
@@ -118,7 +137,7 @@ impl Cors {
     }
 
     /// Handle preflight OPTIONS request
-    fn handle_preflight(&self, req: &Request<Body>) -> Response<Body> {
+    fn handle_preflight(config: &CorsConfig, req: &Request<Body>) -> Response<Body> {
         let origin = req
             .headers()
             .get(header::ORIGIN)
@@ -126,17 +145,14 @@ impl Cors {
 
         let mut response = Response::builder().status(StatusCode::NO_CONTENT);
 
-        // Add CORS headers
-        if let Some(allow_origin) = self.get_allow_origin(origin) {
+        if let Some(allow_origin) = Self::get_allow_origin(config, origin) {
             response = response.header(
                 header::ACCESS_CONTROL_ALLOW_ORIGIN,
                 HeaderValue::from_str(&allow_origin).unwrap(),
             );
         }
 
-        // Allowed methods
-        let methods = self
-            .config
+        let methods = config
             .allowed_methods
             .iter()
             .map(|m| m.as_str())
@@ -144,18 +160,15 @@ impl Cors {
             .join(", ");
         response = response.header(header::ACCESS_CONTROL_ALLOW_METHODS, methods);
 
-        // Allowed headers
-        let headers = self.config.allowed_headers.join(", ");
+        let headers = config.allowed_headers.join(", ");
         response = response.header(header::ACCESS_CONTROL_ALLOW_HEADERS, headers);
 
-        // Max age
         response = response.header(
             header::ACCESS_CONTROL_MAX_AGE,
-            self.config.max_age.as_secs().to_string(),
+            config.max_age.as_secs().to_string(),
         );
 
-        // Credentials
-        if self.config.allow_credentials {
+        if config.allow_credentials {
             response = response.header(header::ACCESS_CONTROL_ALLOW_CREDENTIALS, "true");
         }
 
@@ -166,7 +179,7 @@ impl Cors {
 
     /// Add CORS headers to response
     fn add_cors_headers(
-        &self,
+        config: &CorsConfig,
         req: &Request<Body>,
         mut response: Response<Body>,
     ) -> Response<Body> {
@@ -175,25 +188,22 @@ impl Cors {
             .get(header::ORIGIN)
             .and_then(|v| v.to_str().ok());
 
-        // Add Access-Control-Allow-Origin
-        if let Some(allow_origin) = self.get_allow_origin(origin) {
+        if let Some(allow_origin) = Self::get_allow_origin(config, origin) {
             response.headers_mut().insert(
                 header::ACCESS_CONTROL_ALLOW_ORIGIN,
                 HeaderValue::from_str(&allow_origin).unwrap(),
             );
         }
 
-        // Add exposed headers
-        if !self.config.exposed_headers.is_empty() {
-            let exposed = self.config.exposed_headers.join(", ");
+        if !config.exposed_headers.is_empty() {
+            let exposed = config.exposed_headers.join(", ");
             response.headers_mut().insert(
                 header::ACCESS_CONTROL_EXPOSE_HEADERS,
                 HeaderValue::from_str(&exposed).unwrap(),
             );
         }
 
-        // Add credentials header
-        if self.config.allow_credentials {
+        if config.allow_credentials {
             response.headers_mut().insert(
                 header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
                 HeaderValue::from_static("true"),
@@ -222,14 +232,17 @@ impl fmt::Debug for Cors {
 #[async_trait]
 impl Middleware for Cors {
     async fn call(&self, req: Request<Body>, next: Next) -> Result<Response<Body>> {
+        // Resolve effective CORS config (per-route override or global)
+        let effective = self.effective_config(&req);
+
         // Handle preflight OPTIONS request
         if req.method() == Method::OPTIONS {
-            return Ok(self.handle_preflight(&req));
+            return Ok(Self::handle_preflight(&effective, &req));
         }
 
         // For actual requests, call next and add CORS headers
         let response = next.run(req.clone()).await?;
-        Ok(self.add_cors_headers(&req, response))
+        Ok(Self::add_cors_headers(&effective, &req, response))
     }
 }
 

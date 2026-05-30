@@ -21,7 +21,7 @@ pub mod config;
 pub mod loader;
 pub mod mtls;
 
-pub use acceptor::TlsAcceptor;
+pub use acceptor::{extract_client_cn, TlsAcceptor, TlsClientCn};
 pub use config::TlsConfig;
 pub use loader::{load_certificates, load_private_key, CertificateReloader};
 pub use mtls::{MtlsConfig, TargetTlsConfig};

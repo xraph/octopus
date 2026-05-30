@@ -2,14 +2,15 @@
 
 use crate::client::{Body, HttpClient};
 use crate::pool::ConnectionPool;
-use crate::retry::RetryPolicy;
+use crate::retry::{RetryContext, RetryPolicy};
 use bytes::Bytes;
 use http::{Request, Response, Uri};
-use http_body_util::Full;
+use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use octopus_core::{Error, Result, UpstreamInstance};
 use octopus_health::circuit_breaker::{CircuitBreaker, CircuitBreakerConfig};
 use std::sync::Arc;
+use tokio::time::sleep;
 use tracing::{debug, instrument, warn};
 
 /// Proxy configuration
@@ -202,6 +203,168 @@ impl HttpProxy {
         Ok(Response::from_parts(parts, Full::new(body_bytes)))
     }
 
+    /// Proxy a pre-buffered request with retry logic and circuit breaker
+    ///
+    /// Takes a `Request<Full<Bytes>>` whose body is cheap to clone (Bytes is
+    /// reference-counted), so we can rebuild the request on each retry attempt.
+    /// Returns a fully buffered `Response<Full<Bytes>>`.
+    #[instrument(skip(self, req), fields(upstream = %upstream.id))]
+    pub async fn proxy_with_retry(
+        &self,
+        req: Request<Full<Bytes>>,
+        upstream: &UpstreamInstance,
+    ) -> Result<Response<Full<Bytes>>> {
+        // Check circuit breaker first
+        if self.config.enable_circuit_breaker && !self.circuit_breaker.allow_request(&upstream.id) {
+            warn!(upstream = %upstream.id, "Circuit breaker is OPEN, rejecting request");
+            return Err(Error::CircuitBreakerOpen(upstream.id.clone()));
+        }
+
+        // Save request parts for cloning across attempts
+        let (parts, body) = req.into_parts();
+        let method = parts.method.clone();
+        let original_uri = parts.uri.clone();
+        let headers = parts.headers.clone();
+        let version = parts.version;
+        let body_bytes = body
+            .collect()
+            .await
+            .map_err(|e| Error::Internal(format!("Failed to read request body: {e}")))?
+            .to_bytes();
+
+        // Build upstream URI once
+        // We need a temporary request to call build_upstream_uri
+        let tmp_req = Request::builder()
+            .method(method.clone())
+            .uri(original_uri.clone())
+            .body(Full::new(body_bytes.clone()))
+            .map_err(|e| Error::Internal(format!("Failed to build request: {e}")))?;
+        let upstream_uri = self.build_upstream_uri_from_full(&tmp_req, upstream)?;
+
+        let max_total_attempts = if self.config.enable_retry {
+            self.retry_policy.max_attempts + 1
+        } else {
+            1
+        };
+        let mut retry_ctx = RetryContext::new();
+        let mut last_result: Option<Result<Response<Full<Bytes>>>> = None;
+
+        for attempt in 0..max_total_attempts {
+            // Build request from saved parts
+            let mut new_req = Request::builder()
+                .method(method.clone())
+                .uri(upstream_uri.clone())
+                .version(version)
+                .body(Full::new(body_bytes.clone()))
+                .map_err(|e| Error::Internal(format!("Failed to build retry request: {e}")))?;
+
+            // Copy original headers
+            *new_req.headers_mut() = headers.clone();
+
+            // Transform headers for upstream
+            self.transform_headers_full(&mut new_req, upstream)?;
+
+            debug!(
+                attempt = attempt,
+                method = %method,
+                uri = %upstream_uri,
+                "Sending request to upstream (attempt {})",
+                attempt + 1
+            );
+
+            // Send request
+            let send_result = self.client.send(new_req, upstream).await;
+
+            // Process result
+            match send_result {
+                Ok(response) => {
+                    let status = response.status();
+                    retry_ctx.record_status(status);
+
+                    // Collect body into Full<Bytes>
+                    let (resp_parts, resp_body) = response.into_parts();
+                    let resp_bytes = resp_body
+                        .collect()
+                        .await
+                        .map_err(|e| Error::UpstreamConnection(e.to_string()))?
+                        .to_bytes();
+                    let buffered_resp =
+                        Response::from_parts(resp_parts, Full::new(resp_bytes));
+
+                    // Check if retryable
+                    let is_retryable = self.config.enable_retry
+                        && attempt < max_total_attempts - 1
+                        && self.retry_policy.is_status_retryable(status)
+                        && self.retry_policy.is_method_retryable(&method);
+
+                    if is_retryable {
+                        warn!(
+                            status = status.as_u16(),
+                            attempt = attempt + 1,
+                            max = max_total_attempts,
+                            "Retryable status code, will retry"
+                        );
+                        retry_ctx.record_attempt();
+                        last_result = Some(Ok(buffered_resp));
+
+                        let backoff = self.retry_policy.calculate_backoff(attempt);
+                        sleep(backoff).await;
+                        continue;
+                    }
+
+                    // Success or non-retryable status
+                    debug!(
+                        status = status.as_u16(),
+                        "Received response from upstream"
+                    );
+
+                    if self.config.enable_circuit_breaker {
+                        self.circuit_breaker.record_success(&upstream.id);
+                    }
+                    return Ok(buffered_resp);
+                }
+                Err(e) => {
+                    let is_retryable = self.config.enable_retry
+                        && attempt < max_total_attempts - 1
+                        && self.retry_policy.is_error_retryable(&e);
+
+                    if is_retryable {
+                        warn!(
+                            error = %e,
+                            attempt = attempt + 1,
+                            max = max_total_attempts,
+                            "Retryable error, will retry"
+                        );
+                        retry_ctx.record_attempt();
+                        retry_ctx.record_error(e);
+
+                        let backoff = self.retry_policy.calculate_backoff(attempt);
+                        sleep(backoff).await;
+                        continue;
+                    }
+
+                    // Non-retryable error
+                    if self.config.enable_circuit_breaker {
+                        self.circuit_breaker.record_failure(&upstream.id);
+                    }
+                    return Err(e);
+                }
+            }
+        }
+
+        // All retries exhausted — return the last result
+        if self.config.enable_circuit_breaker {
+            self.circuit_breaker.record_failure(&upstream.id);
+        }
+
+        match last_result {
+            Some(result) => result,
+            None => Err(Error::Internal(
+                "Retry loop completed with no result".to_string(),
+            )),
+        }
+    }
+
     /// Build the upstream URI
     fn build_upstream_uri(&self, req: &Request<Body>, upstream: &UpstreamInstance) -> Result<Uri> {
         let path_and_query = req
@@ -251,6 +414,64 @@ impl HttpProxy {
         }
 
         // Add custom headers
+        for (name, value) in &self.config.upstream_headers {
+            headers.insert(
+                http::HeaderName::from_bytes(name.as_bytes())
+                    .map_err(|e| Error::InvalidRequest(format!("Invalid header name: {e}")))?,
+                http::HeaderValue::from_str(value)
+                    .map_err(|e| Error::InvalidRequest(format!("Invalid header value: {e}")))?,
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Build the upstream URI from a Full<Bytes> request
+    fn build_upstream_uri_from_full(
+        &self,
+        req: &Request<Full<Bytes>>,
+        upstream: &UpstreamInstance,
+    ) -> Result<Uri> {
+        let path_and_query = req
+            .uri()
+            .path_and_query()
+            .map(|pq| pq.as_str())
+            .unwrap_or("/");
+
+        let upstream_uri = format!(
+            "http://{}:{}{}",
+            upstream.address, upstream.port, path_and_query
+        );
+
+        upstream_uri
+            .parse()
+            .map_err(|e| Error::UpstreamConnection(format!("Invalid upstream URI: {e}")))
+    }
+
+    /// Transform request headers for a Full<Bytes> request
+    fn transform_headers_full(
+        &self,
+        req: &mut Request<Full<Bytes>>,
+        upstream: &UpstreamInstance,
+    ) -> Result<()> {
+        let headers = req.headers_mut();
+
+        if !self.config.preserve_host {
+            let host = format!("{}:{}", upstream.address, upstream.port);
+            headers.insert(
+                http::header::HOST,
+                host.parse()
+                    .map_err(|e| Error::InvalidRequest(format!("Invalid host: {e}")))?,
+            );
+        }
+
+        if self.config.add_forwarded_headers {
+            headers.insert(
+                http::HeaderName::from_static("x-forwarded-proto"),
+                http::HeaderValue::from_static("http"),
+            );
+        }
+
         for (name, value) in &self.config.upstream_headers {
             headers.insert(
                 http::HeaderName::from_bytes(name.as_bytes())

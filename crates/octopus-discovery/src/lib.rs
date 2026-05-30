@@ -16,6 +16,8 @@ pub mod consul;
 pub mod dns;
 #[cfg(feature = "kubernetes")]
 pub mod kubernetes;
+#[cfg(feature = "etcd")]
+pub mod etcd;
 #[cfg(feature = "mdns")]
 pub mod mdns;
 pub mod provider;
@@ -27,6 +29,9 @@ pub use provider::{
 
 #[cfg(feature = "consul")]
 pub use consul::ConsulDiscovery;
+
+#[cfg(feature = "etcd")]
+pub use etcd::{EtcdConfig, EtcdProvider};
 
 #[cfg(feature = "dns")]
 pub use dns::DnsDiscovery;
@@ -46,6 +51,9 @@ pub mod prelude {
 
     #[cfg(feature = "consul")]
     pub use crate::consul::ConsulDiscovery;
+
+    #[cfg(feature = "etcd")]
+    pub use crate::etcd::{EtcdConfig, EtcdProvider};
 
     #[cfg(feature = "dns")]
     pub use crate::dns::DnsDiscovery;

@@ -22,6 +22,8 @@ octopus-compression = { path = "../octopus-compression" }
 octopus-tls = { path = "../octopus-tls" }
 octopus-protocols = { path = "../octopus-protocols" }
 octopus-plugin-runtime = { path = "../octopus-plugin-runtime" }
+octopus-middleware = { path = "../octopus-middleware" }
+octopus-auth = { path = "../octopus-auth" }
 
 # Async
 tokio.workspace = true

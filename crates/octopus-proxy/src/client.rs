@@ -17,6 +17,7 @@ pub type Body = Full<Bytes>;
 #[derive(Clone)]
 pub struct HttpClient {
     pool: Arc<ConnectionPool>,
+    h2_pool: Arc<crate::pool::Http2Pool>,
     timeout: Duration,
 }
 
@@ -25,6 +26,7 @@ impl HttpClient {
     pub fn new() -> Self {
         Self {
             pool: Arc::new(ConnectionPool::default()),
+            h2_pool: Arc::new(crate::pool::Http2Pool::default()),
             timeout: Duration::from_secs(30),
         }
     }
@@ -33,6 +35,7 @@ impl HttpClient {
     pub fn with_pool(pool: Arc<ConnectionPool>) -> Self {
         Self {
             pool,
+            h2_pool: Arc::new(crate::pool::Http2Pool::default()),
             timeout: Duration::from_secs(30),
         }
     }
@@ -41,13 +44,18 @@ impl HttpClient {
     pub fn with_timeout(timeout: Duration) -> Self {
         Self {
             pool: Arc::new(ConnectionPool::default()),
+            h2_pool: Arc::new(crate::pool::Http2Pool::default()),
             timeout,
         }
     }
 
     /// Create a new HTTP client with custom pool and timeout
     pub fn new_with_config(pool: Arc<ConnectionPool>, timeout: Duration) -> Self {
-        Self { pool, timeout }
+        Self {
+            pool,
+            h2_pool: Arc::new(crate::pool::Http2Pool::default()),
+            timeout,
+        }
     }
 
     /// Send a request to an upstream instance using a pooled connection
@@ -107,6 +115,51 @@ impl HttpClient {
         // If error, connection is dropped (not returned to pool)
 
         response
+    }
+
+    /// Send a request via HTTP/2 (for gRPC and HTTP/2 upstreams)
+    pub async fn send_h2(
+        &self,
+        req: Request<Body>,
+        upstream: &UpstreamInstance,
+    ) -> Result<Response<Incoming>> {
+        trace!(
+            upstream = %upstream.id,
+            method = %req.method(),
+            uri = %req.uri(),
+            "Sending HTTP/2 request to upstream"
+        );
+
+        let mut sender = self.h2_pool.get_sender(upstream).await?;
+
+        let result = tokio::time::timeout(self.timeout, sender.send_request(req)).await;
+
+        match result {
+            Ok(Ok(resp)) => {
+                debug!(
+                    upstream = %upstream.id,
+                    status = resp.status().as_u16(),
+                    "Received HTTP/2 response from upstream"
+                );
+                Ok(resp)
+            }
+            Ok(Err(e)) => {
+                debug!(
+                    upstream = %upstream.id,
+                    error = %e,
+                    "HTTP/2 upstream request failed"
+                );
+                Err(Error::UpstreamConnection(e.to_string()))
+            }
+            Err(_) => {
+                debug!(
+                    upstream = %upstream.id,
+                    timeout_secs = self.timeout.as_secs(),
+                    "HTTP/2 request timeout"
+                );
+                Err(Error::UpstreamTimeout)
+            }
+        }
     }
 
     /// Get the configured timeout

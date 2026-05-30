@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls::TlsAcceptor as RustlsAcceptor;
 use tracing::info;
+use x509_parser::prelude::*;
 
 /// TLS connection acceptor
 #[derive(Clone)]
@@ -26,11 +27,28 @@ impl TlsAcceptor {
         let certs = load_certificates(&config.cert_file)?;
         let private_key = load_private_key(&config.key_file)?;
 
-        // Build TLS server configuration
-        let mut server_config = ServerConfig::builder()
-            .with_no_client_auth()
-            .with_single_cert(certs, private_key)
-            .map_err(|e| Error::Config(format!("Failed to build TLS config: {e}")))?;
+        // Build TLS server configuration (with optional mTLS)
+        let mut server_config = if let Some(ref ca_file) = config.client_ca_file {
+            let mtls_cfg = crate::mtls::MtlsConfig {
+                ca_cert_file: ca_file.clone(),
+                require_client_cert: config.require_client_cert,
+            };
+            let verifier = mtls_cfg.build_client_verifier()?;
+            info!(
+                ca_file = %ca_file.display(),
+                require = config.require_client_cert,
+                "mTLS client authentication enabled"
+            );
+            ServerConfig::builder()
+                .with_client_cert_verifier(verifier)
+                .with_single_cert(certs, private_key)
+                .map_err(|e| Error::Config(format!("Failed to build TLS config with mTLS: {e}")))?
+        } else {
+            ServerConfig::builder()
+                .with_no_client_auth()
+                .with_single_cert(certs, private_key)
+                .map_err(|e| Error::Config(format!("Failed to build TLS config: {e}")))?
+        };
 
         // Configure ALPN protocols (HTTP/1.1 and HTTP/2)
         server_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
@@ -77,6 +95,33 @@ impl TlsAcceptor {
             .await
             .map_err(|e| Error::Internal(format!("TLS handshake failed: {e}")))
     }
+}
+
+/// TLS client Common Name (CN) extracted from peer certificate
+/// Stored in request extensions to make it available to auth middleware
+#[derive(Debug, Clone)]
+pub struct TlsClientCn(pub Option<String>);
+
+/// Extract the Common Name (CN) from the peer's client certificate
+pub fn extract_client_cn<IO>(tls_stream: &tokio_rustls::server::TlsStream<IO>) -> Option<String>
+where
+    IO: AsyncRead + AsyncWrite + Unpin,
+{
+    let (_, server_conn) = tls_stream.get_ref();
+    let certs = server_conn.peer_certificates()?;
+    let cert_der = certs.first()?;
+    extract_cn_from_der(cert_der.as_ref())
+}
+
+/// Parse a DER-encoded X.509 certificate and extract the subject CN
+fn extract_cn_from_der(der: &[u8]) -> Option<String> {
+    let (_, cert) = X509Certificate::from_der(der).ok()?;
+    let result = cert.subject()
+        .iter_common_name()
+        .next()
+        .and_then(|cn| cn.as_str().ok())
+        .map(String::from);
+    result
 }
 
 #[cfg(test)]

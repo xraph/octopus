@@ -8,7 +8,7 @@
 //! - Plugin dependencies
 //! - Safe plugin isolation
 
-#![forbid(unsafe_code)]
+#![warn(unsafe_code)]
 #![warn(
     missing_docs,
     missing_debug_implementations,
@@ -16,6 +16,7 @@
     unreachable_pub
 )]
 
+pub mod abi;
 pub mod loader;
 pub mod manager;
 pub mod registry;

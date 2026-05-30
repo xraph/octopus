@@ -1,0 +1,615 @@
+# ============================================================================
+# Octopus API Gateway — Complete Middleware Configuration Example
+# ============================================================================
+#
+# This file demonstrates ALL 24 built-in middlewares with rich examples.
+# Middlewares execute in the order they are referenced by the gateway.
+#
+# Quick reference:
+#   ┌─ Request flow ────────────────────────────────────────────────────┐
+#   │ Client → Bot Detection → IP Filter → Connection Limits           │
+#   │        → Request ID → Request Limits → Rate Limit                │
+#   │        → Redirect → CORS → Security Headers                     │
+#   │        → Header Transform (request) → Auth Gateway               │
+#   │        → Body Transform (request) → Deduplication                │
+#   │        → Circuit Breaker → Retry → Timeout → Canary             │
+#   │        → Compression → Logging → [Proxy to Upstream]             │
+#   │                                                                   │
+#   │ Upstream → Body Transform (response) → Header Transform (resp)   │
+#   │         → Caching → Audit Logger → Client                       │
+#   └───────────────────────────────────────────────────────────────────┘
+#
+# ============================================================================
+
+gateway:
+  listen: "0.0.0.0:8080"
+  request_timeout: 30s
+  shutdown_timeout: 30s
+  max_body_size: 10485760
+
+# ============================================================================
+# 1. Bot Detection
+# Block scrapers, crawlers, and malicious bots by User-Agent pattern.
+# Modes: block (reject), allow (whitelist), log_only (monitor)
+# ============================================================================
+#
+# Usage in middleware config:
+#   bot_detection:
+#     mode: block
+#     block_empty_ua: true
+#     block_patterns:
+#       - "(?i)(bot|crawler|spider|scraper)"
+#       - "(?i)(curl|wget|python-requests|go-http-client)"
+#       - "(?i)(semrush|ahrefs|mj12bot|dotbot)"
+#     allow_patterns:
+#       - "(?i)(googlebot|bingbot)"         # Allow search engines
+#       - "(?i)(uptimerobot|pingdom)"        # Allow monitoring
+#     response_status: 403
+#     response_message: "Automated access not permitted"
+
+# ============================================================================
+# 2. IP Filter
+# Allow/deny traffic by IP address, CIDR range, or X-Forwarded-For.
+# ============================================================================
+#
+# Usage:
+#   ip_filter:
+#     # Allowlist mode — only these IPs can access
+#     allow:
+#       - "10.0.0.0/8"                      # Internal network
+#       - "192.168.0.0/16"                   # Private network
+#       - "203.0.113.50"                     # Specific partner IP
+#     # Denylist mode — block these IPs (takes precedence over allow)
+#     deny:
+#       - "198.51.100.0/24"                  # Known bad actor range
+#     # Trust X-Forwarded-For from these proxies
+#     trusted_proxies:
+#       - "10.0.0.1"
+#       - "10.0.0.2"
+
+# ============================================================================
+# 3. Connection Limits
+# Prevent resource exhaustion by limiting concurrent connections.
+# ============================================================================
+#
+# Usage:
+#   connection_limits:
+#     max_connections: 10000                  # Total across all clients
+#     max_per_ip: 100                         # Per source IP
+#     idle_timeout: 60s                       # Close idle connections
+#     whitelist: ["10.0.0.0/8"]              # IPs exempt from limits
+
+# ============================================================================
+# 4. Request ID
+# Inject or propagate a unique request identifier for distributed tracing.
+# ============================================================================
+#
+# Usage:
+#   request_id:
+#     header_name: "X-Request-ID"             # Header to check/set
+#     generator: uuid_v4                      # uuid_v4 | ulid
+#     add_to_response: true                   # Echo ID in response
+
+# ============================================================================
+# 5. Request Limits
+# Enforce size limits on incoming requests.
+# ============================================================================
+#
+# Usage:
+#   request_limits:
+#     max_body_size: 10485760                 # 10 MB
+#     max_header_size: 8192                   # 8 KB per header
+#     max_uri_length: 4096                    # 4 KB URI length
+
+# ============================================================================
+# 6. Rate Limiting
+# Throttle requests globally, per-IP, per-header, or per-identity.
+# ============================================================================
+#
+# Usage (global):
+#   rate_limit:
+#     strategy: token_bucket                  # token_bucket | fixed_window
+#     requests_per_window: 1000
+#     window_size: 60s
+#     key_extractor: ip                       # ip | header | path | global | identity
+#     header_name: "X-API-Key"               # Only when key_extractor: header
+#
+# Per-route rate limits are configured in the routes section:
+#   routes:
+#     - path: "/api/expensive"
+#       rate_limit:
+#         requests_per_window: 10
+#         window_size: 60s
+
+# ============================================================================
+# 7. Redirect
+# HTTPS enforcement, trailing slash normalization, path-based redirects.
+# ============================================================================
+#
+# Usage:
+#   redirect:
+#     https_redirect: true                    # Force HTTP → HTTPS (301)
+#     trailing_slash: strip                   # add | strip | ignore
+#     rules:
+#       # Redirect old API paths to new
+#       - from: "^/v1/(.*)"
+#         to: "/api/v1/$1"                    # $1 = first capture group
+#         status: 301                         # 301 | 302 | 307 | 308
+#         preserve_query: true
+#       # Redirect legacy dashboard
+#       - from: "^/dashboard$"
+#         to: "https://app.example.com"
+#         status: 302
+
+# ============================================================================
+# 8. CORS (Cross-Origin Resource Sharing)
+# Control which origins, methods, and headers are allowed.
+# ============================================================================
+cors:
+  allowed_origins:
+    - "https://app.example.com"
+    - "https://admin.example.com"
+  allowed_methods: [GET, POST, PUT, DELETE, PATCH, OPTIONS]
+  allowed_headers:
+    - content-type
+    - authorization
+    - x-request-id
+    - x-api-key
+  exposed_headers:
+    - x-request-id
+    - x-rate-limit-remaining
+    - x-rate-limit-reset
+  allow_credentials: true
+  max_age: 3600
+
+# Per-route CORS overrides are configured in the routes section:
+#   routes:
+#     - path: "/api/public/*"
+#       cors:
+#         allowed_origins: ["*"]
+#         allow_credentials: false
+
+# ============================================================================
+# 9. Security Headers
+# Inject browser security headers in every response.
+# ============================================================================
+#
+# Usage:
+#   security_headers:
+#     # Strict Transport Security
+#     hsts:
+#       max_age: 31536000                     # 1 year
+#       include_subdomains: true
+#       preload: true
+#     # Content Security Policy
+#     csp: "default-src 'self'; script-src 'self' 'unsafe-inline'"
+#     # Frame options
+#     x_frame_options: "DENY"                 # DENY | SAMEORIGIN | ALLOW-FROM
+#     x_content_type_options: "nosniff"
+#     x_xss_protection: "1; mode=block"
+#     referrer_policy: "strict-origin-when-cross-origin"
+#     permissions_policy: "camera=(), microphone=(), geolocation=()"
+
+# ============================================================================
+# 10. Header Transformation
+# Add, set, remove, or rename headers on request and/or response.
+# ============================================================================
+#
+# Usage:
+#   header_transform:
+#     request:
+#       # Set headers (replace if exists, add if not)
+#       set:
+#         - ["X-Gateway", "octopus"]
+#         - ["X-Forwarded-Proto", "https"]
+#       # Remove headers before forwarding to upstream
+#       remove:
+#         - "X-Internal-Debug"
+#         - "X-Powered-By"
+#       # Rename headers
+#       rename:
+#         - ["X-Old-Auth", "Authorization"]
+#     response:
+#       # Add headers to response (append, don't replace)
+#       add:
+#         - ["X-Served-By", "octopus-gateway"]
+#       # Remove upstream headers from response
+#       remove:
+#         - "Server"
+#         - "X-Powered-By"
+#         - "X-AspNet-Version"
+#       # Set response headers
+#       set:
+#         - ["X-Gateway-Version", "1.0.0"]
+
+# ============================================================================
+# 11. Authentication & Authorization
+# Multi-provider auth with role/scope checking and authorization rules.
+# See config.security.example.yaml for full auth provider examples.
+# ============================================================================
+auth_providers:
+  internal-jwt:
+    type: jwt
+    secret: "${JWT_SECRET:-dev-secret-change-in-production}"
+    algorithm: HS256
+    issuer: "octopus"
+    audience: "api"
+
+auth:
+  default_provider: "internal-jwt"
+  global_enforce: false
+  skip_paths: ["/health", "/metrics", "/docs/*"]
+  principal_header: "X-Auth-Principal"
+  roles_header: "X-Auth-Roles"
+  scopes_header: "X-Auth-Scopes"
+  token_cache_ttl: 60s
+
+# ============================================================================
+# 12. Body Transformation
+# Modify JSON request/response bodies: remove, rename, set, or redact fields.
+# ============================================================================
+#
+# Usage:
+#   body_transform:
+#     request_rules:
+#       # Inject server-side fields into request body
+#       - type: set_field
+#         path: "metadata.gateway"
+#         value: "octopus"
+#       # Remove fields clients shouldn't send
+#       - type: remove_field
+#         path: "internal_flags"
+#     response_rules:
+#       # Redact sensitive fields in responses
+#       - type: redact_field
+#         path: "user.ssn"
+#       - type: redact_field
+#         path: "user.credit_card"
+#       # Remove internal fields from responses
+#       - type: remove_field
+#         path: "debug_info"
+#       # Rename fields for API consistency
+#       - type: rename_field
+#         from: "user_name"
+#         to: "username"
+
+# ============================================================================
+# 13. Request Deduplication (Idempotency)
+# Prevent duplicate writes by caching responses keyed by idempotency header.
+# ============================================================================
+#
+# Usage:
+#   deduplication:
+#     header_name: "Idempotency-Key"          # Header containing the key
+#     ttl: 86400s                              # Cache duration (24 hours)
+#     methods: [POST, PUT, PATCH]              # Methods to deduplicate
+#     max_entries: 10000                        # Max cached responses
+#
+# Client usage:
+#   curl -X POST /api/payments \
+#     -H "Idempotency-Key: pay_abc123" \
+#     -d '{"amount": 100}'
+#
+# Second call with same key returns cached response with header:
+#   X-Idempotent-Replayed: true
+
+# ============================================================================
+# 14. Circuit Breaker (middleware-level)
+# Trip the circuit when upstream failure rate exceeds threshold.
+# ============================================================================
+#
+# Usage:
+#   circuit_breaker:
+#     failure_threshold: 5                     # Failures before opening
+#     success_threshold: 2                     # Successes in half-open to close
+#     open_timeout: 30s                        # Time in Open before Half-Open
+#     failure_status_codes: [500, 502, 503, 504]
+#     window_size: 60s                         # Rolling window for counting
+
+# ============================================================================
+# 15. Retry
+# Automatically retry failed requests with configurable backoff.
+# ============================================================================
+#
+# Usage:
+#   retry:
+#     max_attempts: 3                          # Including initial request
+#     retryable_status_codes: [502, 503, 504]
+#     retryable_methods: [GET, HEAD, PUT, DELETE, OPTIONS]
+#     initial_backoff_ms: 100
+#     max_backoff_ms: 5000
+#     backoff_multiplier: 2.0
+#     retry_on_timeout: true
+
+# ============================================================================
+# 16. Timeout
+# Enforce per-request timeout with 504 Gateway Timeout response.
+# ============================================================================
+#
+# Usage:
+#   timeout:
+#     duration: 30s                            # Global default
+#     error_message: "Request timed out"
+#
+# Per-route timeout overrides:
+#   routes:
+#     - path: "/api/long-running"
+#       timeout: 120s
+
+# ============================================================================
+# 17. Canary / Traffic Splitting
+# Gradually shift traffic between upstreams for canary deployments.
+# ============================================================================
+#
+# Usage:
+#   canary:
+#     rules:
+#       - path_prefix: "/api/v2"
+#         canary_upstream: "api-v2-canary"     # Alternative upstream
+#         weight: 10                            # 10% of traffic to canary
+#         header_override: "X-Canary"           # Force canary with header
+#         cookie_override: "canary"             # Force canary with cookie
+#
+# Force canary for testing:
+#   curl -H "X-Canary: true" http://gateway/api/v2/users
+#   # or with cookie:
+#   curl -b "canary=true" http://gateway/api/v2/users
+
+# ============================================================================
+# 18. Compression
+# Compress responses based on Accept-Encoding negotiation.
+# Supports gzip, brotli (br), and zstd.
+# ============================================================================
+#
+# Usage (in gateway.compression):
+#   compression:
+#     enabled: true
+#     level: 6                                 # 1-9 (gzip/zstd), 1-11 (brotli)
+#     min_size: 1024                           # Don't compress < 1KB
+#     algorithms: [br, zstd, gzip]             # Order of preference
+
+# ============================================================================
+# 19. Response Caching
+# Cache upstream responses in-memory to reduce backend load.
+# ============================================================================
+#
+# Usage:
+#   caching:
+#     ttl: 300s                                # Cache lifetime
+#     max_entries: 1000                         # Max cached responses
+#     cacheable_methods: [GET, HEAD]
+#     cacheable_status_codes: [200, 301]
+#     vary_headers: [Accept, Accept-Encoding]  # Cache key includes these
+#     # Respect Cache-Control headers from upstream
+#     respect_cache_control: true
+
+# ============================================================================
+# 20. Request Logging
+# Structured request/response logging with sensitive header redaction.
+# ============================================================================
+#
+# Usage:
+#   logging:
+#     level: info                              # trace | debug | info | warn | error
+#     log_headers: true                        # Include headers in logs
+#     log_body: false                           # Include body (careful with large bodies)
+#     redact_headers:                           # Replace values with [REDACTED]
+#       - "Authorization"
+#       - "Cookie"
+#       - "X-API-Key"
+
+# ============================================================================
+# 21. Audit Logger
+# Record security-relevant events for compliance and forensics.
+# ============================================================================
+#
+# Usage:
+#   audit_logger:
+#     output: file                             # stdout | file | custom
+#     file_path: "/var/log/octopus/audit.json"
+#     events:                                   # Which events to log
+#       - auth_success
+#       - auth_failure
+#       - authz_denied
+#       - rate_limited
+#       - admin_access
+#       - config_change
+#       - suspicious_activity
+
+# ============================================================================
+# 22. Forward Authentication
+# Delegate auth decisions to an external service via subrequest.
+# ============================================================================
+#
+# Usage (as an auth provider):
+#   auth_providers:
+#     external-auth:
+#       type: forward_auth
+#       endpoint: "http://auth-svc:8080/verify"
+#       forward_headers: [Authorization, Cookie, X-Forwarded-For]
+#       response_headers: [X-Auth-User, X-Auth-Role]
+#       timeout: 5s
+#       cache_ttl: 60s
+
+# ============================================================================
+# 23. JWT Authentication
+# Validate JWT tokens with multiple algorithm support.
+# ============================================================================
+#
+# Usage (as an auth provider):
+#   auth_providers:
+#     my-jwt:
+#       type: jwt
+#       secret: "hmac-secret"                  # For HS256/HS384/HS512
+#       # OR public_key_file: "/path/to/key.pem"  # For RS256/ES256
+#       algorithm: HS256
+#       issuer: "my-app"                        # Expected iss claim
+#       audience: "api"                         # Expected aud claim
+#       header_name: "Authorization"
+#       token_prefix: "Bearer "
+
+# ============================================================================
+# 24. Rhai Scripting Engine
+# Custom request/response logic with inline or file-based Rhai scripts.
+# ============================================================================
+middleware:
+  # Inline script — add custom headers
+  - type: script
+    enabled: true
+    config:
+      language: rhai
+      on_request: true
+      timeout_ms: 100
+      code: |
+        // Add gateway identification
+        headers["X-Gateway"] = "Octopus";
+        headers["X-Request-Time"] = unix_time().to_string();
+
+        // Simple rate limiting by path (supplement middleware rate limiter)
+        if uri.starts_with("/api/expensive") {
+          headers["X-Rate-Tier"] = "premium";
+        }
+
+        true
+
+  # File-based script — complex auth logic
+  # - type: script
+  #   config:
+  #     language: rhai
+  #     file: /etc/octopus/scripts/custom-auth.rhai
+  #     on_request: true
+  #     continue_on_error: false
+
+  # Response transformation script
+  # - type: script
+  #   config:
+  #     language: rhai
+  #     on_response: true
+  #     code: |
+  #       // Add CORS headers dynamically based on origin
+  #       let origin = request_headers["Origin"];
+  #       if origin == "https://trusted.example.com" {
+  #         headers["Access-Control-Allow-Origin"] = origin;
+  #       }
+  #       true
+
+# ============================================================================
+# Routes — demonstrating per-route middleware overrides
+# ============================================================================
+routes:
+  # Public API — no auth, permissive CORS, generous rate limit
+  - path: "/api/public/*"
+    methods: [GET]
+    upstream: backend
+    skip_auth: true
+    cors:
+      allowed_origins: ["*"]
+      allow_credentials: false
+    rate_limit:
+      requests_per_window: 1000
+      window_size: 60s
+
+  # Authenticated API — JWT required, role-based access
+  - path: "/api/v1/users/*"
+    methods: [GET, POST, PUT, DELETE]
+    upstream: user-service
+    strip_prefix: "/api/v1"
+    require_roles: [user]
+    timeout: 15s
+    rate_limit:
+      requests_per_window: 100
+      window_size: 60s
+    cors:
+      allowed_origins: ["https://app.example.com"]
+      allowed_methods: [GET, POST, PUT, DELETE]
+      allow_credentials: true
+
+  # Admin — strict auth, tight rate limit, specific CORS
+  - path: "/api/admin/*"
+    methods: [GET, POST, PUT, DELETE]
+    upstream: admin-service
+    require_roles: [admin]
+    authz_rule: |
+      has_role("admin") && (request.method == "GET" || has_role("super-admin"))
+    rate_limit:
+      requests_per_window: 50
+      window_size: 60s
+    cors:
+      allowed_origins: ["https://admin.example.com"]
+      allow_credentials: true
+
+  # WebSocket endpoint
+  - path: "/ws/*"
+    methods: [GET]
+    upstream: realtime-service
+    skip_auth: true
+    metadata:
+      max_message_size: "67108864"
+      max_frame_size: "16777216"
+
+  # Health check — always available
+  - path: "/health"
+    methods: [GET]
+    upstream: backend
+    skip_auth: true
+
+# ============================================================================
+# Upstreams
+# ============================================================================
+upstreams:
+  - name: backend
+    lb_policy: round_robin
+    instances:
+      - id: backend-1
+        host: localhost
+        port: 8081
+    health_check:
+      type: http
+      path: /health
+      interval: 10s
+      timeout: 5s
+      healthy_threshold: 2
+      unhealthy_threshold: 3
+    circuit_breaker:
+      error_threshold: 0.5
+      min_requests: 10
+      timeout: 30s
+
+  - name: user-service
+    lb_policy: least_connections
+    instances:
+      - id: user-1
+        host: localhost
+        port: 8082
+        weight: 3
+      - id: user-2
+        host: localhost
+        port: 8083
+        weight: 1
+
+  - name: admin-service
+    lb_policy: round_robin
+    instances:
+      - id: admin-1
+        host: localhost
+        port: 8084
+
+  - name: realtime-service
+    lb_policy: ip_hash
+    instances:
+      - id: ws-1
+        host: localhost
+        port: 8085
+
+# ============================================================================
+# Observability
+# ============================================================================
+observability:
+  logging:
+    level: info
+    format: json
+  metrics:
+    enabled: true
+    endpoint: /metrics
+  tracing:
+    enabled: false

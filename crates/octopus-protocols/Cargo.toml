@@ -10,6 +10,7 @@ description = "Protocol handlers for Octopus API Gateway"
 
 [dependencies]
 octopus-core = { path = "../octopus-core" }
+octopus-config = { path = "../octopus-config" }
 
 # Async
 tokio.workspace = true

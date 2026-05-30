@@ -10,6 +10,7 @@ use governor::{
 };
 use http::{Request, Response, StatusCode};
 use http_body_util::Full;
+use crate::auth_gateway::AuthRateLimitKey;
 use octopus_core::{Middleware, Next, Result};
 use serde_json;
 use std::collections::HashMap;
@@ -41,6 +42,8 @@ pub enum KeyExtractor {
     Path,
     /// Global rate limit (no key)
     Global,
+    /// Per-identity rate limit (uses AuthRateLimitKey from request extensions)
+    Identity,
 }
 
 /// Rate limiting configuration
@@ -117,7 +120,7 @@ impl RouteRateLimit {
 /// Rate limiting middleware
 ///
 /// Limits the rate of requests using a token bucket algorithm.
-/// Can rate limit globally, per IP, per API key, or per path.
+/// Can rate limit globally, per IP, per API key, per path, or per identity.
 /// Supports per-route rate limits with different limits for different endpoints.
 #[derive(Clone)]
 pub struct RateLimit {
@@ -126,6 +129,8 @@ pub struct RateLimit {
     limiter: Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock>>,
     /// Per-route rate limiters (path -> limiter)
     route_limiters: Arc<DashMap<String, Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock>>>>,
+    /// Per-identity rate limiters (identity key -> limiter)
+    identity_limiters: Arc<DashMap<String, Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClock>>>>,
 }
 
 impl RateLimit {
@@ -166,6 +171,7 @@ impl RateLimit {
             config,
             limiter,
             route_limiters,
+            identity_limiters: Arc::new(DashMap::new()),
         }
     }
 
@@ -275,22 +281,235 @@ impl Middleware for RateLimit {
         // Get the appropriate limiter for this request
         let (limiter, window_size, custom_message) = self.get_limiter_for_request(&path);
 
+        // For identity-based rate limiting, use per-identity limiter if available
+        let effective_limiter = if self.config.key_extractor == KeyExtractor::Identity {
+            if let Some(auth_key) = req.extensions().get::<AuthRateLimitKey>() {
+                let key = &auth_key.0;
+                self.identity_limiters
+                    .entry(key.clone())
+                    .or_insert_with(|| {
+                        let requests = NonZeroU32::new(self.config.requests_per_window)
+                            .unwrap_or_else(|| NonZeroU32::new(1).unwrap());
+                        let quota = Quota::with_period(self.config.window_size)
+                            .unwrap()
+                            .allow_burst(requests);
+                        Arc::new(GovernorRateLimiter::direct(quota))
+                    })
+                    .clone()
+            } else {
+                // No identity key — fall back to global limiter
+                limiter
+            }
+        } else {
+            limiter
+        };
+
         // Check rate limit
-        match limiter.check() {
+        match effective_limiter.check() {
             Ok(_) => {
                 // Request allowed, proceed
                 next.run(req).await
             }
             Err(_) => {
                 // Rate limit exceeded
+                let identity_info = if self.config.key_extractor == KeyExtractor::Identity {
+                    req.extensions()
+                        .get::<AuthRateLimitKey>()
+                        .map(|k| k.0.clone())
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                };
                 tracing::warn!(
                     uri = %req.uri(),
                     path = %path,
+                    identity = %identity_info,
                     "Rate limit exceeded"
                 );
                 Ok(self.rate_limit_response(window_size, custom_message.as_deref()))
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Distributed rate limiting (feature-gated behind "distributed")
+// ---------------------------------------------------------------------------
+
+/// Configuration for distributed rate limiting backed by a `StateBackend`.
+#[cfg(feature = "distributed")]
+#[derive(Debug, Clone)]
+pub struct DistributedRateLimitConfig {
+    /// Maximum requests allowed per window.
+    pub requests_per_window: u32,
+    /// Duration of the rate-limit window.
+    pub window_size: Duration,
+    /// How to derive the rate-limit key from each request.
+    pub key_extractor: KeyExtractor,
+    /// Header name used when `key_extractor` is `KeyExtractor::Header`.
+    pub header_name: Option<String>,
+    /// Custom error message returned in 429 responses.
+    pub error_message: Option<String>,
+    /// Prefix for keys stored in the state backend (default: `"octopus:rl"`).
+    pub key_prefix: String,
+}
+
+#[cfg(feature = "distributed")]
+impl Default for DistributedRateLimitConfig {
+    fn default() -> Self {
+        Self {
+            requests_per_window: 1000,
+            window_size: Duration::from_secs(60),
+            key_extractor: KeyExtractor::Global,
+            header_name: None,
+            error_message: None,
+            key_prefix: "octopus:rl".to_string(),
+        }
+    }
+}
+
+/// Distributed rate-limit middleware that stores counters in a [`StateBackend`].
+///
+/// Uses a fixed-window algorithm:
+/// 1. Compute a window id from the current timestamp.
+/// 2. Build a key: `{prefix}:{extractor_value}:{window_id}`.
+/// 3. Atomically increment the counter.
+/// 4. On the first increment set a TTL so stale windows are cleaned up.
+/// 5. If the counter exceeds the limit return **429 Too Many Requests**.
+#[cfg(feature = "distributed")]
+#[derive(Clone)]
+pub struct DistributedRateLimit<B: octopus_state::StateBackend> {
+    config: DistributedRateLimitConfig,
+    backend: B,
+}
+
+#[cfg(feature = "distributed")]
+impl<B: octopus_state::StateBackend> fmt::Debug for DistributedRateLimit<B> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DistributedRateLimit")
+            .field("requests_per_window", &self.config.requests_per_window)
+            .field("window_size", &self.config.window_size)
+            .field("key_extractor", &self.config.key_extractor)
+            .field("key_prefix", &self.config.key_prefix)
+            .finish()
+    }
+}
+
+#[cfg(feature = "distributed")]
+impl<B: octopus_state::StateBackend> DistributedRateLimit<B> {
+    /// Create a new distributed rate limiter.
+    pub fn new(config: DistributedRateLimitConfig, backend: B) -> Self {
+        Self { config, backend }
+    }
+
+    /// Extract the rate-limit key component from the request.
+    fn extract_key(&self, req: &Request<Body>) -> String {
+        match self.config.key_extractor {
+            KeyExtractor::Ip => {
+                // Try X-Forwarded-For first, fall back to "unknown"
+                req.headers()
+                    .get("x-forwarded-for")
+                    .and_then(|v| v.to_str().ok())
+                    .map(|v| v.split(',').next().unwrap_or("unknown").trim().to_string())
+                    .unwrap_or_else(|| "unknown".to_string())
+            }
+            KeyExtractor::Header => {
+                if let Some(ref header_name) = self.config.header_name {
+                    req.headers()
+                        .get(header_name.as_str())
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("unknown")
+                        .to_string()
+                } else {
+                    "unknown".to_string()
+                }
+            }
+            KeyExtractor::Identity => req
+                .extensions()
+                .get::<AuthRateLimitKey>()
+                .map(|k| k.0.clone())
+                .unwrap_or_else(|| "anonymous".to_string()),
+            KeyExtractor::Path => req.uri().path().to_string(),
+            KeyExtractor::Global => "global".to_string(),
+        }
+    }
+
+    /// Build a rate-limit error response.
+    fn rate_limit_response(&self) -> Response<Body> {
+        let message = self
+            .config
+            .error_message
+            .as_deref()
+            .unwrap_or("Rate limit exceeded");
+
+        Response::builder()
+            .status(StatusCode::TOO_MANY_REQUESTS)
+            .header("Content-Type", "application/json")
+            .header(
+                "Retry-After",
+                self.config.window_size.as_secs().to_string(),
+            )
+            .header(
+                "X-RateLimit-Limit",
+                self.config.requests_per_window.to_string(),
+            )
+            .header("X-RateLimit-Remaining", "0")
+            .header(
+                "X-RateLimit-Reset",
+                self.config.window_size.as_secs().to_string(),
+            )
+            .body(Full::new(Bytes::from(
+                serde_json::json!({
+                    "error": "rate_limit_exceeded",
+                    "message": message,
+                    "retry_after": self.config.window_size.as_secs()
+                })
+                .to_string(),
+            )))
+            .expect("Failed to build rate limit response")
+    }
+}
+
+#[cfg(feature = "distributed")]
+#[async_trait]
+impl<B: octopus_state::StateBackend> Middleware for DistributedRateLimit<B> {
+    async fn call(&self, req: Request<Body>, next: Next) -> Result<Response<Body>> {
+        let window_secs = self.config.window_size.as_secs().max(1);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let window_id = now / window_secs;
+        let extractor_value = self.extract_key(&req);
+        let key = format!(
+            "{}:{}:{}",
+            self.config.key_prefix, extractor_value, window_id
+        );
+
+        // The TTL should cover the remainder of this window plus a small buffer so
+        // that the key outlives the window even if the increment happens at the very
+        // start.
+        let ttl = self.config.window_size + Duration::from_secs(5);
+
+        // Atomic increment — the backend creates the key if it does not exist.
+        let count = self
+            .backend
+            .increment(&key, 1, Some(ttl))
+            .await
+            .map_err(|e| octopus_core::Error::Internal(format!("State backend error: {e}")))?;
+
+        if count > self.config.requests_per_window as i64 {
+            tracing::warn!(
+                key = %key,
+                count = count,
+                limit = self.config.requests_per_window,
+                "Distributed rate limit exceeded"
+            );
+            return Ok(self.rate_limit_response());
+        }
+
+        next.run(req).await
     }
 }
 
@@ -611,5 +830,144 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
         assert!(response.headers().contains_key("Retry-After"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Distributed rate limit tests (use in-memory backend)
+    // -----------------------------------------------------------------------
+
+    #[cfg(feature = "distributed")]
+    mod distributed_tests {
+        use super::*;
+        use crate::rate_limit::{DistributedRateLimit, DistributedRateLimitConfig};
+        use octopus_state::InMemoryBackend;
+
+        #[tokio::test]
+        async fn test_distributed_rate_limit_allows_within_window() {
+            let backend = InMemoryBackend::new();
+            let config = DistributedRateLimitConfig {
+                requests_per_window: 5,
+                window_size: Duration::from_secs(60),
+                key_extractor: KeyExtractor::Global,
+                key_prefix: "test:rl".to_string(),
+                ..Default::default()
+            };
+
+            let rl = DistributedRateLimit::new(config, backend);
+            let handler = TestHandler;
+
+            let stack: Arc<[Arc<dyn Middleware>]> =
+                Arc::new([Arc::new(rl), Arc::new(handler)]);
+
+            // First 5 requests should succeed
+            for _ in 0..5 {
+                let next = Next::new(stack.clone());
+                let req = Request::builder()
+                    .uri("/test")
+                    .body(Body::from(""))
+                    .unwrap();
+                let response = next.run(req).await.unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+            }
+
+            // 6th request should be rate-limited
+            let next = Next::new(stack.clone());
+            let req = Request::builder()
+                .uri("/test")
+                .body(Body::from(""))
+                .unwrap();
+            let response = next.run(req).await.unwrap();
+            assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        }
+
+        #[tokio::test]
+        async fn test_distributed_rate_limit_per_ip() {
+            let backend = InMemoryBackend::new();
+            let config = DistributedRateLimitConfig {
+                requests_per_window: 2,
+                window_size: Duration::from_secs(60),
+                key_extractor: KeyExtractor::Ip,
+                key_prefix: "test:rl:ip".to_string(),
+                ..Default::default()
+            };
+
+            let rl = DistributedRateLimit::new(config, backend);
+            let handler = TestHandler;
+
+            let stack: Arc<[Arc<dyn Middleware>]> =
+                Arc::new([Arc::new(rl), Arc::new(handler)]);
+
+            // 2 requests from IP-A should be fine
+            for _ in 0..2 {
+                let next = Next::new(stack.clone());
+                let req = Request::builder()
+                    .uri("/test")
+                    .header("x-forwarded-for", "10.0.0.1")
+                    .body(Body::from(""))
+                    .unwrap();
+                let response = next.run(req).await.unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+            }
+
+            // 3rd request from IP-A should fail
+            let next = Next::new(stack.clone());
+            let req = Request::builder()
+                .uri("/test")
+                .header("x-forwarded-for", "10.0.0.1")
+                .body(Body::from(""))
+                .unwrap();
+            let response = next.run(req).await.unwrap();
+            assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+
+            // But IP-B should still be allowed
+            let next = Next::new(stack.clone());
+            let req = Request::builder()
+                .uri("/test")
+                .header("x-forwarded-for", "10.0.0.2")
+                .body(Body::from(""))
+                .unwrap();
+            let response = next.run(req).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn test_distributed_rate_limit_custom_error() {
+            let backend = InMemoryBackend::new();
+            let config = DistributedRateLimitConfig {
+                requests_per_window: 1,
+                window_size: Duration::from_secs(60),
+                key_extractor: KeyExtractor::Global,
+                key_prefix: "test:rl:err".to_string(),
+                error_message: Some("Custom limit hit".to_string()),
+                ..Default::default()
+            };
+
+            let rl = DistributedRateLimit::new(config, backend);
+            let handler = TestHandler;
+
+            let stack: Arc<[Arc<dyn Middleware>]> =
+                Arc::new([Arc::new(rl), Arc::new(handler)]);
+
+            // Exhaust the limit
+            let next = Next::new(stack.clone());
+            let req = Request::builder()
+                .uri("/test")
+                .body(Body::from(""))
+                .unwrap();
+            next.run(req).await.unwrap();
+
+            // Next should return 429 with custom message
+            let next = Next::new(stack.clone());
+            let req = Request::builder()
+                .uri("/test")
+                .body(Body::from(""))
+                .unwrap();
+            let response = next.run(req).await.unwrap();
+            assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+
+            let body = response.into_body().collect().await.unwrap().to_bytes();
+            let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(json["message"], "Custom limit hit");
+        }
     }
 }

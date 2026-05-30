@@ -238,7 +238,7 @@
 <script>
 function routeManager() {
     return {
-        routes: {{ routes|json }},
+        routes: {{ routes|json|safe }},
         filteredRoutes: [],
         paginatedRoutes: [],
         selectedRoutes: [],

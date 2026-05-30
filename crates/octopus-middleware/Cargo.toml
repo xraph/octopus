@@ -10,6 +10,10 @@ description = "Built-in middleware collection for Octopus API Gateway"
 
 [dependencies]
 octopus-core = { path = "../octopus-core" }
+octopus-auth = { path = "../octopus-auth" }
+octopus-config = { path = "../octopus-config" }
+octopus-tls = { path = "../octopus-tls" }
+octopus-state = { path = "../octopus-state", optional = true }
 
 # Async
 tokio.workspace = true
@@ -27,6 +31,12 @@ tower-http.workspace = true
 
 # Compression
 async-compression = { version = "0.4", features = ["tokio", "gzip", "brotli", "zstd"] }
+flate2 = "1.0"
+brotli = "7.0"
+zstd = "0.13"
+
+# Pattern matching
+regex = "1.10"
 
 # Error handling
 anyhow.workspace = true
@@ -56,8 +66,13 @@ chrono.workspace = true
 parking_lot.workspace = true
 rand = "0.8"
 
+[features]
+default = []
+distributed = ["octopus-state"]
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros", "rt", "fs"] }
 serde_json.workspace = true
 tempfile = "3"
+octopus-state = { path = "../octopus-state" }
 

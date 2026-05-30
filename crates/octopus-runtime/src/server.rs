@@ -3,7 +3,7 @@
 use crate::shutdown::ShutdownSignal;
 use crate::worker::{WorkerConfig, WorkerPool};
 use crate::RuntimeState;
-use octopus_config::Config;
+use octopus_config::{Config, ConfigWatcher};
 use octopus_core::{Error, Result};
 use octopus_farp::FarpApiHandler;
 use octopus_plugin_runtime::PluginManager;
@@ -28,6 +28,8 @@ pub struct Server {
     farp_handler: Option<Arc<FarpApiHandler>>,
     plugin_manager: Option<Arc<PluginManager>>,
     protocol_handlers: Vec<Arc<dyn ProtocolHandler>>,
+    /// Optional config file paths for hot-reload support.
+    config_paths: Option<Vec<std::path::PathBuf>>,
 }
 
 impl std::fmt::Debug for Server {
@@ -145,6 +147,99 @@ impl Server {
             );
         }
 
+        // Initialize auth providers from config and add auth middleware
+        let mut auth_registry: Option<Arc<octopus_auth::AuthProviderRegistry>> = None;
+        if !self.config.auth_providers.is_empty() || self.config.auth.global_enforce {
+            let registry = Arc::new(octopus_auth::AuthProviderRegistry::new(
+                self.config.auth.default_provider.clone(),
+                self.config.auth.token_cache_ttl,
+            ));
+
+            // Instantiate each configured provider
+            for (name, provider_config) in &self.config.auth_providers {
+                match provider_config {
+                    octopus_config::types::AuthProviderConfig::Jwt(cfg) => {
+                        match octopus_auth::JwtProvider::from_config(name, cfg) {
+                            Ok(p) => {
+                                registry.register(name, Arc::new(p));
+                                tracing::info!(name = %name, "JWT auth provider registered");
+                            }
+                            Err(e) => {
+                                tracing::error!(name = %name, error = %e, "Failed to create JWT provider");
+                            }
+                        }
+                    }
+                    octopus_config::types::AuthProviderConfig::Oidc(cfg) => {
+                        match octopus_auth::OidcProvider::from_config(name, cfg).await {
+                            Ok(p) => {
+                                registry.register(name, Arc::new(p));
+                                tracing::info!(name = %name, issuer = %cfg.issuer_url, "OIDC auth provider registered");
+                            }
+                            Err(e) => {
+                                tracing::error!(name = %name, error = %e, "Failed to create OIDC provider");
+                            }
+                        }
+                    }
+                    octopus_config::types::AuthProviderConfig::ApiKey(cfg) => {
+                        let p = octopus_auth::ApiKeyProvider::from_config(name, cfg);
+                        registry.register(name, Arc::new(p));
+                        tracing::info!(name = %name, keys = cfg.keys.len(), "API key auth provider registered");
+                    }
+                    octopus_config::types::AuthProviderConfig::ForwardAuth(cfg) => {
+                        match octopus_auth::ForwardAuthProvider::from_config(name, cfg) {
+                            Ok(p) => {
+                                registry.register(name, Arc::new(p));
+                                tracing::info!(name = %name, endpoint = %cfg.endpoint, "Forward auth provider registered");
+                            }
+                            Err(e) => {
+                                tracing::error!(name = %name, error = %e, "Failed to create forward auth provider");
+                            }
+                        }
+                    }
+                    octopus_config::types::AuthProviderConfig::Mtls(cfg) => {
+                        let p = octopus_auth::MtlsProvider::from_config(name, cfg);
+                        registry.register(name, Arc::new(p));
+                        tracing::info!(name = %name, "mTLS auth provider registered");
+                    }
+                }
+            }
+
+            // Build authz engine
+            let authz = Arc::new(
+                octopus_auth::AuthzEvaluator::from_config(&self.config.auth.authz)
+                    .unwrap_or_else(|e| {
+                        tracing::error!(error = %e, "Failed to create authz evaluator, using default");
+                        octopus_auth::AuthzEvaluator::from_config(&octopus_config::types::AuthzConfig::default()).unwrap()
+                    }),
+            );
+
+            // Spawn cache cleanup task
+            let registry_clone = Arc::clone(&registry);
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+                    registry_clone.cleanup_cache();
+                }
+            });
+
+            // Add auth gateway middleware
+            let auth_middleware = Arc::new(octopus_middleware::AuthGatewayMiddleware::new(
+                Arc::clone(&registry),
+                authz,
+                self.config.auth.clone(),
+            )) as Arc<dyn octopus_core::middleware::Middleware>;
+            middlewares.push(auth_middleware);
+
+            tracing::info!(
+                providers = self.config.auth_providers.len(),
+                global_enforce = self.config.auth.global_enforce,
+                default_provider = ?self.config.auth.default_provider,
+                "Auth gateway middleware enabled"
+            );
+
+            auth_registry = Some(registry);
+        }
+
         let middleware_chain: Arc<[Arc<dyn octopus_core::middleware::Middleware>]> =
             Arc::from(middlewares);
 
@@ -159,23 +254,54 @@ impl Server {
         let metrics_collector = Arc::new(octopus_metrics::MetricsCollector::new());
         let activity_log = Arc::new(octopus_metrics::ActivityLog::default());
 
-        // Try to get health tracker and circuit breaker from proxy if available
-        // For now, pass plugin manager directly
-        let handler = crate::RequestHandler::with_all_features(
+        // Create health tracker and circuit breaker for monitoring
+        let health_tracker = Arc::new(octopus_health::HealthTracker::default_config());
+        let circuit_breaker = Arc::new(octopus_health::CircuitBreaker::default_config());
+
+        let mut handler = crate::RequestHandler::with_all_features(
             Arc::clone(&self.router),
             Arc::clone(&self.proxy),
             Arc::clone(&self.request_count),
             middleware_chain,
             self.farp_handler.clone(),
             protocol_handlers,
-            None, // health_tracker - Extract from proxy if available
-            None, // circuit_breaker - Extract from proxy if available
+            Some(health_tracker),
+            Some(circuit_breaker),
             self.plugin_manager.clone(),
             metrics_collector,
             activity_log,
+            Some(Arc::new(self.config.clone())),
         );
 
+        // Wire admin auth if configured
+        if let Some(ref registry) = auth_registry {
+            handler.set_admin_auth(
+                Arc::clone(registry),
+                self.config.admin.auth_provider.clone(),
+            );
+        }
+
         let mut shutdown_rx = self.shutdown.subscribe();
+
+        // Optionally start the config file watcher for hot-reload.
+        let mut config_reload_rx: Option<tokio::sync::mpsc::Receiver<Config>> =
+            if let Some(ref paths) = self.config_paths {
+                if !paths.is_empty() {
+                    let watcher = ConfigWatcher::new(
+                        paths.clone(),
+                        Duration::from_secs(5),
+                    );
+                    tracing::info!(
+                        paths = ?paths,
+                        "Config hot-reload enabled (polling every 5s)"
+                    );
+                    Some(watcher.watch().await)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
 
         loop {
             tokio::select! {
@@ -190,37 +316,45 @@ impl Server {
 
                             // Spawn a task to handle this connection
                             tokio::spawn(async move {
-                                let service = hyper::service::service_fn(move |req| {
-                                    let handler = handler.clone();
-                                    async move {
-                                        handler.handle(req).await
-                                            .or_else(|e| {
-                                                tracing::error!("Request handler error: {}", e);
-                                                let status = e.to_status_code();
-                                                http::Response::builder()
-                                                    .status(status)
-                                                    .body(http_body_util::Either::Left(
-                                                        http_body_util::Full::new(bytes::Bytes::from(
-                                                            format!("Error: {}", e)
-                                                        ))
-                                                    ))
-                                                    .map_err(|e| {
-                                                        tracing::error!("Failed to build error response: {}", e);
-                                                        e
-                                                    })
-                                            })
-                                    }
-                                });
-
                                 // Handle TLS if configured
                                 if let Some(acceptor) = tls_acceptor_clone {
                                     // Perform TLS handshake
                                     match acceptor.accept(stream).await {
                                         Ok(tls_stream) => {
+                                            // Extract client CN from peer certificate (for mTLS)
+                                            let client_cn = octopus_tls::extract_client_cn(&tls_stream);
+                                            let cn_ext = octopus_tls::TlsClientCn(client_cn);
+
                                             let io = hyper_util::rt::TokioIo::new(tls_stream);
-                                            if let Err(e) = hyper::server::conn::http1::Builder::new()
-                                                .serve_connection(io, service)
-                                                .with_upgrades()
+                                            // Create service_fn after TLS handshake so it can inject CN
+                                            let service = hyper::service::service_fn(move |mut req: http::Request<hyper::body::Incoming>| {
+                                                let handler = handler.clone();
+                                                let cn = cn_ext.clone();
+                                                async move {
+                                                    req.extensions_mut().insert(cn);
+                                                    handler.handle(req).await
+                                                        .or_else(|e| {
+                                                            tracing::error!("Request handler error: {}", e);
+                                                            let status = e.to_status_code();
+                                                            http::Response::builder()
+                                                                .status(status)
+                                                                .body(http_body_util::Either::Left(
+                                                                    http_body_util::Full::new(bytes::Bytes::from(
+                                                                        format!("Error: {}", e)
+                                                                    ))
+                                                                ))
+                                                                .map_err(|e| {
+                                                                    tracing::error!("Failed to build error response: {}", e);
+                                                                    e
+                                                                })
+                                                        })
+                                                }
+                                            });
+                                            // Auto-detect HTTP/1.1 vs HTTP/2 (via ALPN for TLS)
+                                            if let Err(e) = hyper_util::server::conn::auto::Builder::new(
+                                                hyper_util::rt::TokioExecutor::new(),
+                                            )
+                                                .serve_connection_with_upgrades(io, service)
                                                 .await
                                             {
                                                 tracing::error!("HTTPS connection error: {}", e);
@@ -231,13 +365,37 @@ impl Server {
                                         }
                                     }
                                 } else {
-                                    // Plain HTTP
+                                    // Plain HTTP — inject empty TLS CN
+                                    let service = hyper::service::service_fn(move |mut req: http::Request<hyper::body::Incoming>| {
+                                        let handler = handler.clone();
+                                        async move {
+                                            req.extensions_mut().insert(octopus_tls::TlsClientCn(None));
+                                            handler.handle(req).await
+                                                .or_else(|e| {
+                                                    tracing::error!("Request handler error: {}", e);
+                                                    let status = e.to_status_code();
+                                                    http::Response::builder()
+                                                        .status(status)
+                                                        .body(http_body_util::Either::Left(
+                                                            http_body_util::Full::new(bytes::Bytes::from(
+                                                                format!("Error: {}", e)
+                                                            ))
+                                                        ))
+                                                        .map_err(|e| {
+                                                            tracing::error!("Failed to build error response: {}", e);
+                                                            e
+                                                        })
+                                                })
+                                        }
+                                    });
+                                    // Plain HTTP — auto-detect HTTP/1.1 vs HTTP/2 (h2c via prior knowledge)
                                     let io = hyper_util::rt::TokioIo::new(stream);
-                                if let Err(e) = hyper::server::conn::http1::Builder::new()
-                                    .serve_connection(io, service)
-                                    .with_upgrades()
-                                    .await
-                                {
+                                    if let Err(e) = hyper_util::server::conn::auto::Builder::new(
+                                        hyper_util::rt::TokioExecutor::new(),
+                                    )
+                                        .serve_connection_with_upgrades(io, service)
+                                        .await
+                                    {
                                         tracing::error!("HTTP connection error: {}", e);
                                     }
                                 }
@@ -247,6 +405,95 @@ impl Server {
                             tracing::error!("Failed to accept connection: {}", e);
                         }
                     }
+                }
+
+                // Handle config hot-reload
+                Some(new_config) = async {
+                    match config_reload_rx.as_mut() {
+                        Some(rx) => rx.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    tracing::info!("Applying hot-reloaded configuration");
+
+                    // 1. Clear existing routes and re-register from new config
+                    self.router.clear();
+
+                    for route_config in &new_config.routes {
+                        for method_str in &route_config.methods {
+                            let method: http::Method = match method_str.parse() {
+                                Ok(m) => m,
+                                Err(_) => {
+                                    tracing::error!(method = %method_str, "Invalid HTTP method in reloaded config, skipping");
+                                    continue;
+                                }
+                            };
+
+                            let mut builder = octopus_router::RouteBuilder::new()
+                                .path(&route_config.path)
+                                .method(method)
+                                .upstream_name(&route_config.upstream)
+                                .priority(route_config.priority)
+                                .auth_provider(route_config.auth_provider.as_deref())
+                                .skip_auth(route_config.skip_auth)
+                                .require_roles(&route_config.require_roles)
+                                .require_scopes(&route_config.require_scopes)
+                                .authz_rule(route_config.authz_rule.as_deref());
+
+                            if let Some(ref pfx) = route_config.strip_prefix {
+                                builder = builder.strip_prefix(pfx);
+                            }
+                            if let Some(ref pfx) = route_config.add_prefix {
+                                builder = builder.add_prefix(pfx);
+                            }
+                            if let Some(ref rl) = route_config.rate_limit {
+                                builder = builder.rate_limit(rl.requests_per_window, rl.window_size);
+                            }
+                            if let Some(timeout) = route_config.timeout {
+                                builder = builder.timeout(Some(timeout));
+                            }
+                            if let Some(ref cors_cfg) = route_config.cors {
+                                builder = builder.cors(Some(octopus_router::RouteCorsOverride {
+                                    allowed_origins: cors_cfg.allowed_origins.clone(),
+                                    allowed_methods: cors_cfg.allowed_methods.clone(),
+                                    allowed_headers: cors_cfg.allowed_headers.clone(),
+                                    allow_credentials: cors_cfg.allow_credentials,
+                                    max_age: cors_cfg.max_age,
+                                }));
+                            }
+
+                            match builder.build() {
+                                Ok(route) => {
+                                    if let Err(e) = self.router.add_route(route) {
+                                        tracing::error!(error = %e, "Failed to add route during reload");
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::error!(error = %e, "Failed to build route during reload");
+                                }
+                            }
+                        }
+                    }
+
+                    // 2. Re-register upstreams
+                    for upstream_config in &new_config.upstreams {
+                        let mut cluster = octopus_core::UpstreamCluster::new(&upstream_config.name);
+                        for instance_config in &upstream_config.instances {
+                            let instance = octopus_core::UpstreamInstance::new(
+                                &instance_config.id,
+                                &instance_config.host,
+                                instance_config.port,
+                            );
+                            cluster.add_instance(instance);
+                        }
+                        self.router.register_upstream(cluster);
+                    }
+
+                    tracing::info!(
+                        routes = new_config.routes.len(),
+                        upstreams = new_config.upstreams.len(),
+                        "Configuration reloaded successfully"
+                    );
                 }
 
                 // Handle shutdown signal
@@ -329,6 +576,7 @@ pub struct ServerBuilder {
     enable_farp: bool,
     enable_plugins: bool,
     enable_protocols: bool,
+    config_paths: Option<Vec<std::path::PathBuf>>,
 }
 
 impl ServerBuilder {
@@ -340,6 +588,7 @@ impl ServerBuilder {
             enable_farp: true,
             enable_plugins: true,
             enable_protocols: true,
+            config_paths: None,
         }
     }
 
@@ -373,6 +622,16 @@ impl ServerBuilder {
         self
     }
 
+    /// Set config file paths to enable hot-reload support.
+    ///
+    /// When set, the server will poll these files for changes and
+    /// automatically reload routes and upstreams when the configuration
+    /// is modified.
+    pub fn config_paths(mut self, paths: Vec<std::path::PathBuf>) -> Self {
+        self.config_paths = Some(paths);
+        self
+    }
+
     /// Build the server
     pub async fn build(self) -> Result<Server> {
         let config = self
@@ -401,21 +660,47 @@ impl ServerBuilder {
             router.register_upstream(cluster);
         }
 
-        // Register routes
+        // Register routes (with auth config)
         for route_config in &config.routes {
             for method_str in &route_config.methods {
                 let method = method_str
                     .parse()
                     .map_err(|_| Error::Config(format!("Invalid HTTP method: {}", method_str)))?;
 
-                let route = octopus_router::RouteBuilder::new()
+                let mut builder = octopus_router::RouteBuilder::new()
                     .path(&route_config.path)
                     .method(method)
                     .upstream_name(&route_config.upstream)
                     .priority(route_config.priority)
-                    .build()?;
+                    .auth_provider(route_config.auth_provider.as_deref())
+                    .skip_auth(route_config.skip_auth)
+                    .require_roles(&route_config.require_roles)
+                    .require_scopes(&route_config.require_scopes)
+                    .authz_rule(route_config.authz_rule.as_deref());
 
-                router.add_route(route)?;
+                if let Some(ref pfx) = route_config.strip_prefix {
+                    builder = builder.strip_prefix(pfx);
+                }
+                if let Some(ref pfx) = route_config.add_prefix {
+                    builder = builder.add_prefix(pfx);
+                }
+                if let Some(ref rl) = route_config.rate_limit {
+                    builder = builder.rate_limit(rl.requests_per_window, rl.window_size);
+                }
+                if let Some(timeout) = route_config.timeout {
+                    builder = builder.timeout(Some(timeout));
+                }
+                if let Some(ref cors_cfg) = route_config.cors {
+                    builder = builder.cors(Some(octopus_router::RouteCorsOverride {
+                        allowed_origins: cors_cfg.allowed_origins.clone(),
+                        allowed_methods: cors_cfg.allowed_methods.clone(),
+                        allowed_headers: cors_cfg.allowed_headers.clone(),
+                        allow_credentials: cors_cfg.allow_credentials,
+                        max_age: cors_cfg.max_age,
+                    }));
+                }
+
+                router.add_route(builder.build()?)?;
             }
         }
 
@@ -497,6 +782,7 @@ impl ServerBuilder {
             farp_handler,
             plugin_manager,
             protocol_handlers,
+            config_paths: self.config_paths,
         })
     }
 

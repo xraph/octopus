@@ -262,7 +262,9 @@ examples-list: ## List all available examples
 ##@ 🐳 Docker
 # ==============================================================================
 
-.PHONY: docker docker-build docker-run docker-push docker-clean docker-compose-up docker-compose-down
+.PHONY: docker docker-build docker-run docker-push docker-buildx docker-release docker-clean docker-compose-up docker-compose-down
+
+PLATFORMS ?= linux/amd64,linux/arm64
 
 docker: docker-build ## Build Docker image
 
@@ -290,6 +292,29 @@ docker-push: ## Push Docker image to registry
 	$(DOCKER) tag $(PROJECT_NAME):$(VERSION) $(REGISTRY)/$(PROJECT_NAME):latest
 	$(DOCKER) push $(REGISTRY)/$(PROJECT_NAME):$(VERSION)
 	$(DOCKER) push $(REGISTRY)/$(PROJECT_NAME):latest
+
+docker-buildx: ## Build multi-arch image locally (no push) — mirrors CI platforms
+	@echo "$(COLOR_BLUE)Building multi-arch image ($(PLATFORMS))...$(COLOR_RESET)"
+	$(DOCKER) buildx build \
+		--platform $(PLATFORMS) \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg COMMIT=$(COMMIT) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		-t $(REGISTRY)/$(PROJECT_NAME):$(VERSION) \
+		.
+
+docker-release: ## Build & push multi-arch image to $(REGISTRY) (mirrors docker-release.yml)
+	@echo "$(COLOR_BLUE)Releasing multi-arch image to $(REGISTRY)/$(PROJECT_NAME):$(VERSION)...$(COLOR_RESET)"
+	$(DOCKER) buildx build \
+		--platform $(PLATFORMS) \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg COMMIT=$(COMMIT) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		-t $(REGISTRY)/$(PROJECT_NAME):$(VERSION) \
+		-t $(REGISTRY)/$(PROJECT_NAME):latest \
+		--push \
+		.
+	@echo "$(COLOR_GREEN)✓ Pushed $(REGISTRY)/$(PROJECT_NAME):$(VERSION)$(COLOR_RESET)"
 
 docker-clean: ## Remove Docker images
 	@echo "$(COLOR_BLUE)Cleaning Docker images...$(COLOR_RESET)"
@@ -432,3 +457,20 @@ fast: check ## Fast check without full build
 
 full: clean release test lint docs docker ## Full build pipeline
 	@echo "$(COLOR_GREEN)✓ Full build pipeline complete!$(COLOR_RESET)"
+
+# ==============================================================================
+##@ 📊 Benchmarks
+# ==============================================================================
+
+.PHONY: bench bench-octopus bench-bastion bench-compare
+
+bench: bench-compare ## Run all benchmarks (Octopus vs Bastion)
+
+bench-octopus: ## Benchmark Octopus only
+	@./benchmarks/run.sh octopus
+
+bench-bastion: ## Benchmark Bastion only
+	@./benchmarks/run.sh bastion
+
+bench-compare: ## Side-by-side Octopus vs Bastion comparison
+	@./benchmarks/run.sh compare

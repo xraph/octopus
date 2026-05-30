@@ -23,6 +23,8 @@ use farp::manifest::new_manifest;
 pub struct SchemaFederation {
     /// Federated schemas by format
     federated: Arc<DashMap<SchemaFormat, FederatedSchema>>,
+    /// Whether to collapse all service tags into a single service-name tag
+    collapse_service_tags: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// Federated schema
@@ -46,7 +48,18 @@ impl SchemaFederation {
     #[must_use] pub fn new() -> Self {
         Self {
             federated: Arc::new(DashMap::new()),
+            collapse_service_tags: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
+    }
+
+    /// Set whether to collapse service tags into a single tag per service.
+    pub fn set_collapse_service_tags(&self, collapse: bool) {
+        self.collapse_service_tags.store(collapse, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Returns whether service tags should be collapsed.
+    pub fn collapse_service_tags(&self) -> bool {
+        self.collapse_service_tags.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Federate schemas from multiple services
@@ -199,16 +212,22 @@ impl SchemaFederation {
         }
 
         // Configure the merger
+        // Collapse can be set via:
+        // 1. FARP_COLLAPSE_SERVICE_TAGS=1 env var (gateway-wide)
+        // 2. Service metadata "farp.collapse_service_tags" = "true" (per-service, via trigger_federation)
+        let collapse = self.collapse_service_tags()
+            || std::env::var("FARP_COLLAPSE_SERVICE_TAGS").is_ok();
         let config = MergerConfig {
             merged_title: "Federated API".to_string(),
             merged_description: "Combined API specification from multiple services".to_string(),
             merged_version: "1.0.0".to_string(),
             include_service_tags: true,
+            collapse_service_tags: collapse,
             ..Default::default()
         };
 
         let merger = Merger::new(config);
-        
+
         // Perform the merge
         let merge_result = merger.merge(service_schemas)
             .map_err(|e| Error::Farp(format!("Failed to merge OpenAPI schemas: {}", e)))?;

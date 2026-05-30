@@ -147,7 +147,13 @@ mod tests {
             upstreams: vec![],
             routes: vec![],
             plugins: vec![],
+            farp: Default::default(),
             observability: ObservabilityConfig::default(),
+            auth_providers: Default::default(),
+            auth: Default::default(),
+            cors: None,
+            admin: Default::default(),
+            grpc: Default::default(),
         }
     }
 

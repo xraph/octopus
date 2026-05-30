@@ -1,54 +1,73 @@
-# Build stage
-FROM rust:1.75-slim as builder
+# syntax=docker/dockerfile:1
 
+# ==============================================================================
+# Octopus API Gateway - multi-stage, multi-arch image
+# ==============================================================================
+
+# ---- chef: shared base with the build toolchain -----------------------------
+FROM rust:1.88-slim AS chef
 WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        pkg-config \
+        libssl-dev \
+        protobuf-compiler \
+        git \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && cargo install cargo-chef --locked
 
-# Install dependencies
-RUN apt-get update && apt-get install -y \
-    pkg-config \
-    libssl-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy manifests
-COPY Cargo.toml Cargo.toml
-COPY crates crates
-
-# Build dependencies (cached layer)
-RUN mkdir -p octopus-cli/src && \
-    echo "fn main() {}" > octopus-cli/src/main.rs && \
-    cargo build --release && \
-    rm -rf octopus-cli/src
-
-# Copy source and build
+# ---- planner: compute the dependency recipe ---------------------------------
+FROM chef AS planner
 COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+# ---- builder: cook deps (cached), then build the binary ---------------------
+FROM chef AS builder
+COPY --from=planner /app/recipe.json recipe.json
+# Build & cache dependencies only — this layer is reused until deps change.
+RUN cargo chef cook --release --bin octopus --recipe-path recipe.json
+COPY . .
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_DATE
+ENV OCTOPUS_VERSION=${VERSION} \
+    OCTOPUS_COMMIT=${COMMIT} \
+    OCTOPUS_BUILD_DATE=${BUILD_DATE}
 RUN cargo build --release --bin octopus
 
-# Runtime stage
-FROM debian:bookworm-slim
-
+# ---- runtime ----------------------------------------------------------------
+FROM debian:bookworm-slim AS runtime
 WORKDIR /app
 
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
-    ca-certificates \
-    libssl3 \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libssl3 \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd -m -u 1000 -s /bin/bash octopus \
+    && mkdir -p /etc/octopus /var/log/octopus \
+    && chown -R octopus:octopus /etc/octopus /var/log/octopus
 
-# Create non-root user
-RUN useradd -m -u 1000 -s /bin/bash octopus
-
-# Copy binary from builder
 COPY --from=builder /app/target/release/octopus /usr/local/bin/octopus
+COPY config.example.yaml /etc/octopus/config.example.yaml
 
-# Create directories
-RUN mkdir -p /etc/octopus /var/log/octopus && \
-    chown -R octopus:octopus /etc/octopus /var/log/octopus
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG BUILD_DATE
+LABEL org.opencontainers.image.title="octopus" \
+      org.opencontainers.image.description="Octopus API Gateway" \
+      org.opencontainers.image.source="https://github.com/xraph/octopus" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${COMMIT}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.licenses="MIT OR Apache-2.0"
 
 USER octopus
 
 EXPOSE 8080 9090
 
+# TCP liveness on the default gateway listen port (config default 0.0.0.0:8080).
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+    CMD bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080' || exit 1
+
 ENTRYPOINT ["octopus"]
 CMD ["--config", "/etc/octopus/config.yaml"]
-
-

@@ -3,9 +3,10 @@
 use async_trait::async_trait;
 use bytes::Bytes;
 use http::{header, HeaderValue, Request, Response};
-use http_body_util::Full;
-use octopus_core::{Middleware, Next, Result};
+use http_body_util::{BodyExt, Full};
+use octopus_core::{Error, Middleware, Next, Result};
 use std::fmt;
+use std::io::Write;
 
 /// Body type alias
 pub type Body = Full<Bytes>;
@@ -124,8 +125,6 @@ impl Compression {
             return false;
         }
 
-        // Check size (we'll check this after getting the body in practice)
-        // For now, assume we should compress if content type matches
         true
     }
 
@@ -147,31 +146,64 @@ impl Compression {
         None
     }
 
-    /// Compress response body
-    #[allow(dead_code)]
-    fn compress_body(&self, body: Bytes, algorithm: CompressionAlgorithm) -> Result<Bytes> {
+    /// Compress bytes using the specified algorithm
+    pub fn compress_body(&self, body: Bytes, algorithm: CompressionAlgorithm) -> Result<Bytes> {
         // Check minimum size
         if body.len() < self.config.min_size {
-            return Ok(body); // Don't compress small responses
+            return Ok(body);
         }
 
-        // For now, return uncompressed
-        // TODO: Implement actual compression using async-compression
-        // This would require wrapping the body in a compression stream
-        // which is more complex with http_body_util::Full
+        let level = self.config.level;
+        let input = body.as_ref();
 
-        // In a real implementation, we'd use:
-        // - async_compression::tokio::bufread::GzipEncoder for gzip
-        // - async_compression::tokio::bufread::BrotliEncoder for brotli
-        // - async_compression::tokio::bufread::ZstdEncoder for zstd
+        let compressed = match algorithm {
+            CompressionAlgorithm::Gzip => {
+                let mut encoder = flate2::write::GzEncoder::new(
+                    Vec::with_capacity(input.len()),
+                    flate2::Compression::new(level),
+                );
+                encoder
+                    .write_all(input)
+                    .map_err(|e| Error::Internal(format!("gzip compression failed: {}", e)))?;
+                encoder
+                    .finish()
+                    .map_err(|e| Error::Internal(format!("gzip finish failed: {}", e)))?
+            }
+            CompressionAlgorithm::Brotli => {
+                let mut output = Vec::with_capacity(input.len());
+                {
+                    let mut encoder =
+                        brotli::CompressorWriter::new(&mut output, 4096, level, 22);
+                    encoder
+                        .write_all(input)
+                        .map_err(|e| Error::Internal(format!("brotli compression failed: {}", e)))?;
+                    // CompressorWriter flushes on drop, but we explicitly drop to capture errors
+                }
+                output
+            }
+            CompressionAlgorithm::Zstd => {
+                let mut encoder = zstd::stream::write::Encoder::new(
+                    Vec::with_capacity(input.len()),
+                    level as i32,
+                )
+                .map_err(|e| Error::Internal(format!("zstd encoder creation failed: {}", e)))?;
+                encoder
+                    .write_all(input)
+                    .map_err(|e| Error::Internal(format!("zstd compression failed: {}", e)))?;
+                encoder
+                    .finish()
+                    .map_err(|e| Error::Internal(format!("zstd finish failed: {}", e)))?
+            }
+        };
 
         tracing::debug!(
             algorithm = ?algorithm,
-            size = body.len(),
-            "Compression not yet implemented"
+            original_size = input.len(),
+            compressed_size = compressed.len(),
+            "Compressed response body"
         );
 
-        Ok(body)
+        Ok(Bytes::from(compressed))
     }
 }
 
@@ -207,22 +239,59 @@ impl Middleware for Compression {
         // Choose compression algorithm
         let algorithm = match self.choose_algorithm(accept_encoding.as_ref()) {
             Some(algo) => algo,
-            None => return Ok(response), // Client doesn't support compression
+            None => return Ok(response),
         };
 
-        // For now, just add a debug log and return uncompressed
-        // Full compression implementation would require:
-        // 1. Converting Full<Bytes> to a stream
-        // 2. Wrapping in compression encoder
-        // 3. Collecting back to Bytes
-        // This is complex and would require significant changes to our Body type
+        // Decompose the response
+        let status = response.status();
+        let headers = response.headers().clone();
+        let body_bytes = response
+            .into_body()
+            .collect()
+            .await
+            .map(|c| c.to_bytes())
+            .unwrap_or_default();
 
-        tracing::debug!(
-            algorithm = ?algorithm,
-            "Compression middleware (not yet fully implemented)"
+        // Compress the body
+        let compressed = self.compress_body(body_bytes.clone(), algorithm)?;
+
+        // If compress_body returned the original (below min_size), just rebuild as-is
+        if compressed == body_bytes {
+            let mut builder = Response::builder().status(status);
+            for (name, value) in headers.iter() {
+                builder = builder.header(name, value);
+            }
+            let resp = builder
+                .body(Full::new(body_bytes))
+                .map_err(|e| Error::Internal(e.to_string()))?;
+            return Ok(resp);
+        }
+
+        // Rebuild response with compressed body
+        let mut builder = Response::builder().status(status);
+        for (name, value) in headers.iter() {
+            // Skip Content-Length since size changed
+            if name == header::CONTENT_LENGTH {
+                continue;
+            }
+            builder = builder.header(name, value);
+        }
+
+        let mut resp = builder
+            .body(Full::new(compressed))
+            .map_err(|e| Error::Internal(e.to_string()))?;
+
+        // Set Content-Encoding header
+        resp.headers_mut().insert(
+            header::CONTENT_ENCODING,
+            HeaderValue::from_static(algorithm.as_str()),
         );
 
-        Ok(response)
+        // Add Vary: Accept-Encoding
+        resp.headers_mut()
+            .insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
+
+        Ok(resp)
     }
 }
 
@@ -332,5 +401,93 @@ mod tests {
 
         // Should return original (no compression for small bodies)
         assert!(result.len() < 1024);
+    }
+
+    #[tokio::test]
+    async fn test_gzip_compression_produces_different_output() {
+        let config = CompressionConfig {
+            min_size: 0, // Compress everything
+            ..Default::default()
+        };
+        let compression = Compression::with_config(config);
+
+        // Create a body large enough to see compression effect
+        let original = "Hello, this is a test string that should be compressed! ".repeat(50);
+        let original_bytes = Bytes::from(original.clone());
+        let original_len = original_bytes.len();
+
+        let compressed = compression
+            .compress_body(original_bytes, CompressionAlgorithm::Gzip)
+            .unwrap();
+
+        // Compressed output should differ from original
+        assert_ne!(compressed.as_ref(), original.as_bytes());
+        // Compressed should be smaller for repetitive text
+        assert!(
+            compressed.len() < original_len,
+            "compressed {} should be < original {}",
+            compressed.len(),
+            original_len
+        );
+
+        // Verify it is valid gzip by decompressing
+        use flate2::read::GzDecoder;
+        use std::io::Read;
+        let mut decoder = GzDecoder::new(compressed.as_ref());
+        let mut decompressed = String::new();
+        decoder.read_to_string(&mut decompressed).unwrap();
+        assert_eq!(decompressed, original);
+    }
+
+    #[tokio::test]
+    async fn test_full_middleware_gzip_compression() {
+        let config = CompressionConfig {
+            min_size: 0, // Compress everything
+            algorithms: vec![CompressionAlgorithm::Gzip],
+            ..Default::default()
+        };
+        let compression = Compression::with_config(config);
+
+        let body_text = "Repeating content for compression test. ".repeat(100);
+        let handler = TestHandler {
+            content_type: "application/json",
+            body: Box::leak(body_text.clone().into_boxed_str()),
+        };
+
+        let stack: std::sync::Arc<[std::sync::Arc<dyn Middleware>]> = std::sync::Arc::new([
+            std::sync::Arc::new(compression),
+            std::sync::Arc::new(handler),
+        ]);
+
+        let next = Next::new(stack);
+
+        let req = Request::builder()
+            .uri("/test")
+            .header(header::ACCEPT_ENCODING, "gzip")
+            .body(Body::from(""))
+            .unwrap();
+
+        let response = next.run(req).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::CONTENT_ENCODING)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "gzip"
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get(header::VARY)
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "Accept-Encoding"
+        );
+        // Content-Length should be removed
+        assert!(!response.headers().contains_key(header::CONTENT_LENGTH));
     }
 }

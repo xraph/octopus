@@ -62,9 +62,10 @@ impl AdminHandler {
         activity_log: &Option<Arc<ActivityLog>>,
         health_tracker: &Option<Arc<HealthTracker>>,
         circuit_breaker: &Option<Arc<CircuitBreaker>>,
-        _plugin_manager: &Option<Arc<PluginManager>>,
+        plugin_manager: &Option<Arc<PluginManager>>,
         farp_registry: &Option<Arc<octopus_farp::SchemaRegistry>>,
         farp_federation: &Option<Arc<octopus_farp::SchemaFederation>>,
+        config: &Option<Arc<octopus_config::Config>>,
     ) -> Arc<AppState> {
         let mut state = AppState::new();
         state.router = Some(Arc::clone(router));
@@ -72,18 +73,17 @@ impl AdminHandler {
         state.activity_log = activity_log.clone();
         state.health_tracker = health_tracker.clone();
         state.circuit_breaker = circuit_breaker.clone();
+        state.plugin_manager = plugin_manager.clone();
         state.farp_registry = farp_registry.clone();
         state.farp_federation = farp_federation.clone();
-        // PluginManager from plugin_runtime is a different type than from plugins crate;
-        // wire it when the types align, for now skip
-        // state.plugin_manager = plugin_manager.clone();
+        state.config = config.clone();
         Arc::new(state)
     }
 
     /// Create a new admin handler
     pub fn new(router: Arc<Router>, request_count: Arc<AtomicUsize>) -> Self {
         let app_state =
-            Self::build_app_state(&router, &None, &None, &None, &None, &None, &None, &None);
+            Self::build_app_state(&router, &None, &None, &None, &None, &None, &None, &None, &None);
         let admin_router = DashboardRouter::build(Arc::clone(&app_state));
 
         Self {
@@ -109,7 +109,7 @@ impl AdminHandler {
         let ht = Some(health_tracker.clone());
         let cb = Some(circuit_breaker.clone());
         let app_state =
-            Self::build_app_state(&router, &None, &None, &ht, &cb, &None, &None, &None);
+            Self::build_app_state(&router, &None, &None, &ht, &cb, &None, &None, &None, &None);
         let admin_router = DashboardRouter::build(Arc::clone(&app_state));
 
         Self {
@@ -135,6 +135,8 @@ impl AdminHandler {
         metrics_collector: Option<Arc<MetricsCollector>>,
         activity_log: Option<Arc<ActivityLog>>,
         farp_registry: Option<Arc<octopus_farp::SchemaRegistry>>,
+        farp_federation: Option<Arc<octopus_farp::SchemaFederation>>,
+        config: Option<Arc<octopus_config::Config>>,
     ) -> Self {
         let app_state = Self::build_app_state(
             &router,
@@ -142,9 +144,10 @@ impl AdminHandler {
             &activity_log,
             &health_tracker,
             &circuit_breaker,
-            &None,
+            &plugin_manager,
             &farp_registry,
-            &None, // farp_federation - wired from server when available
+            &farp_federation,
+            &config,
         );
         let admin_router = DashboardRouter::build(Arc::clone(&app_state));
 

@@ -20,6 +20,7 @@ octopus-router = { path = "../crates/octopus-router" }
 octopus-middleware = { path = "../crates/octopus-middleware" }
 octopus-plugins = { path = "../crates/octopus-plugins" }
 octopus-health = { path = "../crates/octopus-health" }
+octopus-farp = { path = "../crates/octopus-farp" }
 
 # Async
 tokio.workspace = true
@@ -35,7 +36,19 @@ tracing-subscriber.workspace = true
 # Error handling
 anyhow.workspace = true
 
+# HTTP client (for fetching specs)
+hyper.workspace = true
+hyper-util.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+bytes.workspace = true
+
 # Serialization
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml.workspace = true
+
+# Utilities
+regex = "1.10"
+glob = "0.3"
 

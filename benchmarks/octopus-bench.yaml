@@ -1,0 +1,33 @@
+# Octopus config for benchmarks — minimal, no middleware overhead
+gateway:
+  listen: "0.0.0.0:8080"
+  workers: 0
+  request_timeout: 30s
+  shutdown_timeout: 5s
+  max_body_size: 10485760
+
+upstreams:
+  - name: upstream
+    lb_policy: round_robin
+    instances:
+      - id: upstream-1
+        host: localhost
+        port: 9999
+
+routes:
+  - path: "/"
+    methods: [GET, POST, PUT, DELETE, PATCH]
+    upstream: upstream
+    priority: 200
+  - path: "/*"
+    methods: [GET, POST, PUT, DELETE, PATCH]
+    upstream: upstream
+    priority: 100
+
+observability:
+  logging:
+    level: warn
+    format: text
+  metrics:
+    enabled: false
+    endpoint: "/metrics"

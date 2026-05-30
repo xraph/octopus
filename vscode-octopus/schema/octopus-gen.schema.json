@@ -1,0 +1,201 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/xraph/octopus/schema/octopus-gen.schema.json",
+  "title": "Octopus Code Generation Configuration",
+  "description": "Configuration schema for octopus-gen.yaml, controlling code generation from API specifications.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "output_dir": {
+      "type": "string",
+      "description": "Base output directory for all generated files",
+      "default": "./generated",
+      "examples": ["./generated", "./src/generated", "./out"]
+    },
+    "config": {
+      "type": "object",
+      "description": "Config generation settings",
+      "additionalProperties": false,
+      "properties": {
+        "format": {
+          "type": "string",
+          "description": "Output format for generated configuration",
+          "enum": ["yaml", "json", "toml"],
+          "default": "yaml"
+        },
+        "split": {
+          "type": "boolean",
+          "description": "Split generated config into per-service files",
+          "default": false
+        }
+      }
+    },
+    "schema": {
+      "type": "object",
+      "description": "Schema generation settings",
+      "additionalProperties": false,
+      "properties": {
+        "output": {
+          "type": "string",
+          "description": "Output path for the generated schema file",
+          "default": "./schema/octopus-schema.json",
+          "examples": ["./schema/octopus-schema.json", "./out/schema.json"]
+        }
+      }
+    },
+    "client": {
+      "type": "object",
+      "description": "Client SDK code generation settings",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable client code generation",
+          "default": false
+        },
+        "output_dir": {
+          "type": "string",
+          "description": "Output directory for generated client code",
+          "default": "./src/client",
+          "examples": ["./src/client", "./packages/api-client/src"]
+        },
+        "package_name": {
+          "type": "string",
+          "description": "Package name for the generated client",
+          "default": "api-client",
+          "examples": ["api-client", "@myorg/api-client"]
+        },
+        "per_service_packages": {
+          "type": "boolean",
+          "description": "Generate separate packages per service",
+          "default": false
+        },
+        "tanstack_query": {
+          "type": "boolean",
+          "description": "Generate TanStack Query (React Query) hooks",
+          "default": false
+        },
+        "auth": {
+          "type": "object",
+          "description": "Client authentication configuration",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "type": "string",
+              "description": "Authentication type for generated client",
+              "enum": ["bearer", "api_key", "basic", "none"],
+              "default": "bearer"
+            },
+            "header": {
+              "type": "string",
+              "description": "Header name for authentication",
+              "default": "Authorization"
+            }
+          }
+        },
+        "types": {
+          "type": "object",
+          "description": "Type generation settings",
+          "additionalProperties": false,
+          "properties": {
+            "language": {
+              "type": "string",
+              "description": "Target language for type generation",
+              "enum": ["typescript", "rust", "go", "python"],
+              "default": "typescript"
+            },
+            "strict_nulls": {
+              "type": "boolean",
+              "description": "Use strict null types (optional vs nullable)",
+              "default": true
+            },
+            "enum_style": {
+              "type": "string",
+              "description": "Enum generation style",
+              "enum": ["union", "enum", "const"],
+              "default": "union"
+            }
+          }
+        }
+      }
+    },
+    "services": {
+      "type": "array",
+      "description": "Service specifications to generate from",
+      "items": {
+        "type": "object",
+        "required": ["name", "type"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Service name (used as namespace in generated code)",
+            "examples": ["user-service", "billing", "auth"]
+          },
+          "type": {
+            "type": "string",
+            "description": "API specification type",
+            "enum": ["openapi", "graphql", "grpc", "farp"],
+            "examples": ["openapi"]
+          },
+          "spec": {
+            "type": "string",
+            "description": "Path or URL to the API specification file",
+            "examples": ["./specs/user-service.yaml", "http://user-svc:8080/.well-known/openapi"]
+          },
+          "endpoint": {
+            "type": "string",
+            "description": "Runtime base URL for the service",
+            "examples": ["http://localhost:8081", "https://api.example.com"]
+          },
+          "prefix": {
+            "type": "string",
+            "description": "URL prefix for all routes of this service",
+            "examples": ["/api/users", "/v1/billing"]
+          },
+          "upstream": {
+            "type": "string",
+            "description": "Upstream name to map this service to in the gateway config",
+            "examples": ["user-service", "billing-upstream"]
+          },
+          "auth": {
+            "type": "object",
+            "description": "Per-service authentication settings",
+            "additionalProperties": false,
+            "properties": {
+              "provider": {
+                "type": "string",
+                "description": "Auth provider name to apply to generated routes"
+              },
+              "scopes": {
+                "type": "array",
+                "description": "Required scopes for this service",
+                "items": { "type": "string" }
+              },
+              "skip": {
+                "type": "boolean",
+                "description": "Skip auth for all routes in this service",
+                "default": false
+              }
+            }
+          },
+          "skip_paths": {
+            "type": "array",
+            "description": "Paths to exclude from code generation",
+            "items": { "type": "string" },
+            "examples": [["/internal/*", "/health"]]
+          },
+          "scopes": {
+            "type": "object",
+            "description": "Map of path patterns to required scopes",
+            "additionalProperties": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "examples": [{ "/admin/*": ["admin:read", "admin:write"], "/public/*": ["read"] }]
+          }
+        }
+      }
+    }
+  }
+}

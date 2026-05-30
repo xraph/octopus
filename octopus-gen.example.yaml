@@ -1,0 +1,163 @@
+# ============================================================================
+# Octopus Gen — Code Generation Configuration
+# ============================================================================
+#
+# This file drives `octopus gen` to produce:
+#   1. Octopus config fragments (routes + upstreams YAML)
+#   2. Octopus Schema (.octopus.json) — intermediate representation
+#   3. TypeScript client SDK with namespace-chained API
+#   4. TanStack Query hooks for React
+#
+# Usage:
+#   octopus gen                          # uses ./octopus-gen.yaml
+#   octopus gen --config my-gen.yaml     # custom config path
+#
+# Then start octopus with generated + hand-written config:
+#   octopus serve -c config.yaml -c generated/
+#
+# ============================================================================
+
+# Where all generated files are written
+output_dir: "./generated"
+
+# ============================================================================
+# Octopus Config Generation
+# Produces route + upstream YAML files that octopus can load directly
+# ============================================================================
+config:
+  format: yaml                     # yaml | json
+  split: true                      # true = one file per service, false = single merged file
+
+# ============================================================================
+# Octopus Schema Generation
+# The intermediate JSON schema that the TypeScript client is generated from.
+# Contains operations, types, scopes, auth — everything the client needs.
+# ============================================================================
+schema:
+  output: "octopus-schema.json"    # Relative to output_dir
+
+# ============================================================================
+# TypeScript Client Generation
+# Generates a fully-typed, namespace-chained REST client with optional
+# TanStack Query hooks and per-service standalone packages.
+# ============================================================================
+client:
+  enabled: true
+  output_dir: "./generated/client"
+  package_name: "@myapp/api-client"
+
+  # Generate standalone per-service packages alongside the unified client
+  per_service_packages: true
+
+  # TanStack Query (React Query) hooks
+  tanstack_query:
+    enabled: true
+    version: 5                     # TanStack Query v5
+
+  # Default auth configuration for the generated client
+  auth:
+    default_strategy: bearer       # bearer | api_key | custom
+    header: "Authorization"
+    prefix: "Bearer "
+
+  # Type name transformations
+  # Applied to all type names extracted from OpenAPI schemas
+  types:
+    # Direct renames (exact match)
+    rename:
+      "ComExampleModelsUser": "User"
+      "ComExampleModelsPost": "Post"
+
+    # Regex-based transforms (applied in order)
+    transforms:
+      - pattern: "^Dto"            # Remove "Dto" prefix from type names
+        replace: ""
+      - pattern: "Response$"       # Remove "Response" suffix
+        replace: ""
+      - pattern: "^ComExample"     # Remove common package prefix
+        replace: ""
+
+# ============================================================================
+# Services
+# Each service produces routes, upstream config, types, and client methods.
+# ============================================================================
+services:
+  # ─── OpenAPI Service (HTTP endpoint) ──────────────────────────────────────
+  - name: twinos
+    type: openapi
+    # Fetch OpenAPI spec from live service
+    spec: "http://localhost:7900/openapi.json"
+    # All routes are prefixed with /twinos in the gateway
+    prefix: "/twinos"
+    upstream:
+      host: localhost
+      port: 7900
+      lb_policy: round_robin
+    # Auth applied to all routes from this service
+    auth:
+      provider: "internal-jwt"
+      require_roles: [user]
+    # Paths to exclude from generation
+    skip_paths:
+      - "/health"
+      - "/metrics"
+      - "/openapi.json"
+      - "/swagger/*"
+      - "/redoc"
+
+    # Manual scope mappings — override auto-generated scope names
+    # Format: path -> { HTTP_METHOD -> scope_name }
+    # If not specified, scopes are auto-derived from operationId or path+method
+    scopes:
+      "/api/v1/users":
+        GET: "twinos.users.list"
+        POST: "twinos.users.create"
+      "/api/v1/users/{id}":
+        GET: "twinos.users.get"
+        PUT: "twinos.users.update"
+        DELETE: "twinos.users.delete"
+      "/api/v1/users/{userId}/posts":
+        GET: "twinos.users.posts.list"
+        POST: "twinos.users.posts.create"
+      "/api/v1/comments":
+        GET: "twinos.comments.list"
+        POST: "twinos.comments.create"
+      "/api/v1/comments/{id}":
+        GET: "twinos.comments.get"
+        PUT: "twinos.comments.update"
+        DELETE: "twinos.comments.delete"
+
+  # ─── OpenAPI Service (local file) ────────────────────────────────────────
+  - name: portal
+    type: openapi
+    # Load spec from local file
+    spec: "./specs/portal-openapi.yaml"
+    prefix: "/portal"
+    upstream:
+      host: portal.internal
+      port: 8080
+    auth:
+      provider: "internal-jwt"
+    skip_paths:
+      - "/health"
+
+  # ─── AsyncAPI Service ────────────────────────────────────────────────────
+  # - name: notifications
+  #   type: asyncapi
+  #   spec: "./specs/notifications-asyncapi.yaml"
+  #   prefix: "/notifications"
+  #   upstream:
+  #     host: notifications.internal
+  #     port: 9090
+
+  # ─── FARP Manifest Service ──────────────────────────────────────────────
+  # - name: billing
+  #   type: farp
+  #   endpoint: "http://billing:8080/.well-known/schema"
+  #   prefix: "/billing"
+  #   upstream:
+  #     host: billing.internal
+  #     port: 8080
+  #   auth:
+  #     provider: "internal-jwt"
+  #     require_scopes: [billing:read]

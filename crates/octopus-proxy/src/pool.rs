@@ -580,6 +580,119 @@ pub struct PoolStats {
     pub connection_errors: u64,
 }
 
+// ============================================================================
+// HTTP/2 Connection Pool (for gRPC and HTTP/2 upstreams)
+// ============================================================================
+
+/// HTTP/2 connection wrapper — sender is Clone-able for multiplexed streams
+#[derive(Clone)]
+pub struct Http2Sender {
+    sender: hyper::client::conn::http2::SendRequest<Full<Bytes>>,
+    created_at: Instant,
+}
+
+impl std::fmt::Debug for Http2Sender {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Http2Sender")
+            .field("age_secs", &self.created_at.elapsed().as_secs())
+            .finish()
+    }
+}
+
+/// HTTP/2 connection pool — one multiplexed connection per upstream
+pub struct Http2Pool {
+    connections: Arc<DashMap<UpstreamKey, Http2Sender>>,
+    config: PoolConfig,
+}
+
+impl Http2Pool {
+    /// Create a new HTTP/2 pool
+    pub fn new(config: PoolConfig) -> Self {
+        Self {
+            connections: Arc::new(DashMap::new()),
+            config,
+        }
+    }
+
+    /// Get or create an HTTP/2 connection for the upstream
+    pub async fn get_sender(
+        &self,
+        instance: &UpstreamInstance,
+    ) -> Result<hyper::client::conn::http2::SendRequest<Full<Bytes>>> {
+        let key = UpstreamKey::from_instance(instance);
+
+        // Check for existing healthy connection
+        if let Some(entry) = self.connections.get(&key) {
+            let sender = &entry.value().sender;
+            if !sender.is_closed()
+                && entry.value().created_at.elapsed() < self.config.max_connection_lifetime
+            {
+                return Ok(sender.clone());
+            }
+            // Connection is dead or expired, remove it
+            drop(entry);
+            self.connections.remove(&key);
+        }
+
+        // Create new HTTP/2 connection
+        let addr = format!("{}:{}", instance.address, instance.port);
+        debug!(upstream = %addr, "Creating new HTTP/2 connection");
+
+        let stream = timeout(self.config.connect_timeout, TcpStream::connect(&addr))
+            .await
+            .map_err(|_| Error::UpstreamTimeout)?
+            .map_err(|e| Error::UpstreamConnection(format!("Failed to connect: {}", e)))?;
+
+        if let Err(e) = stream.set_nodelay(true) {
+            warn!("Failed to set TCP_NODELAY: {}", e);
+        }
+
+        let io = TokioIo::new(stream);
+        let (sender, conn) = hyper::client::conn::http2::Builder::new(
+            hyper_util::rt::TokioExecutor::new(),
+        )
+        .handshake(io)
+        .await
+        .map_err(|e| Error::UpstreamConnection(format!("HTTP/2 handshake failed: {}", e)))?;
+
+        // Spawn connection driver task
+        tokio::spawn(async move {
+            if let Err(e) = conn.await {
+                debug!("HTTP/2 connection error: {}", e);
+            }
+        });
+
+        let h2_sender = Http2Sender {
+            sender: sender.clone(),
+            created_at: Instant::now(),
+        };
+
+        self.connections.insert(key, h2_sender);
+        info!(upstream = %addr, "Created new HTTP/2 connection");
+
+        Ok(sender)
+    }
+
+    /// Number of active HTTP/2 connections
+    pub fn connection_count(&self) -> usize {
+        self.connections.len()
+    }
+}
+
+impl Default for Http2Pool {
+    fn default() -> Self {
+        Self::new(PoolConfig::default())
+    }
+}
+
+impl std::fmt::Debug for Http2Pool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Http2Pool")
+            .field("connections", &self.connections.len())
+            .finish()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

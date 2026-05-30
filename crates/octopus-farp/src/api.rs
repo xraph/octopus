@@ -191,6 +191,11 @@ impl FarpApiHandler {
         &self.registry
     }
 
+    /// Get a reference to the schema federation
+    pub fn federation(&self) -> &Arc<SchemaFederation> {
+        &self.federation
+    }
+
     /// Handle FARP API requests
     pub async fn handle(&self, req: Request<Full<Bytes>>) -> Result<Response<Full<Bytes>>> {
         let method = req.method().clone();
@@ -332,6 +337,13 @@ impl FarpApiHandler {
             self.validator.validate(&manifest)?;
             info!(service = %service_name, instance_id = %instance.id, "Registering service (FARP v1 push)");
 
+            // Check if service requests tag collapsing via instance metadata
+            if let Some(ref metadata) = instance.metadata {
+                if metadata.get("farp.collapse_service_tags").map(|v| v == "true").unwrap_or(false) {
+                    self.federation.set_collapse_service_tags(true);
+                }
+            }
+
             self.registry.register_service(manifest.clone()).await?;
 
             // Store manifest_url for heartbeat retry (§17.4.1)
@@ -383,41 +395,81 @@ impl FarpApiHandler {
                 cluster.add_instance(upstream_inst);
                 router.register_upstream(cluster);
 
-                // Register routes from the fetched OpenAPI schema
-                if let Ok(schemas) = self.registry.get_schemas(&service_name) {
-                    for schema in &schemas {
-                        if schema.format == SchemaFormat::OpenApi {
-                            if let Ok(schema_json) = serde_json::from_str::<serde_json::Value>(&schema.content) {
-                                if let Some(paths) = schema_json.get("paths").and_then(|p| p.as_object()) {
-                                    let service_name_lower = service_name.to_lowercase();
-                                    for (path, operations) in paths {
-                                        // Skip introspection endpoints
-                                        if crate::schema_ops::should_exclude_introspection()
-                                            && crate::schema_ops::is_introspection_path(path)
-                                        {
-                                            continue;
-                                        }
-                                        if let Some(ops) = operations.as_object() {
-                                            for method_str in ops.keys() {
-                                                let method = match method_str.to_uppercase().as_str() {
-                                                    "GET" => Method::GET,
-                                                    "POST" => Method::POST,
-                                                    "PUT" => Method::PUT,
-                                                    "DELETE" => Method::DELETE,
-                                                    "PATCH" => Method::PATCH,
-                                                    "HEAD" => Method::HEAD,
-                                                    "OPTIONS" => Method::OPTIONS,
-                                                    _ => continue,
-                                                };
-                                                let prefixed_path = format!("/{service_name_lower}{path}");
-                                                let route = octopus_router::RouteBuilder::new()
-                                                    .path(&prefixed_path)
-                                                    .method(method)
-                                                    .upstream_name(&service_name)
-                                                    .priority(100)
-                                                    .build();
-                                                if let Ok(route) = route {
-                                                    let _ = router.add_route(route);
+                let service_name_lower = service_name.to_lowercase();
+
+                // Prefer pre-computed route table from manifest (FARP v1.1.0).
+                // This uses the exact routes the service declared, already validated.
+                if manifest.has_route_table() {
+                    for route_desc in &manifest.route_table {
+                        // Skip introspection endpoints
+                        if crate::schema_ops::should_exclude_introspection()
+                            && crate::schema_ops::is_introspection_path(&route_desc.path)
+                        {
+                            continue;
+                        }
+                        for method_str in &route_desc.methods {
+                            let method = match method_str.to_uppercase().as_str() {
+                                "GET" => Method::GET,
+                                "POST" => Method::POST,
+                                "PUT" => Method::PUT,
+                                "DELETE" => Method::DELETE,
+                                "PATCH" => Method::PATCH,
+                                "HEAD" => Method::HEAD,
+                                "OPTIONS" => Method::OPTIONS,
+                                _ => continue,
+                            };
+                            let prefixed_path = format!("/{service_name_lower}{}", route_desc.path);
+                            let route = octopus_router::RouteBuilder::new()
+                                .path(&prefixed_path)
+                                .method(method)
+                                .upstream_name(&service_name)
+                                .priority(100)
+                                .build();
+                            if let Ok(route) = route {
+                                let _ = router.add_route(route);
+                            }
+                        }
+                    }
+                    debug!(
+                        service = %service_name,
+                        route_count = manifest.route_table.len(),
+                        "Routes registered from manifest route_table"
+                    );
+                } else {
+                    // Fallback: parse OpenAPI schema paths
+                    if let Ok(schemas) = self.registry.get_schemas(&service_name) {
+                        for schema in &schemas {
+                            if schema.format == SchemaFormat::OpenApi {
+                                if let Ok(schema_json) = serde_json::from_str::<serde_json::Value>(&schema.content) {
+                                    if let Some(paths) = schema_json.get("paths").and_then(|p| p.as_object()) {
+                                        for (path, operations) in paths {
+                                            if crate::schema_ops::should_exclude_introspection()
+                                                && crate::schema_ops::is_introspection_path(path)
+                                            {
+                                                continue;
+                                            }
+                                            if let Some(ops) = operations.as_object() {
+                                                for method_str in ops.keys() {
+                                                    let method = match method_str.to_uppercase().as_str() {
+                                                        "GET" => Method::GET,
+                                                        "POST" => Method::POST,
+                                                        "PUT" => Method::PUT,
+                                                        "DELETE" => Method::DELETE,
+                                                        "PATCH" => Method::PATCH,
+                                                        "HEAD" => Method::HEAD,
+                                                        "OPTIONS" => Method::OPTIONS,
+                                                        _ => continue,
+                                                    };
+                                                    let prefixed_path = format!("/{service_name_lower}{path}");
+                                                    let route = octopus_router::RouteBuilder::new()
+                                                        .path(&prefixed_path)
+                                                        .method(method)
+                                                        .upstream_name(&service_name)
+                                                        .priority(100)
+                                                        .build();
+                                                    if let Ok(route) = route {
+                                                        let _ = router.add_route(route);
+                                                    }
                                                 }
                                             }
                                         }
@@ -521,11 +573,18 @@ impl FarpApiHandler {
 
         debug!(instance_id = %instance_id, "Heartbeat received");
 
-        // Update last-seen in registry
+        // Update last-seen in registry.
+        // If the instance is unknown (e.g., gateway restarted and lost state),
+        // return 404 with a re-register hint so the service pushes its full manifest.
         if self.registry.heartbeat(instance_id).is_err() {
+            debug!(instance_id = %instance_id, "Heartbeat for unknown instance, requesting re-registration");
             return self.json_response(
                 StatusCode::NOT_FOUND,
-                &serde_json::json!({"error": "instance not found"}),
+                &serde_json::json!({
+                    "error": "instance not found",
+                    "action": "re-register",
+                    "message": "Gateway has no record of this instance. Please re-register with full manifest."
+                }),
             );
         }
 

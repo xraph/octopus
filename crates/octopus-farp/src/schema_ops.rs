@@ -19,6 +19,7 @@ pub fn is_introspection_path(path: &str) -> bool {
     path == "/" || path == "/_/info" || path == "/health"
         || path.starts_with("/docs") || path.starts_with("/openapi")
         || path.starts_with("/asyncapi")
+        || path.starts_with("/_farp/")
 }
 
 /// Returns true if introspection endpoints should be excluded from federated specs.

@@ -40,7 +40,7 @@ pub use limits::{LimitedBody, ProxyLimits};
 pub use metrics::{
     CircuitBreakerMetrics, PoolMetrics, ProxyMetrics, RequestTracker, RetryMetrics, TlsMetrics,
 };
-pub use pool::{ConnectionPool, PoolConfig, PoolStats, PooledConnection, UpstreamKey};
+pub use pool::{ConnectionPool, Http2Pool, PoolConfig, PoolStats, PooledConnection, UpstreamKey};
 pub use proxy::{HttpProxy, ProxyConfig};
 pub use ratelimit::{InMemoryRateLimiter, RateLimitConfig, RateLimitKeyBuilder, RateLimitResult, RateLimiter};
 pub use retry::{BackoffStrategy, RetryContext, RetryPolicy};

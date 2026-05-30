@@ -10,6 +10,7 @@ description = "Authentication and authorization for Octopus API Gateway"
 
 [dependencies]
 octopus-core = { path = "../octopus-core" }
+octopus-config = { path = "../octopus-config" }
 
 # Async
 tokio.workspace = true
@@ -33,11 +34,20 @@ tracing.workspace = true
 # Security
 sha2.workspace = true
 hmac.workspace = true
+jsonwebtoken.workspace = true
+
+# HTTP client (for OIDC discovery, forward auth)
+reqwest = { version = "0.11", features = ["json"] }
+
+# Scripting (for Rhai authz rules)
+rhai.workspace = true
 
 # Utilities
 bytes.workspace = true
 dashmap.workspace = true
 uuid.workspace = true
+base64 = "0.22"
+url = "2"
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros", "rt-multi-thread"] }

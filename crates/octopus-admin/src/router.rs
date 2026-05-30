@@ -88,6 +88,11 @@ impl DashboardRouter {
             .route("/admin/api/farp/schema/openapi", get(api_farp_federated_openapi_handler))
             // ===== System Information API =====
             .route("/admin/api/system/info", get(api_system_info_handler))
+            // ===== Auth Configuration API =====
+            .route("/admin/api/auth/providers", get(crate::api_handlers::api_auth_providers_handler))
+            .route("/admin/api/auth/config", get(crate::api_handlers::api_auth_config_handler))
+            // ===== gRPC Configuration API =====
+            .route("/admin/api/grpc/services", get(crate::api_handlers::api_grpc_services_handler))
             // ===== WebSocket for real-time dashboard events =====
             .route("/admin/ws", get({
                 let ws_hub = state.ws_hub.clone();

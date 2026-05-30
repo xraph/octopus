@@ -1,0 +1,37 @@
+# Build artifacts
+target/
+**/target/
+
+# VCS
+.git/
+.gitignore
+.gitattributes
+
+# Node / web tooling
+node_modules/
+**/node_modules/
+
+# Docs & meta (not needed in the build context)
+*.md
+docs/
+LICENSE*
+CHANGELOG*
+
+# CI / editor / local tooling
+.github/
+.idea/
+.vscode/
+.claude/
+*.iml
+
+# Local configs (keep config.example.yaml for the runtime reference copy)
+config.yaml
+config.test.yaml
+config.*.example.yaml
+config.local.yaml
+
+# Misc
+*.log
+.DS_Store
+tmp/
+dist/

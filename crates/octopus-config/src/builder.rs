@@ -50,6 +50,11 @@ impl ConfigBuilder {
             plugins: Vec::new(),
             farp: crate::types::FarpConfig::default(),
             observability: ObservabilityConfig::default(),
+            auth_providers: std::collections::HashMap::new(),
+            auth: crate::types::AuthConfig::default(),
+            cors: None,
+            admin: crate::types::AdminConfig::default(),
+            grpc: crate::types::GrpcConfig::default(),
         })
     }
 }

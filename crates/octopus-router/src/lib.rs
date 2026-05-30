@@ -29,7 +29,7 @@ pub mod trie;
 
 pub use load_balancer::{new_load_balancer, LoadBalancer};
 pub use matcher::{Match, PathMatcher};
-pub use route::{Route, RouteBuilder};
+pub use route::{Route, RouteBuilder, RouteCorsOverride};
 pub use trie::RouteTrie;
 
 use dashmap::DashMap;

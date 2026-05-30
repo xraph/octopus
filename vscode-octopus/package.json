@@ -1,0 +1,55 @@
+{
+  "name": "octopus-gateway",
+  "displayName": "Octopus API Gateway",
+  "description": "IntelliSense, validation, and snippets for Octopus API Gateway configuration files",
+  "version": "0.1.0",
+  "publisher": "octopus",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xraph/octopus"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": ["Linters", "Snippets", "Other"],
+  "keywords": ["octopus", "api-gateway", "yaml", "configuration"],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "yamlValidation": [
+      {
+        "fileMatch": ["config.yaml", "config.*.yaml", "octopus.yaml", "octopus.*.yaml", "octopus-config.yaml", "octopus-config.*.yaml"],
+        "url": "./schema/octopus-config.schema.json"
+      },
+      {
+        "fileMatch": ["octopus-gen.yaml", "octopus-gen.*.yaml"],
+        "url": "./schema/octopus-gen.schema.json"
+      }
+    ],
+    "jsonValidation": [
+      {
+        "fileMatch": ["*.octopus.json", "octopus-schema.json"],
+        "url": "./schema/octopus-schema.schema.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "yaml",
+        "path": "./snippets/octopus.json"
+      }
+    ]
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/vscode": "^1.75.0",
+    "typescript": "^5.0.0",
+    "esbuild": "^0.20.0"
+  },
+  "scripts": {
+    "build": "npm run copy-schemas && esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node",
+    "watch": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --watch",
+    "copy-schemas": "node -e \"const fs=require('fs'),p=require('path');const src=p.resolve(__dirname,'..','schema');if(fs.existsSync(src)){fs.readdirSync(src).filter(f=>f.endsWith('.schema.json')).forEach(f=>fs.copyFileSync(p.join(src,f),p.join(__dirname,'schema',f)))}\"",
+    "package": "npm run build && npx @vscode/vsce package"
+  }
+}

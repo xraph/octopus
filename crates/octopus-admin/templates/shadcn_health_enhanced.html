@@ -222,7 +222,7 @@
 <script>
 function healthMonitor() {
     return {
-        healthChecks: {{ health_checks|json }},
+        healthChecks: {{ health_checks|json|safe }},
         filteredChecks: [],
         overallStatus: '{{ overall_status }}',
         lastCheckTime: '{{ last_check_time }}',

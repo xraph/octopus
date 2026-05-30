@@ -9,7 +9,7 @@ use octopus_core::{Error, Result};
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::SystemTime;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 /// Service registration using external farp types
 #[derive(Debug, Clone)]
@@ -265,31 +265,40 @@ impl SchemaRegistry {
 
     /// Get a service registration
     ///
-    /// If a `schema_cache_ttl` is set and the registration's schemas are older than the TTL,
-    /// the returned registration will have its schemas vec cleared (marked stale).
+    /// Returns the registration as-is. Schemas may be stale if `schema_cache_ttl` is set
+    /// and the registration hasn't been refreshed. Use `needs_schema_refresh()` to check
+    /// staleness without clearing schemas.
     pub fn get_service(&self, service_name: &str) -> Result<ServiceRegistration> {
-        let mut registration = self
+        let registration = self
             .services
             .get(service_name)
             .map(|reg| reg.clone())
             .ok_or_else(|| Error::Farp(format!("Service '{service_name}' not registered")))?;
 
-        // If cache TTL is configured, check if schemas are stale
+        Ok(registration)
+    }
+
+    /// Check if a service's schemas need refreshing (expired past TTL)
+    ///
+    /// Unlike `get_service()`, this does not clear or modify schemas — it only checks
+    /// whether the TTL has been exceeded so the caller can trigger a re-fetch.
+    pub fn needs_schema_refresh(&self, service_name: &str) -> bool {
         if let Some(ttl) = self.schema_cache_ttl {
-            if let Ok(elapsed) = registration.updated_at.elapsed() {
-                if elapsed > ttl {
-                    warn!(
-                        service = %service_name,
-                        elapsed_secs = elapsed.as_secs(),
-                        ttl_secs = ttl.as_secs(),
-                        "Schema cache expired, marking schemas as stale"
-                    );
-                    registration.schemas.clear();
+            if let Some(reg) = self.services.get(service_name) {
+                if let Ok(elapsed) = reg.updated_at.elapsed() {
+                    if elapsed > ttl {
+                        debug!(
+                            service = %service_name,
+                            elapsed_secs = elapsed.as_secs(),
+                            ttl_secs = ttl.as_secs(),
+                            "Schema cache expired, refresh needed"
+                        );
+                        return true;
+                    }
                 }
             }
         }
-
-        Ok(registration)
+        false
     }
 
     /// List all registered services
