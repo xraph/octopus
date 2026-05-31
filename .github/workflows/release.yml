@@ -186,6 +186,10 @@ jobs:
           SHA_LINUX_ARM: ${{ steps.checksums.outputs.linux_arm64 }}
         run: |
           set -euo pipefail
+          if [ -z "${TAP_TOKEN:-}" ]; then
+            echo "::warning::No Homebrew tap token (GORELEASER_TOKEN/HOMEBREW_TAP_TOKEN) — skipping formula publish."
+            exit 0
+          fi
           BASE="https://github.com/xraph/octopus/releases/download/v${VERSION}"
           git clone "https://x-access-token:${TAP_TOKEN}@github.com/xraph/homebrew-tap.git" tap
           mkdir -p tap/Formula
@@ -245,6 +249,10 @@ jobs:
           SHA_WIN: ${{ steps.checksums.outputs.windows_x86_64 }}
         run: |
           set -euo pipefail
+          if [ -z "${TAP_TOKEN:-}" ]; then
+            echo "::warning::No Scoop bucket token (GORELEASER_TOKEN/SCOOP_BUCKET_TOKEN) — skipping manifest publish."
+            exit 0
+          fi
           BASE="https://github.com/xraph/octopus/releases/download/v${VERSION}"
           git clone "https://x-access-token:${TAP_TOKEN}@github.com/xraph/scoop-bucket.git" bucket
           cat > bucket/octopus.json <<EOF
@@ -286,8 +294,16 @@ jobs:
           sudo apt-get install -y pkg-config libssl-dev protobuf-compiler
 
       - name: Publish octopus-core
-        run: cd crates/octopus-core && cargo publish --token ${{ secrets.CARGO_TOKEN }}
+        env:
+          CARGO_TOKEN: ${{ secrets.CARGO_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CARGO_TOKEN:-}" ]; then
+            echo "::warning::CARGO_TOKEN secret not set — skipping crates.io publish."
+            exit 0
+          fi
+          cd crates/octopus-core && cargo publish --token "$CARGO_TOKEN"
 
       # Add other crates as they're ready
       # - name: Publish octopus-router
-      #   run: cd crates/octopus-router && cargo publish --token ${{ secrets.CARGO_TOKEN }}
+      #   run: cd crates/octopus-router && cargo publish --token "$CARGO_TOKEN"
