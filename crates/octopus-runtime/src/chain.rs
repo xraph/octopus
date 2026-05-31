@@ -81,7 +81,7 @@ pub(crate) fn build_request_middleware(
 /// skipped with a warning.
 pub(crate) fn build_plugin_middleware(plugins: &[PluginConfig]) -> Vec<Arc<dyn Middleware>> {
     let mut enabled: Vec<&PluginConfig> = plugins.iter().filter(|p| p.enabled).collect();
-    enabled.sort_by(|a, b| b.priority.cmp(&a.priority));
+    enabled.sort_by_key(|p| std::cmp::Reverse(p.priority));
 
     let mut mws: Vec<Arc<dyn Middleware>> = Vec::new();
     for p in enabled {

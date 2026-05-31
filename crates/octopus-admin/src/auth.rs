@@ -164,8 +164,7 @@ fn sha256(data: &[u8]) -> [u8; 32] {
 fn unix_now() -> usize {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as usize)
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_secs() as usize)
 }
 
 /// Extract a named cookie value from request headers.
