@@ -322,7 +322,19 @@ jobs:
             git add "Formula/${filename}"
             git commit -m "${name} ${version}"
           done
-          git push
+
+          # The homebrew tap is shared with other projects that cut releases at
+          # the same time, so it can advance between our checkout and push. Our
+          # commit only touches Formula/octopus-cli.rb, so rebase onto the latest
+          # tap and retry instead of failing on a non-fast-forward push.
+          for attempt in $(seq 1 5); do
+            if git push; then exit 0; fi
+            echo "::warning::homebrew-tap push rejected (attempt ${attempt}/5); rebasing on latest and retrying"
+            git pull --rebase || true
+            sleep $((attempt * 4))
+          done
+          echo "::error::failed to push Formula to homebrew-tap after 5 attempts"
+          exit 1
 
   custom-publish-crates:
     needs:
