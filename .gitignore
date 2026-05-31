@@ -4,9 +4,10 @@
 *.pdb
 Cargo.lock
 
-# IDE
+# IDE / tooling
 .idea/
 .vscode/
+.claude/
 *.swp
 *.swo
 *~
@@ -38,6 +39,8 @@ cobertura.xml
 
 # Benchmarks
 /criterion/
+/benchmarks/results/
+/benchmarks/bastion-harness/bastion-bench
 
 # Config (keep examples)
 config.yaml
