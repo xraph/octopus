@@ -6,7 +6,7 @@
 use axum::body::Body;
 use axum::Router as AxumRouter;
 use bytes::Bytes;
-use http::{Method, Request, Response, StatusCode};
+use http::{HeaderMap, Method, Request, Response, StatusCode};
 use http_body_util::Full;
 use octopus_admin::{AppState, DashboardRouter};
 use octopus_core::{Error, Result};
@@ -182,7 +182,13 @@ impl AdminHandler {
     /// This method now delegates to the DashboardRouter from octopus-admin,
     /// which handles all /admin routes properly. Special routes like /metrics
     /// are handled separately.
-    pub async fn handle(&self, method: &Method, path: &str) -> Result<Response<Full<Bytes>>> {
+    pub async fn handle(
+        &self,
+        method: &Method,
+        path: &str,
+        headers: HeaderMap,
+        body: Bytes,
+    ) -> Result<Response<Full<Bytes>>> {
         debug!(method = %method, path = %path, "Handling admin route via Axum router");
 
         // Handle Prometheus metrics endpoint separately (not part of Axum router).
@@ -196,12 +202,9 @@ impl AdminHandler {
             return self.metrics_endpoint();
         }
 
-        // Build a Request<Body> for Axum
-        let req_builder = Request::builder().method(method.clone()).uri(path);
-
-        let req = req_builder
-            .body(Body::empty())
-            .map_err(|e| Error::InvalidRequest(format!("Failed to build request: {e}")))?;
+        // Bridge the Hyper request into an Axum request, forwarding the method,
+        // path (+query), headers and body so write endpoints can read their body.
+        let req = build_admin_request(method, path, headers, body)?;
 
         // Call the Axum router
         let router = self.admin_router.clone();
@@ -248,6 +251,26 @@ impl AdminHandler {
     }
 }
 
+/// Build the Axum request fed to the dashboard router, forwarding the caller's
+/// method, path (+query), headers and request body so write endpoints (JSON
+/// CRUD) can read their body — historically this dropped the body.
+fn build_admin_request(
+    method: &Method,
+    path: &str,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Request<Body>> {
+    let mut builder = Request::builder().method(method.clone()).uri(path);
+    // Forward the caller's headers (notably Content-Type, so Json<T> extractors
+    // engage) onto the bridged request.
+    if let Some(dst) = builder.headers_mut() {
+        *dst = headers;
+    }
+    builder
+        .body(Body::from(body))
+        .map_err(|e| Error::InvalidRequest(format!("Failed to build admin request: {e}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -256,6 +279,29 @@ mod tests {
     #[test]
     fn metrics_enabled_defaults_true_without_config() {
         assert!(metrics_enabled(&None));
+    }
+
+    #[tokio::test]
+    async fn build_admin_request_forwards_body_and_headers() {
+        use http::header::CONTENT_TYPE;
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
+        let body = Bytes::from_static(b"{\"name\":\"orders\"}");
+
+        let req =
+            build_admin_request(&Method::POST, "/admin/api/upstreams", headers, body.clone())
+                .unwrap();
+
+        assert_eq!(req.method(), Method::POST);
+        assert_eq!(
+            req.headers().get(CONTENT_TYPE).map(|v| v.as_bytes()),
+            Some(&b"application/json"[..]),
+            "content-type must be forwarded so Json<T> extractors run"
+        );
+        let collected = axum::body::to_bytes(req.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(collected, body, "request body must be forwarded intact");
     }
 
     #[test]

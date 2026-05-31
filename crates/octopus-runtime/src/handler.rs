@@ -498,10 +498,11 @@ impl RequestHandler {
             let req_path = req.uri().path();
             if req_path == "/metrics" || req_path == "/__metrics" {
                 let method = req.method().clone();
+                let headers = req.headers().clone();
                 let req_path = req_path.to_string();
                 return self
                     .admin_handler
-                    .handle(&method, &req_path)
+                    .handle(&method, &req_path, headers, Bytes::new())
                     .await
                     .map(|r| r.map(Either::Left));
             }
@@ -583,9 +584,26 @@ impl RequestHandler {
             } else {
                 path.clone()
             };
+            // Forward the original headers, path query and request body so admin
+            // write endpoints (JSON CRUD) can read their body. The admin branch
+            // always returns, so consuming `req` here is safe.
+            let admin_headers = req.headers().clone();
+            let admin_target = match req.uri().query() {
+                Some(q) => format!("{admin_path}?{q}"),
+                None => admin_path,
+            };
+            let admin_body = match req.into_body().collect().await {
+                Ok(collected) => collected.to_bytes(),
+                Err(e) => {
+                    return Ok(Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(buffered(format!("Failed to read admin request body: {e}")))
+                        .unwrap());
+                }
+            };
             return self
                 .admin_handler
-                .handle(&method, &admin_path)
+                .handle(&method, &admin_target, admin_headers, admin_body)
                 .await
                 .map(|r| r.map(Either::Left));
         }
