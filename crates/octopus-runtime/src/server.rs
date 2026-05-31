@@ -1232,6 +1232,7 @@ impl ServerBuilder {
             reconciler,
             config.kubernetes.watch_namespaces.clone(),
             tls_acceptor.clone(),
+            config.kubernetes.leader_election,
         )
         .await
         {

@@ -25,6 +25,7 @@ pub mod endpoints;
 pub mod error;
 pub mod gateway_api;
 pub mod ir;
+pub mod leader;
 pub mod policy;
 pub mod refgrant;
 pub mod status;

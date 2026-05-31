@@ -530,15 +530,29 @@ impl RouteReconciler {
 /// Create a Kubernetes client and spawn watchers for HTTPRoute and the Octopus
 /// CRDs, driving `reconciler`. An empty `namespaces` watches all namespaces
 /// (requires cluster-scoped RBAC); otherwise watchers are spawned per namespace.
+///
+/// When `leader_election` is set, this blocks until the replica acquires the
+/// operator [`Lease`](crate::leader) before spawning any watchers, so only one
+/// replica reconciles at a time; a background task then renews the lease.
 pub async fn start(
     reconciler: Arc<RouteReconciler>,
     namespaces: Vec<String>,
     tls_acceptor: Option<SwappableTlsAcceptor>,
+    leader_election: bool,
 ) -> crate::Result<()> {
     let client = Client::try_default().await?;
     // Hand the client to the reconciler so it can write `.status` back onto
     // reconciled Octopus resources.
     reconciler.set_client(client.clone());
+
+    // For HA, only the lease holder drives the watchers.
+    if leader_election {
+        let ns = crate::leader::lease_namespace();
+        let me = crate::leader::pod_identity();
+        tracing::info!(identity = %me, namespace = %ns, "leader election enabled; acquiring operator lease");
+        crate::leader::acquire_leadership(&client, &ns, &me).await;
+        tokio::spawn(crate::leader::run_leader_loop(client.clone(), ns, me));
+    }
 
     let scopes: Vec<Option<String>> = if namespaces.is_empty() {
         vec![None]
