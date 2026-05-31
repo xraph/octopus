@@ -5,6 +5,7 @@
 //! the standard Gateway API. [`OctopusPolicy`] is a GEP-713 policy attachment
 //! that bolts those extras onto a standard Gateway API resource via `target_ref`.
 
+use crate::status::OctopusStatus;
 use kube::CustomResource;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -54,6 +55,7 @@ pub struct PolicyTargetRef {
     version = "v1alpha1",
     kind = "OctopusGateway",
     namespaced,
+    status = "OctopusStatus",
     shortname = "ogw"
 )]
 #[serde(rename_all = "camelCase")]
@@ -75,6 +77,7 @@ pub struct OctopusGatewaySpec {
     version = "v1alpha1",
     kind = "OctopusRoute",
     namespaced,
+    status = "OctopusStatus",
     shortname = "ort"
 )]
 #[serde(rename_all = "camelCase")]
@@ -186,6 +189,7 @@ pub struct ScriptConfigMapRef {
     version = "v1alpha1",
     kind = "OctopusUpstream",
     namespaced,
+    status = "OctopusStatus",
     shortname = "oup"
 )]
 #[serde(rename_all = "camelCase")]
@@ -206,6 +210,7 @@ pub struct OctopusUpstreamSpec {
     version = "v1alpha1",
     kind = "OctopusPolicy",
     namespaced,
+    status = "OctopusStatus",
     shortname = "opol"
 )]
 #[serde(rename_all = "camelCase")]
@@ -247,6 +252,32 @@ mod tests {
         assert_eq!(OctopusGateway::crd().spec.names.kind, "OctopusGateway");
         assert_eq!(OctopusUpstream::crd().spec.names.kind, "OctopusUpstream");
         assert_eq!(OctopusPolicy::crd().spec.names.kind, "OctopusPolicy");
+    }
+
+    #[test]
+    fn all_octopus_crds_have_status_subresource() {
+        let crds = [
+            OctopusGateway::crd(),
+            OctopusRoute::crd(),
+            OctopusUpstream::crd(),
+            OctopusPolicy::crd(),
+        ];
+        for crd in crds {
+            let v = crd
+                .spec
+                .versions
+                .iter()
+                .find(|v| v.name == "v1alpha1")
+                .expect("v1alpha1 version present");
+            assert!(
+                v.subresources
+                    .as_ref()
+                    .and_then(|s| s.status.as_ref())
+                    .is_some(),
+                "{} must declare a status subresource",
+                crd.spec.names.kind
+            );
+        }
     }
 
     #[test]

@@ -37,13 +37,57 @@ spec:
             required:
             - listen
             type: object
+          status:
+            description: The `.status` subresource shared by every Octopus CRD.
+            nullable: true
+            properties:
+              conditions:
+                description: Reconcile conditions (currently just `Accepted`).
+                items:
+                  description: A single status condition, wire-compatible with `metav1.Condition`.
+                  properties:
+                    lastTransitionTime:
+                      description: RFC3339 timestamp of the last status transition.
+                      nullable: true
+                      type: string
+                    message:
+                      description: Human-readable detail.
+                      type: string
+                    observedGeneration:
+                      description: '`.metadata.generation` the condition was computed from.'
+                      format: int64
+                      nullable: true
+                      type: integer
+                    reason:
+                      description: Machine-readable, PascalCase reason for the condition's last transition.
+                      type: string
+                    status:
+                      description: '`True`, `False`, or `Unknown`.'
+                      type: string
+                    type:
+                      description: Condition type, e.g. `Accepted`.
+                      type: string
+                  required:
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              observedGeneration:
+                description: The `.metadata.generation` most recently reconciled.
+                format: int64
+                nullable: true
+                type: integer
+            type: object
         required:
         - spec
         title: OctopusGateway
         type: object
     served: true
     storage: true
-    subresources: {}
+    subresources:
+      status: {}
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -214,13 +258,57 @@ spec:
             - path
             - upstream
             type: object
+          status:
+            description: The `.status` subresource shared by every Octopus CRD.
+            nullable: true
+            properties:
+              conditions:
+                description: Reconcile conditions (currently just `Accepted`).
+                items:
+                  description: A single status condition, wire-compatible with `metav1.Condition`.
+                  properties:
+                    lastTransitionTime:
+                      description: RFC3339 timestamp of the last status transition.
+                      nullable: true
+                      type: string
+                    message:
+                      description: Human-readable detail.
+                      type: string
+                    observedGeneration:
+                      description: '`.metadata.generation` the condition was computed from.'
+                      format: int64
+                      nullable: true
+                      type: integer
+                    reason:
+                      description: Machine-readable, PascalCase reason for the condition's last transition.
+                      type: string
+                    status:
+                      description: '`True`, `False`, or `Unknown`.'
+                      type: string
+                    type:
+                      description: Condition type, e.g. `Accepted`.
+                      type: string
+                  required:
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              observedGeneration:
+                description: The `.metadata.generation` most recently reconciled.
+                format: int64
+                nullable: true
+                type: integer
+            type: object
         required:
         - spec
         title: OctopusRoute
         type: object
     served: true
     storage: true
-    subresources: {}
+    subresources:
+      status: {}
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -276,13 +364,57 @@ spec:
                   type: object
                 type: array
             type: object
+          status:
+            description: The `.status` subresource shared by every Octopus CRD.
+            nullable: true
+            properties:
+              conditions:
+                description: Reconcile conditions (currently just `Accepted`).
+                items:
+                  description: A single status condition, wire-compatible with `metav1.Condition`.
+                  properties:
+                    lastTransitionTime:
+                      description: RFC3339 timestamp of the last status transition.
+                      nullable: true
+                      type: string
+                    message:
+                      description: Human-readable detail.
+                      type: string
+                    observedGeneration:
+                      description: '`.metadata.generation` the condition was computed from.'
+                      format: int64
+                      nullable: true
+                      type: integer
+                    reason:
+                      description: Machine-readable, PascalCase reason for the condition's last transition.
+                      type: string
+                    status:
+                      description: '`True`, `False`, or `Unknown`.'
+                      type: string
+                    type:
+                      description: Condition type, e.g. `Accepted`.
+                      type: string
+                  required:
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              observedGeneration:
+                description: The `.metadata.generation` most recently reconciled.
+                format: int64
+                nullable: true
+                type: integer
+            type: object
         required:
         - spec
         title: OctopusUpstream
         type: object
     served: true
     storage: true
-    subresources: {}
+    subresources:
+      status: {}
 ---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -368,10 +500,54 @@ spec:
             required:
             - targetRef
             type: object
+          status:
+            description: The `.status` subresource shared by every Octopus CRD.
+            nullable: true
+            properties:
+              conditions:
+                description: Reconcile conditions (currently just `Accepted`).
+                items:
+                  description: A single status condition, wire-compatible with `metav1.Condition`.
+                  properties:
+                    lastTransitionTime:
+                      description: RFC3339 timestamp of the last status transition.
+                      nullable: true
+                      type: string
+                    message:
+                      description: Human-readable detail.
+                      type: string
+                    observedGeneration:
+                      description: '`.metadata.generation` the condition was computed from.'
+                      format: int64
+                      nullable: true
+                      type: integer
+                    reason:
+                      description: Machine-readable, PascalCase reason for the condition's last transition.
+                      type: string
+                    status:
+                      description: '`True`, `False`, or `Unknown`.'
+                      type: string
+                    type:
+                      description: Condition type, e.g. `Accepted`.
+                      type: string
+                  required:
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              observedGeneration:
+                description: The `.metadata.generation` most recently reconciled.
+                format: int64
+                nullable: true
+                type: integer
+            type: object
         required:
         - spec
         title: OctopusPolicy
         type: object
     served: true
     storage: true
-    subresources: {}
+    subresources:
+      status: {}

@@ -27,6 +27,7 @@ pub mod gateway_api;
 pub mod ir;
 pub mod policy;
 pub mod refgrant;
+pub mod status;
 pub mod tls;
 pub mod translate;
 
