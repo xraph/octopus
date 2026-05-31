@@ -6,8 +6,9 @@
 # tag, which then triggers release.yml.
 #
 # IMPORTANT: a tag pushed with the default GITHUB_TOKEN does NOT trigger other
-# workflows, so the push must use a PAT (GORELEASER_TOKEN or, if you prefer a
-# dedicated one, RELEASE_DISPATCH_TOKEN) with `contents: write` on this repo.
+# workflows, so the push must use a PAT — CUSTOM_GITHUB_TOKEN — with `repo`
+# (contents: write) and `workflow` scope so the tag push triggers release.yml
+# and runs the full publish pipeline (docker, helm, cargo, homebrew, …).
 name: Release (dispatch)
 
 on:
@@ -30,14 +31,14 @@ jobs:
     permissions:
       contents: write
     env:
-      DISPATCH_TOKEN: ${{ secrets.RELEASE_DISPATCH_TOKEN || secrets.GORELEASER_TOKEN }}
+      DISPATCH_TOKEN: ${{ secrets.CUSTOM_GITHUB_TOKEN || secrets.RELEASE_DISPATCH_TOKEN || secrets.GORELEASER_TOKEN }}
       TAG: ${{ inputs.tag }}
     steps:
       - name: Require a PAT
         run: |
           set -euo pipefail
           if [ -z "${DISPATCH_TOKEN:-}" ]; then
-            echo "::error::No RELEASE_DISPATCH_TOKEN/GORELEASER_TOKEN secret set. A tag pushed with the default GITHUB_TOKEN can't trigger release.yml, so this wrapper needs a PAT."
+            echo "::error::No CUSTOM_GITHUB_TOKEN secret set. A tag pushed with the default GITHUB_TOKEN can't trigger release.yml, so this wrapper needs a PAT with repo + workflow scope."
             exit 1
           fi
 
