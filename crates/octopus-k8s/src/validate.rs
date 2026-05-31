@@ -6,7 +6,15 @@
 //! [`crate::status`]). Rejected resources are not applied.
 
 use crate::crds::{OctopusPolicySpec, OctopusRouteSpec, OctopusUpstreamSpec};
+use crate::gateway_api::{GatewayClassSpec, CONTROLLER_NAME};
 use crate::status::ReconcileOutcome;
+
+/// Whether a `GatewayClass` names Octopus as its controller (and so should be
+/// claimed and marked `Accepted`). GatewayClasses for other controllers are
+/// ignored entirely — Octopus must not touch their status.
+pub fn gatewayclass_is_ours(spec: &GatewayClassSpec) -> bool {
+    spec.controller_name == CONTROLLER_NAME
+}
 
 /// Validate an [`OctopusRouteSpec`]: it must declare a path and an upstream.
 pub fn validate_route(spec: &OctopusRouteSpec) -> ReconcileOutcome {
@@ -85,6 +93,19 @@ mod tests {
 
         let empty = OctopusUpstreamSpec::default();
         assert!(rejected(&validate_upstream(&empty)));
+    }
+
+    #[test]
+    fn gatewayclass_ours_only_when_controller_matches() {
+        let ours = GatewayClassSpec {
+            controller_name: CONTROLLER_NAME.into(),
+        };
+        assert!(gatewayclass_is_ours(&ours));
+
+        let theirs = GatewayClassSpec {
+            controller_name: "example.com/other-controller".into(),
+        };
+        assert!(!gatewayclass_is_ours(&theirs));
     }
 
     #[test]

@@ -11,7 +11,8 @@ use crate::crds::{
     OctopusUpstream, OctopusUpstreamSpec,
 };
 use crate::gateway_api::{
-    GRPCRoute, GRPCRouteSpec, Gateway, GatewaySpec, HTTPRoute, HTTPRouteSpec, ParentRef,
+    GRPCRoute, GRPCRouteSpec, Gateway, GatewayClass, GatewaySpec, HTTPRoute, HTTPRouteSpec,
+    ParentRef,
 };
 use crate::ir::{IntermediateRoute, RouteSource, RouteStore, SourceKey};
 use crate::policy::{apply_overlays, PolicyOverlay};
@@ -23,10 +24,10 @@ use crate::translate::{
 use futures::TryStreamExt;
 use k8s_openapi::api::core::v1::{ConfigMap, Secret};
 use crate::status::{build_status, ReconcileOutcome};
-use crate::validate::{validate_policy, validate_route, validate_upstream};
+use crate::validate::{gatewayclass_is_ours, validate_policy, validate_route, validate_upstream};
 use kube::{
     api::{Api, Patch, PatchParams},
-    core::NamespaceResourceScope,
+    core::{ClusterResourceScope, NamespaceResourceScope},
     runtime::{watcher, watcher::Config as WatcherConfig},
     Client,
 };
@@ -122,6 +123,40 @@ impl RouteReconciler {
                 .await
             {
                 tracing::warn!(resource = kind, name = %name, namespace = %namespace, error = %e, "status writeback failed");
+            }
+        });
+    }
+
+    /// Like [`Self::write_status`] but for a cluster-scoped resource (e.g.
+    /// `GatewayClass`).
+    fn write_cluster_status<K>(
+        &self,
+        name: &str,
+        generation: Option<i64>,
+        outcome: &ReconcileOutcome,
+    ) where
+        K: kube::Resource<Scope = ClusterResourceScope>
+            + Clone
+            + std::fmt::Debug
+            + serde::de::DeserializeOwned
+            + 'static,
+        <K as kube::Resource>::DynamicType: Default,
+    {
+        let Some(client) = self.client.get().cloned() else {
+            return;
+        };
+        let now = k8s_openapi::chrono::Utc::now().to_rfc3339();
+        let status = build_status(generation, outcome, &now);
+        let name = name.to_string();
+        let kind = std::any::type_name::<K>();
+        tokio::spawn(async move {
+            let api: Api<K> = Api::all(client);
+            let patch = serde_json::json!({ "status": status });
+            if let Err(e) = api
+                .patch_status(&name, &PatchParams::default(), &Patch::Merge(&patch))
+                .await
+            {
+                tracing::warn!(resource = kind, name = %name, error = %e, "cluster status writeback failed");
             }
         });
     }
@@ -522,6 +557,14 @@ pub async fn start(
         }
     }
 
+    // GatewayClass is cluster-scoped: watch it once (independent of namespace
+    // scopes) and claim those that name Octopus as their controller.
+    tokio::spawn({
+        let api: Api<GatewayClass> = Api::all(client.clone());
+        let rec = Arc::clone(&reconciler);
+        async move { run_watcher(api, rec, "GatewayClass", on_gateway_class).await }
+    });
+
     Ok(())
 }
 
@@ -839,6 +882,27 @@ fn on_grpcroute(rec: &RouteReconciler, event: watcher::Event<GRPCRoute>) {
             }
         }
         watcher::Event::Init | watcher::Event::InitDone => {}
+    }
+}
+
+fn on_gateway_class(rec: &RouteReconciler, event: watcher::Event<GatewayClass>) {
+    match event {
+        watcher::Event::Apply(o) | watcher::Event::InitApply(o) => {
+            // Only claim GatewayClasses that name us as their controller; leave
+            // others untouched so we don't fight their owning controller.
+            if gatewayclass_is_ours(&o.spec) {
+                if let Some(name) = o.metadata.name.clone() {
+                    rec.write_cluster_status::<GatewayClass>(
+                        &name,
+                        o.metadata.generation,
+                        &ReconcileOutcome::Accepted,
+                    );
+                }
+            }
+        }
+        watcher::Event::Delete(_)
+        | watcher::Event::Init
+        | watcher::Event::InitDone => {}
     }
 }
 
