@@ -366,6 +366,20 @@ jobs:
       "id-token": "write"
       "packages": "write"
 
+  custom-publish-windows:
+    needs:
+      - plan
+      - host
+    if: ${{ !fromJson(needs.plan.outputs.val).announcement_is_prerelease || fromJson(needs.plan.outputs.val).publish_prereleases }}
+    uses: ./.github/workflows/publish-windows.yml
+    with:
+      plan: ${{ needs.plan.outputs.val }}
+    secrets: inherit
+    # publish jobs get escalated permissions
+    permissions:
+      "id-token": "write"
+      "packages": "write"
+
   announce:
     needs:
       - plan
@@ -374,10 +388,11 @@ jobs:
       - custom-publish-crates
       - custom-publish-docker
       - custom-publish-helm
+      - custom-publish-windows
     # use "always() && ..." to allow us to wait for all publish jobs while
     # still allowing individual publish jobs to skip themselves (for prereleases).
     # "host" however must run to completion, no skipping allowed!
-    if: ${{ always() && needs.host.result == 'success' && (needs.publish-homebrew-formula.result == 'skipped' || needs.publish-homebrew-formula.result == 'success') && (needs.custom-publish-crates.result == 'skipped' || needs.custom-publish-crates.result == 'success') && (needs.custom-publish-docker.result == 'skipped' || needs.custom-publish-docker.result == 'success') && (needs.custom-publish-helm.result == 'skipped' || needs.custom-publish-helm.result == 'success') }}
+    if: ${{ always() && needs.host.result == 'success' && (needs.publish-homebrew-formula.result == 'skipped' || needs.publish-homebrew-formula.result == 'success') && (needs.custom-publish-crates.result == 'skipped' || needs.custom-publish-crates.result == 'success') && (needs.custom-publish-docker.result == 'skipped' || needs.custom-publish-docker.result == 'success') && (needs.custom-publish-helm.result == 'skipped' || needs.custom-publish-helm.result == 'success') && (needs.custom-publish-windows.result == 'skipped' || needs.custom-publish-windows.result == 'success') }}
     runs-on: "ubuntu-22.04"
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

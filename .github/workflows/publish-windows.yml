@@ -1,0 +1,66 @@
+# Custom dist publish-job: best-effort Windows binary.
+#
+# cargo-dist can't mark a single target as "allowed to fail" — any failure in
+# its build matrix blocks the whole release. We want Windows to be optional, so
+# we build it here instead, OUTSIDE the cargo-dist matrix, with
+# `continue-on-error: true`: a failed job still reports success to the caller, so
+# a broken Windows build never blocks the macOS/Linux release. When it succeeds,
+# the .zip is attached to the GitHub release dist already created.
+name: Publish (Windows, best-effort)
+
+on:
+  workflow_call:
+    inputs:
+      plan:
+        required: true
+        type: string
+
+jobs:
+  windows:
+    name: Build Windows binary (optional)
+    runs-on: windows-latest
+    # The whole point: never fail the release if Windows breaks.
+    continue-on-error: true
+    permissions:
+      contents: write # upload the archive to the release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install protoc
+        run: choco install protoc -y
+
+      - name: Resolve version from the release tag
+        id: ver
+        shell: bash
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build octopus (release)
+        run: cargo build --release --target x86_64-pc-windows-msvc --bin octopus
+
+      - name: Package archive
+        id: pkg
+        shell: bash
+        run: |
+          set -euo pipefail
+          NAME="octopus-${{ steps.ver.outputs.version }}-x86_64-pc-windows-msvc"
+          mkdir -p "stage/$NAME"
+          cp target/x86_64-pc-windows-msvc/release/octopus.exe "stage/$NAME/"
+          cp LICENSE README.md "stage/$NAME/" 2>/dev/null || true
+          (cd stage && 7z a "../${NAME}.zip" "$NAME" >/dev/null)
+          sha256sum "${NAME}.zip" > "${NAME}.zip.sha256"
+          echo "archive=${NAME}.zip" >> "$GITHUB_OUTPUT"
+
+      - name: Attach to the GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            ${{ steps.pkg.outputs.archive }}
+            ${{ steps.pkg.outputs.archive }}.sha256
+          fail_on_unmatched_files: false

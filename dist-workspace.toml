@@ -7,14 +7,18 @@ members = ["cargo:."]
 cargo-dist-version = "0.32.0"
 # CI backends to support
 ci = "github"
-# The installers to generate for each app
-installers = ["shell", "powershell", "homebrew"]
+# The installers to generate for each app. (No powershell: Windows is built
+# best-effort outside the cargo-dist matrix — see publish-windows.yml — so it
+# can fail without blocking the release, which cargo-dist's own matrix can't do.)
+installers = ["shell", "homebrew"]
 # Publish the generated Homebrew formula to our tap.
 tap = "xraph/homebrew-tap"
 # Publish stage: built-in homebrew tap push + our custom jobs (one unified run).
-publish-jobs = ["homebrew", "./publish-crates", "./publish-docker", "./publish-helm"]
-# Target platforms to build apps for (Rust target-triple syntax)
-targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
+# publish-windows is the optional/best-effort Windows binary (continue-on-error).
+publish-jobs = ["homebrew", "./publish-crates", "./publish-docker", "./publish-helm", "./publish-windows"]
+# Target platforms cargo-dist builds (must all succeed). Windows is intentionally
+# NOT here — it's built best-effort in publish-windows.yml.
+targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu"]
 # Path that installers should place binaries in
 install-path = "CARGO_HOME"
 # Where to host releases
