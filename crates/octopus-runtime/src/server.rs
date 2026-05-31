@@ -207,6 +207,7 @@ impl Server {
             crate::chain::build_request_middleware(
                 &self.config.gateway.compression,
                 self.config.cors.as_ref(),
+                &self.config.gateway.security_headers,
             );
         tracing::info!(
             compression = self.config.gateway.compression.enabled,
@@ -267,6 +268,17 @@ impl Server {
                         let p = octopus_auth::MtlsProvider::from_config(name, cfg);
                         registry.register(name, Arc::new(p));
                         tracing::info!(name = %name, "mTLS auth provider registered");
+                    }
+                    octopus_config::types::AuthProviderConfig::Introspection(cfg) => {
+                        match octopus_auth::IntrospectionProvider::from_config(name, cfg) {
+                            Ok(p) => {
+                                registry.register(name, Arc::new(p));
+                                tracing::info!(name = %name, endpoint = %cfg.endpoint, "Introspection auth provider registered");
+                            }
+                            Err(e) => {
+                                tracing::error!(name = %name, error = %e, "Failed to create introspection provider");
+                            }
+                        }
                     }
                 }
             }
@@ -1191,6 +1203,7 @@ mod tests {
                 internal_route_prefix: Some("__".to_string()),
                 probes: ProbeConfig::default(),
                 enforce_sni_check: true,
+                security_headers: Default::default(),
             })
             .build()
             .unwrap()

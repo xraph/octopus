@@ -7,18 +7,20 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use octopus_config::types::{CompressionConfig, CorsGlobalConfig};
+use octopus_config::types::{CompressionConfig, CorsGlobalConfig, SecurityHeadersConfig};
 use octopus_core::middleware::Middleware;
 
 /// Build the pre-auth request middleware from configuration.
 ///
-/// Currently: response compression and CORS (global policy; per-route overrides
-/// are applied from request extensions by the CORS middleware itself). Returned
-/// in execution order (outermost first); the caller appends the auth gateway
-/// middleware after these.
+/// Currently: response compression, CORS (global policy; per-route overrides are
+/// applied from request extensions by the CORS middleware itself), and security
+/// response headers (when `security_headers.enabled`). Returned in execution
+/// order (outermost first); the caller appends the auth gateway middleware after
+/// these.
 pub(crate) fn build_request_middleware(
     compression: &CompressionConfig,
     cors: Option<&CorsGlobalConfig>,
+    security_headers: &SecurityHeadersConfig,
 ) -> Vec<Arc<dyn Middleware>> {
     let mut mws: Vec<Arc<dyn Middleware>> = Vec::new();
 
@@ -48,6 +50,21 @@ pub(crate) fn build_request_middleware(
             allow_credentials: c.allow_credentials,
         };
         mws.push(Arc::new(octopus_middleware::Cors::with_config(cfg)));
+    }
+
+    if security_headers.enabled {
+        let cfg = octopus_middleware::SecurityHeadersConfig {
+            hsts: security_headers.hsts.clone(),
+            csp: security_headers.csp.clone(),
+            frame_options: security_headers.frame_options.clone(),
+            content_type_options: security_headers.content_type_options.clone(),
+            xss_protection: security_headers.xss_protection.clone(),
+            referrer_policy: security_headers.referrer_policy.clone(),
+            permissions_policy: security_headers.permissions_policy.clone(),
+        };
+        mws.push(Arc::new(octopus_middleware::SecurityHeaders::with_config(
+            cfg,
+        )));
     }
 
     mws
@@ -104,6 +121,20 @@ mod tests {
         }
     }
 
+    fn sh_off() -> SecurityHeadersConfig {
+        SecurityHeadersConfig {
+            enabled: false,
+            ..Default::default()
+        }
+    }
+
+    fn sh_on() -> SecurityHeadersConfig {
+        SecurityHeadersConfig {
+            enabled: true,
+            ..Default::default()
+        }
+    }
+
     fn req_with_origin(method: Method) -> Request<Body> {
         Request::builder()
             .method(method)
@@ -116,7 +147,7 @@ mod tests {
     #[tokio::test]
     async fn global_cors_applies_allow_origin_header() {
         let cors = cors_allow_all();
-        let mut mws = build_request_middleware(&compression_off(), Some(&cors));
+        let mut mws = build_request_middleware(&compression_off(), Some(&cors), &sh_off());
         mws.push(Arc::new(TerminalOk));
         let stack: Arc<[Arc<dyn Middleware>]> = Arc::from(mws);
 
@@ -135,7 +166,7 @@ mod tests {
 
     #[tokio::test]
     async fn no_cors_header_without_global_config() {
-        let mut mws = build_request_middleware(&compression_off(), None);
+        let mut mws = build_request_middleware(&compression_off(), None, &sh_off());
         mws.push(Arc::new(TerminalOk));
         let stack: Arc<[Arc<dyn Middleware>]> = Arc::from(mws);
 
@@ -151,9 +182,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn security_headers_added_when_enabled() {
+        let mut mws = build_request_middleware(&compression_off(), None, &sh_on());
+        mws.push(Arc::new(TerminalOk));
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::from(mws);
+
+        let req = Request::builder()
+            .uri("/x")
+            .body(Full::new(Bytes::new()))
+            .unwrap();
+        let resp = Next::new(stack).run(req).await.unwrap();
+
+        assert_eq!(
+            resp.headers()
+                .get("x-frame-options")
+                .and_then(|v| v.to_str().ok()),
+            Some("DENY"),
+        );
+        assert!(resp.headers().contains_key("content-security-policy"));
+    }
+
+    #[tokio::test]
+    async fn no_security_headers_when_disabled() {
+        let mut mws = build_request_middleware(&compression_off(), None, &sh_off());
+        mws.push(Arc::new(TerminalOk));
+        let stack: Arc<[Arc<dyn Middleware>]> = Arc::from(mws);
+
+        let req = Request::builder()
+            .uri("/x")
+            .body(Full::new(Bytes::new()))
+            .unwrap();
+        let resp = Next::new(stack).run(req).await.unwrap();
+
+        assert!(resp.headers().get("x-frame-options").is_none());
+    }
+
+    #[tokio::test]
     async fn preflight_short_circuits_with_204() {
         let cors = cors_allow_all();
-        let mut mws = build_request_middleware(&compression_off(), Some(&cors));
+        let mut mws = build_request_middleware(&compression_off(), Some(&cors), &sh_off());
         mws.push(Arc::new(PanicTerminal));
         let stack: Arc<[Arc<dyn Middleware>]> = Arc::from(mws);
 

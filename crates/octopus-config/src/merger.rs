@@ -84,6 +84,8 @@ fn merge_gateway_config(base: GatewayConfig, overlay: GatewayConfig) -> GatewayC
         compression: overlay.compression,
         internal_route_prefix: overlay.internal_route_prefix.or(base.internal_route_prefix),
         probes: overlay.probes,
+        enforce_sni_check: overlay.enforce_sni_check,
+        security_headers: overlay.security_headers,
     }
 }
 
@@ -151,6 +153,8 @@ mod tests {
                 compression: CompressionConfig::default(),
                 internal_route_prefix: None,
                 probes: crate::types::ProbeConfig::default(),
+                enforce_sni_check: true,
+                security_headers: Default::default(),
             },
             upstreams: vec![],
             routes: vec![],

@@ -34,6 +34,8 @@ impl ConfigBuilder {
             compression: crate::types::CompressionConfig::default(),
             internal_route_prefix: Some("__".to_string()),
             probes: crate::types::ProbeConfig::default(),
+            enforce_sni_check: true,
+            security_headers: Default::default(),
         });
         gateway.listen = addr;
         self

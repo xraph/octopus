@@ -144,6 +144,22 @@ pub struct GatewayConfig {
     /// Kubernetes-style health probe endpoints (`/livez`, `/readyz`, `/startupz`).
     #[serde(default)]
     pub probes: ProbeConfig,
+
+    /// Reject requests whose `Host`/`:authority` disagrees with the negotiated
+    /// TLS SNI (anti host-spoofing; also the correct HTTP/2 connection-coalescing
+    /// response). Default `true`; disable for deployments that terminate TLS at an
+    /// upstream proxy or where `Host` legitimately differs from the SNI.
+    #[serde(default = "default_sni_check")]
+    pub enforce_sni_check: bool,
+
+    /// Security response headers added to every response. Disabled by default;
+    /// set `enabled: true` to add HSTS, CSP, `X-Frame-Options`, etc.
+    #[serde(default)]
+    pub security_headers: SecurityHeadersConfig,
+}
+
+fn default_sni_check() -> bool {
+    true
 }
 
 fn default_internal_prefix() -> Option<String> {
@@ -269,6 +285,47 @@ impl Default for CompressionConfig {
                 "zstd".to_string(), // zstd (fast)
                 "gzip".to_string(), // gzip (universal)
             ],
+        }
+    }
+}
+
+/// Security response headers configuration.
+///
+/// When `enabled`, the gateway adds the configured headers to every response.
+/// Each header is added only when its value is set; the defaults below are
+/// applied when the section is enabled without overrides. Disabled by default.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct SecurityHeadersConfig {
+    /// Add the configured security headers to every response.
+    pub enabled: bool,
+    /// `Strict-Transport-Security` value (set to `null` to omit).
+    pub hsts: Option<String>,
+    /// `Content-Security-Policy` value.
+    pub csp: Option<String>,
+    /// `X-Frame-Options` value (e.g. `DENY`, `SAMEORIGIN`).
+    pub frame_options: Option<String>,
+    /// `X-Content-Type-Options` value (e.g. `nosniff`).
+    pub content_type_options: Option<String>,
+    /// `X-XSS-Protection` value.
+    pub xss_protection: Option<String>,
+    /// `Referrer-Policy` value.
+    pub referrer_policy: Option<String>,
+    /// `Permissions-Policy` value.
+    pub permissions_policy: Option<String>,
+}
+
+impl Default for SecurityHeadersConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            hsts: Some("max-age=31536000; includeSubDomains".to_string()),
+            csp: Some("default-src 'self'".to_string()),
+            frame_options: Some("DENY".to_string()),
+            content_type_options: Some("nosniff".to_string()),
+            xss_protection: Some("1; mode=block".to_string()),
+            referrer_policy: Some("strict-origin-when-cross-origin".to_string()),
+            permissions_policy: None,
         }
     }
 }
@@ -739,6 +796,8 @@ pub enum AuthProviderConfig {
     ForwardAuth(ForwardAuthProviderConfig),
     /// Mutual TLS client certificate
     Mtls(MtlsProviderConfig),
+    /// RFC 7662 OAuth2 token introspection (e.g. an authsome identity service)
+    Introspection(IntrospectionProviderConfig),
 }
 
 /// JWT provider configuration
@@ -846,6 +905,50 @@ pub struct ForwardAuthProviderConfig {
     pub cache_ttl: Option<Duration>,
 }
 
+/// RFC 7662 token introspection provider configuration.
+///
+/// Verifies an incoming bearer token by POSTing it (form-encoded, per RFC 7662)
+/// to an external introspection endpoint and reading the returned identity. This
+/// is the standards-based way to accept opaque tokens issued by an external
+/// identity service (e.g. authsome's `/v1/introspect`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct IntrospectionProviderConfig {
+    /// Introspection endpoint URL (RFC 7662).
+    pub endpoint: String,
+    /// Header to extract the incoming token from.
+    #[serde(default = "default_auth_header")]
+    pub header_name: String,
+    /// Token prefix to strip before introspection (e.g. "Bearer ").
+    #[serde(default = "default_token_prefix")]
+    pub token_prefix: String,
+    /// Optional client id for HTTP Basic auth to the introspection endpoint.
+    #[serde(default)]
+    pub client_id: Option<String>,
+    /// Optional client secret for HTTP Basic auth to the introspection endpoint.
+    #[serde(default)]
+    pub client_secret: Option<String>,
+    /// Response JSON field used as the principal id (default "sub").
+    #[serde(default = "default_subject_field")]
+    pub subject_field: String,
+    /// Response JSON field carrying roles (array or comma-delimited string). Optional.
+    #[serde(default)]
+    pub roles_field: Option<String>,
+    /// Response JSON field carrying scopes (RFC 7662 `scope` is space-delimited).
+    #[serde(default = "default_scope_field")]
+    pub scope_field: String,
+    /// Introspection request timeout.
+    #[serde(default = "default_forward_auth_timeout", with = "humantime_serde")]
+    pub timeout: Duration,
+}
+
+fn default_subject_field() -> String {
+    "sub".to_string()
+}
+
+fn default_scope_field() -> String {
+    "scope".to_string()
+}
+
 /// mTLS provider configuration
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MtlsProviderConfig {
@@ -913,6 +1016,9 @@ pub struct AuthzConfig {
     pub global_rules: Vec<AuthzRule>,
     /// OPA integration settings
     pub opa: Option<OpaConfig>,
+    /// OpenID AuthZEN PDP integration settings (e.g. a warden authorization service)
+    #[serde(default)]
+    pub authzen: Option<AuthZenConfig>,
 }
 
 impl Default for AuthzConfig {
@@ -921,6 +1027,7 @@ impl Default for AuthzConfig {
             engine: AuthzEngine::Rhai,
             global_rules: vec![],
             opa: None,
+            authzen: None,
         }
     }
 }
@@ -935,6 +1042,8 @@ pub enum AuthzEngine {
     Opa,
     /// Both: Rhai for inline rules, OPA for complex policies
     Both,
+    /// External OpenID AuthZEN Authorization API PDP (e.g. warden)
+    AuthZen,
 }
 
 /// OPA (Open Policy Agent) configuration
@@ -951,6 +1060,41 @@ pub struct OpaConfig {
     /// Allow request if OPA is unreachable
     #[serde(default)]
     pub fail_open: bool,
+}
+
+/// OpenID AuthZEN Authorization API 1.0 PDP configuration.
+///
+/// Sends `{subject, action, resource, context}` evaluation requests to a
+/// standards-compliant Policy Decision Point and reads a boolean `decision`.
+/// This is the vendor-neutral way to delegate authorization to an external
+/// engine (e.g. warden).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AuthZenConfig {
+    /// AuthZEN evaluation endpoint (e.g. `https://pdp.internal/access/v1/evaluation`).
+    pub endpoint: String,
+    /// Subject type sent in the evaluation request (default "user").
+    #[serde(default = "default_authzen_subject_type")]
+    pub subject_type: String,
+    /// Resource type sent in the evaluation request (default "route").
+    #[serde(default = "default_authzen_resource_type")]
+    pub resource_type: String,
+    /// Request timeout.
+    #[serde(default = "default_opa_timeout", with = "humantime_serde")]
+    pub timeout: Duration,
+    /// Cache decisions for this duration.
+    #[serde(default = "default_opa_cache_ttl", with = "humantime_serde")]
+    pub cache_ttl: Duration,
+    /// Allow the request if the PDP is unreachable.
+    #[serde(default)]
+    pub fail_open: bool,
+}
+
+fn default_authzen_subject_type() -> String {
+    "user".to_string()
+}
+
+fn default_authzen_resource_type() -> String {
+    "route".to_string()
 }
 
 /// Authorization rule

@@ -148,6 +148,8 @@ mod tests {
                 compression: CompressionConfig::default(),
                 internal_route_prefix: Some("__".to_string()),
                 probes: ProbeConfig::default(),
+                enforce_sni_check: true,
+                security_headers: Default::default(),
             },
             upstreams: vec![],
             routes: vec![],

@@ -23,9 +23,10 @@ today.
 <Callout type="warn" title="There is no `middleware:` config array">
   The top-level [`Config`](/docs/configuration) struct has **no** `middleware`
   list. You cannot declare an arbitrary, ordered middleware stack in YAML. The
-  global chain is assembled in code and currently contains at most two entries:
-  compression and the auth gateway. Older examples that show a
-  `middleware: [...]` array are inaccurate — that key is silently ignored.
+  global chain is assembled in code from typed config — currently compression,
+  CORS (when a top-level `cors` block is set), security headers (when
+  `gateway.security_headers.enabled`), and the auth gateway. Older examples that
+  show a `middleware: [...]` array are inaccurate — that key is silently ignored.
 </Callout>
 
 ## The real middleware model
@@ -102,29 +103,21 @@ There is no always-on logging, timeout, or request-ID *middleware* in the chain.
 Request access logging is emitted via tracing from the runtime/proxy layers, not
 from the `logging` middleware.
 
-## Per-route settings: configured, surfaced, but not enforced at request time
+## Per-route settings
 
 [Routes](/docs/configuration/routes) accept `rate_limit` and `cors` blocks, and
-there is a top-level `cors` block. These parse and validate, and the per-route
-values are stored on the router's `Route` and surfaced through the admin API,
-the Kubernetes translation layer, and FARP-generated routes. **However, none of
-them are enforced on the live HTTP request path today.**
+there is a top-level `cors` block. **CORS is enforced** (see
+[CORS](/docs/middleware/cors)): setting the top-level `cors` block adds the CORS
+middleware to the chain, and `routes[].cors` overrides it per route. Per-route
+**rate limiting is not yet enforced**.
 
-<Callout type="warn" title="CORS and per-route rate limiting are not active">
-  - **`routes[].rate_limit`** — accepted and stored on the route, but no
-    middleware reads it during request handling. No `429` is produced from this
-    setting.
-  - **`routes[].cors`** — accepted and stored (and copied into request
-    extensions as `MatchedRouteCors`), but the `Cors` middleware that would
-    consume it is **not** in the runtime chain, so no CORS headers or preflight
-    responses are produced.
-  - **top-level `cors`** (`CorsGlobalConfig`) — defined in the config schema but
-    **not read anywhere** in the runtime.
-
-  These are documented here so you don't rely on behavior that isn't wired up.
-  To enforce CORS or rate limiting today you must embed the middleware yourself
-  via the [builder](#using-middleware-programmatically) or place an external
-  proxy in front of the gateway.
+<Callout type="warn" title="Per-route rate limiting is not active yet">
+  **`routes[].rate_limit`** is accepted and stored on the route (and surfaced
+  through the admin API, the Kubernetes translation layer, and FARP-generated
+  routes), but no middleware reads it during request handling — no `429` is
+  produced from this setting yet. To rate limit today, embed a rate-limit
+  middleware via the [builder](#using-middleware-programmatically) or place an
+  external proxy in front of the gateway.
 </Callout>
 
 ## Catalogue of built-in middleware
@@ -141,13 +134,13 @@ below lists every implementation and its **current wiring status**:
 | --- | --- | --- | --- |
 | Auth gateway | `auth_gateway.rs` | **Configurable (global)** | Added when `auth_providers` non-empty or `auth.global_enforce`. See [Authentication gateway](/docs/middleware/authentication). |
 | Compression | (`octopus-compression`) | **Configurable (global)** | Added when `gateway.compression.enabled`. See [Compression](/docs/middleware/compression). The crate also has its own `compression.rs`, used only via the builder. |
-| CORS | `cors.rs` | Builder-only | Consumes `MatchedRouteCors`, but not in the runtime chain. See [CORS](/docs/middleware/cors). |
+| CORS | `cors.rs` | **Configurable (global + per-route)** | Added from the global `cors` config; applies `routes[].cors` overrides via `MatchedRouteCors`. See [CORS](/docs/middleware/cors). |
 | Rate limit | `rate_limit.rs` | Builder-only | Token-bucket / fixed-window; `routes[].rate_limit` is stored but not enforced. See [Rate limiting](/docs/middleware/rate-limiting). |
 | Request ID | `request_id.rs` | Builder-only | Distinct from the proxy's always-on `X-Request-ID` injection. |
 | Timeout | `timeout.rs` | Builder-only | Per-request timeout. Note `gateway.request_timeout` and `routes[].timeout` are applied by the proxy/router, not this middleware. |
 | Logging | `logging.rs` | Builder-only | Request/response access logging. |
 | Caching | `caching.rs` | Builder-only | In-memory response cache with TTL + FIFO eviction. |
-| Security headers | `security_headers.rs` | Builder-only | Adds HSTS, X-Frame-Options, CSP, etc. |
+| Security headers | `security_headers.rs` | **Configurable** (`gateway.security_headers`) | Adds HSTS, X-Frame-Options, CSP, etc. when `enabled: true`. See [Security headers](/docs/configuration/gateway#security-headers). |
 | WAF | `waf.rs` | Builder-only | SQLi/XSS pattern detection, block/log modes. |
 | IP filter | `ip_filter.rs` | Builder-only | Allowlist/blocklist by IP/CIDR. |
 | Forward auth | `forward_auth.rs` | Builder-only | Delegates auth to an external subrequest. Also available as an auth *provider* — see [Authentication](/docs/configuration/auth). |
@@ -191,8 +184,9 @@ let chain = MiddlewareBuilder::new()
 ```
 
 This is the only way to activate the builder-only middleware today. The standard
-gateway binary does **not** call the builder; it assembles its (compression +
-auth) chain directly.
+gateway binary does **not** call the builder; it assembles its chain directly:
+compression, CORS, security headers (when `gateway.security_headers.enabled`),
+then the auth gateway.
 
 ## Pages in this section
 
@@ -209,7 +203,7 @@ auth) chain directly.
   />
   <Card
     title="CORS"
-    description="The CORS middleware and config schema — and why it is not enforced today."
+    description="The CORS middleware and config schema — global policy plus per-route overrides."
     href="/docs/middleware/cors"
   />
   <Card

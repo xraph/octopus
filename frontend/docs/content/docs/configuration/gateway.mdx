@@ -37,6 +37,7 @@ gateway:
 | `internal_route_prefix` | string | `"__"` | Prefix for built-in internal endpoints (admin, metrics, FARP), e.g. `/__admin`, `/__metrics`. |
 | `probes` | object | enabled | Kubernetes-style health probe endpoints. See [below](#probes). |
 | `enforce_sni_check` | boolean | `true` | Reject requests whose `Host` / `:authority` disagrees with the negotiated TLS SNI (anti host-spoofing). Disable when TLS is terminated upstream or `Host` legitimately differs from the SNI. |
+| `security_headers` | object | disabled | Security response headers (HSTS, CSP, `X-Frame-Options`, …). See [below](#security-headers). |
 
 <Callout type="info">
   `pre_stop_delay` and `enforce_sni_check` are most relevant in Kubernetes and TLS deployments
@@ -89,3 +90,32 @@ gateway:
 | `level` | integer | `6` | Compression level (1–9 for gzip/zstd, 1–11 for brotli). |
 | `min_size` | integer (bytes) | `1024` | Minimum response size before compression is applied. |
 | `algorithms` | array of string | `["br", "zstd", "gzip"]` | Preferred algorithms in order of preference. Valid values: `br` (brotli), `zstd`, `gzip`. |
+
+## Security headers
+
+The `gateway.security_headers` object adds common security headers to every response via the
+security-headers middleware. It is **disabled by default**; set `enabled: true` to turn it on. Each
+header is emitted only when its value is set (set a field to `null` to omit it); the defaults below
+apply when enabled without overrides.
+
+```yaml
+gateway:
+  listen: "0.0.0.0:8080"
+  security_headers:
+    enabled: true
+    frame_options: DENY
+    content_type_options: nosniff
+    referrer_policy: strict-origin-when-cross-origin
+    # hsts, csp, xss_protection, permissions_policy are also supported
+```
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `enabled` | boolean | `false` | Add the configured security headers to every response. |
+| `hsts` | string | `max-age=31536000; includeSubDomains` | `Strict-Transport-Security` value. |
+| `csp` | string | `default-src 'self'` | `Content-Security-Policy` value. |
+| `frame_options` | string | `DENY` | `X-Frame-Options` value. |
+| `content_type_options` | string | `nosniff` | `X-Content-Type-Options` value. |
+| `xss_protection` | string | `1; mode=block` | `X-XSS-Protection` value. |
+| `referrer_policy` | string | `strict-origin-when-cross-origin` | `Referrer-Policy` value. |
+| `permissions_policy` | string | none | `Permissions-Policy` value. |
