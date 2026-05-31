@@ -1,6 +1,7 @@
 // import { DocsLayout } from 'fumadocs-ui/layouts/docs';
 import { DocsLayout } from 'fumadocs-ui/layouts/notebook';
 import { baseOptions, linkItems, logo } from '@/lib/layout.shared';
+import { OctopusWordmark } from '@/components/brand/octopus-logo';
 import { source } from '@/lib/source';
 import { AISearchTrigger } from '@/components/ai/search';
 import 'katex/dist/katex.min.css';
@@ -19,9 +20,7 @@ export default function Layout({ children }: LayoutProps<'/docs'>) {
         title: (
           <>
             {logo}
-            <span className="font-medium [.uwu_&]:hidden max-md:hidden">
-              Octopus
-            </span>
+            <OctopusWordmark className="[.uwu_&]:hidden max-md:hidden" />
           </>
         ),
       }}

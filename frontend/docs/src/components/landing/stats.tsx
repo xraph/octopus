@@ -19,9 +19,9 @@ export const Stats = () => {
   return (
     <section
       ref={timelineRef}
-      className="flex min-h-screen flex-col justify-center gap-12 bg-black px-5 py-28 text-white md:px-0"
+      className="flex min-h-screen flex-col justify-center gap-12 bg-black py-28 text-white"
     >
-      <div className="mx-auto max-w-2xl px-4 text-center">
+      <div className="mx-auto w-full max-w-7xl px-6 text-center">
         <h2 className="text-4xl font-black tracking-tighter md:text-5xl">
           Built for{' '}
           <span className="bg-gradient-to-r from-violet-300 to-fuchsia-400 bg-clip-text text-transparent">
@@ -33,7 +33,7 @@ export const Stats = () => {
         </p>
       </div>
 
-      <div className="mx-auto w-full max-w-6xl px-4">
+      <div className="mx-auto w-full max-w-7xl px-6">
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           {/* Main chart */}
           <TimelineAnimation

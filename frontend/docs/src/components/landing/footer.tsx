@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import React from 'react'
 import { ArrowRight } from 'lucide-react'
+import { OctopusMark } from '@/components/brand/octopus-logo'
 
 const columns = [
   {
@@ -39,24 +40,14 @@ const columns = [
 
 export const Footer = () => {
   return (
-    <footer className="border-t border-zinc-900 bg-zinc-950 px-8 py-20 text-white">
+    <footer className="border-t border-zinc-900 bg-zinc-950 px-6 py-20 text-white">
       <div className="mx-auto grid max-w-7xl grid-cols-1 items-end gap-12 md:grid-cols-2">
         <div>
           <h2 className="mb-4 text-6xl font-light tracking-tighter md:text-7xl">
             Route smarter.
           </h2>
-          <div className="mt-12 flex items-center gap-4">
-            <div className="flex size-12 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-500">
-              <svg
-                width="24"
-                height="24"
-                viewBox="0 0 24 24"
-                xmlns="http://www.w3.org/2000/svg"
-                aria-label="Octopus logo"
-              >
-                <circle cx={12} cy={12} r={10} fill="white" />
-              </svg>
-            </div>
+          <div className="mt-12 flex items-center gap-3">
+            <OctopusMark size={44} idSuffix="footer" title="Octopus" />
             <span className="text-2xl font-semibold tracking-tight">
               Octopus
             </span>

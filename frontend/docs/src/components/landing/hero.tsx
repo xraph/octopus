@@ -46,7 +46,7 @@ export const Hero = () => {
       <div className="pointer-events-none absolute inset-0 z-[1] bg-gradient-to-b from-black/50 via-black/20 to-black/80" />
 
       {/* Main hero content */}
-      <div className="relative z-10 grow flex flex-col justify-center px-8 md:px-24 pt-32 pb-12">
+      <div className="relative z-10 mx-auto flex w-full max-w-7xl grow flex-col justify-center px-6 pt-32 pb-12">
         <TimelineAnimation
           once
           animationNum={1}
@@ -107,7 +107,7 @@ export const Hero = () => {
       </div>
 
       {/* Capability strip */}
-      <div className="relative z-10 p-6 md:p-12 flex justify-start md:justify-end">
+      <div className="relative z-10 mx-auto flex w-full max-w-7xl justify-start px-6 py-6 md:justify-end md:py-12">
         <TimelineAnimation
           once
           animationNum={5}
