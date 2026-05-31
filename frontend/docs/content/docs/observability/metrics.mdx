@@ -30,8 +30,8 @@ Prometheus exposition format.
   The path is **fixed** to `/metrics` (and its `/__metrics` alias). The
   [`observability.metrics.endpoint`](/docs/configuration/observability) field is
   part of the config schema but does not currently re-route the metrics handler,
-  and `observability.metrics.enabled` does not gate it — the endpoint responds
-  regardless. Treat those fields as informational for now and scrape `/metrics`.
+  so scrape `/metrics` on the listen port. `observability.metrics.enabled` **does**
+  gate the endpoint: when set to `false`, `/metrics` returns `404`.
 </Callout>
 
 ## Metrics emitted

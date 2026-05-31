@@ -54,6 +54,16 @@ impl std::fmt::Debug for AdminHandler {
     }
 }
 
+/// Whether the Prometheus metrics endpoint should be served, per
+/// `observability.metrics.enabled`. Defaults to `true` when no config is present
+/// (e.g. handlers built without config).
+fn metrics_enabled(config: &Option<Arc<octopus_config::Config>>) -> bool {
+    config
+        .as_ref()
+        .map(|c| c.observability.metrics.enabled)
+        .unwrap_or(true)
+}
+
 impl AdminHandler {
     /// Build an AppState populated with real data sources
     #[allow(clippy::too_many_arguments)]
@@ -175,8 +185,14 @@ impl AdminHandler {
     pub async fn handle(&self, method: &Method, path: &str) -> Result<Response<Full<Bytes>>> {
         debug!(method = %method, path = %path, "Handling admin route via Axum router");
 
-        // Handle Prometheus metrics endpoint separately (not part of Axum router)
+        // Handle Prometheus metrics endpoint separately (not part of Axum router).
         if path == "/metrics" || path == "/__metrics" {
+            if !metrics_enabled(&self.app_state.config) {
+                return Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .body(Full::new(Bytes::new()))
+                    .map_err(|e| Error::InvalidRequest(format!("Failed to build response: {e}")));
+            }
             return self.metrics_endpoint();
         }
 
@@ -229,5 +245,27 @@ impl AdminHandler {
             .header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
             .body(Full::new(Bytes::from(metrics_text)))
             .map_err(|e| Error::InvalidRequest(format!("Failed to build response: {e}")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use octopus_config::ConfigBuilder;
+
+    #[test]
+    fn metrics_enabled_defaults_true_without_config() {
+        assert!(metrics_enabled(&None));
+    }
+
+    #[test]
+    fn metrics_enabled_reflects_config() {
+        let mut cfg = ConfigBuilder::new()
+            .listen("127.0.0.1:8080".parse().unwrap())
+            .build()
+            .unwrap();
+        assert!(metrics_enabled(&Some(Arc::new(cfg.clone()))));
+        cfg.observability.metrics.enabled = false;
+        assert!(!metrics_enabled(&Some(Arc::new(cfg))));
     }
 }
