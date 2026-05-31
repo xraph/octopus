@@ -165,7 +165,7 @@ pub async fn api_upstream_update_handler(
     };
 
     // The path name is authoritative.
-    cfg.name = name.clone();
+    cfg.name.clone_from(&name);
     router.register_upstream(build_cluster(&cfg));
     tracing::info!("Updated upstream cluster '{name}'");
 

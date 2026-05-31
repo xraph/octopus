@@ -81,6 +81,58 @@ spec:
                 description: Authorization rule expression.
                 nullable: true
                 type: string
+              convention:
+                description: Convention for deriving the backend from the request host (multi-tenant subdomain routing). When set, this route becomes a single wildcard route (`*.<baseDomain>`) whose upstream is derived per request from the host.
+                nullable: true
+                properties:
+                  backendStrategy:
+                    description: 'Backend load-balancing: `ServiceDNS` (default) routes to the cluster Service DNS name; `EndpointSlice` watches the Service''s EndpointSlices and balances across pod IPs directly.'
+                    nullable: true
+                    type: string
+                  baseDomain:
+                    description: Base domain, e.g. `platform.com`. The route matches `*.<baseDomain>`.
+                    type: string
+                  defaultService:
+                    description: Service name to use when `layout` has no `service` entry.
+                    nullable: true
+                    type: string
+                  layout:
+                    description: 'Label roles for the tenant prefix, left to right. Recognized values: `service`, `namespace` (alias `tenant`), `ignore`. For example `["service","namespace"]` maps `orders.acme.platform.com` to Service `orders` in namespace `acme`.'
+                    items:
+                      type: string
+                    type: array
+                  port:
+                    description: Upstream port for the derived Service (default 80).
+                    format: uint16
+                    minimum: 0.0
+                    nullable: true
+                    type: integer
+                  script:
+                    description: Optional inline Rhai script mapping `host` → `#{namespace, service[, port]}`, overriding the label `layout` when it returns a mapping (otherwise the layout is used). Receives the request `host` as a string variable.
+                    nullable: true
+                    type: string
+                  scriptRef:
+                    description: Load the host-resolution Rhai script from a ConfigMap (ignored when an inline `script` is set). Cross-namespace refs require a `ReferenceGrant`.
+                    nullable: true
+                    properties:
+                      key:
+                        description: Data key within the ConfigMap.
+                        type: string
+                      name:
+                        description: ConfigMap name.
+                        type: string
+                      namespace:
+                        description: ConfigMap namespace (defaults to the route's namespace).
+                        nullable: true
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
+                required:
+                - baseDomain
+                - layout
+                type: object
               methods:
                 default: []
                 description: HTTP methods this route matches (empty = all).

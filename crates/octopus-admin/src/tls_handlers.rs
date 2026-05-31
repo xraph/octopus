@@ -159,7 +159,7 @@ pub async fn api_tls_reload_handler(State(state): State<Arc<AppState>>) -> impl 
         .config
         .as_ref()
         .and_then(|c| c.gateway.tls.as_ref())
-        .map_or(false, |t| t.enable_cert_reload);
+        .is_some_and(|t| t.enable_cert_reload);
 
     Json(serde_json::json!({
         "success": true,
@@ -191,7 +191,7 @@ pub async fn api_tls_cert_upload_handler(
     let valid = Pem::iter_from_buffer(req.cert_pem.as_bytes())
         .next()
         .and_then(Result::ok)
-        .map_or(false, |pem| pem.parse_x509().is_ok());
+        .is_some_and(|pem| pem.parse_x509().is_ok());
     if !valid {
         return (
             StatusCode::BAD_REQUEST,

@@ -23,7 +23,7 @@ pub trait Authorizer: Send + Sync + std::fmt::Debug {
     /// Render a decision for the given authorization context.
     async fn evaluate(&self, ctx: &AuthzContext) -> anyhow::Result<AuthzDecision>;
     /// Short identifier for logging (e.g. "opa", "authzen").
-    fn name(&self) -> &str;
+    fn name(&self) -> &'static str;
 }
 
 // ── AuthZEN information model (request/response) ────────────────────────────
@@ -205,7 +205,7 @@ impl Authorizer for AuthZenClient {
         Ok(result)
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "authzen"
     }
 }
@@ -217,7 +217,7 @@ impl Authorizer for crate::opa::OpaClient {
         Self::evaluate(self, ctx).await
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "opa"
     }
 }
