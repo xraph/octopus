@@ -63,7 +63,10 @@ pub use header_transform::{HeaderRules, HeaderTransform, HeaderTransformConfig};
 pub use ip_filter::{IpFilter, IpFilterConfig, IpPattern};
 pub use jwt::{Claims, JwtAuth, JwtConfig};
 pub use logging::{LoggingConfig, RequestLogger};
-pub use rate_limit::{KeyExtractor, RateLimit, RateLimitConfig, RateLimitStrategy, RouteRateLimit};
+pub use rate_limit::{
+    KeyExtractor, MatchedRouteRateLimit, RateLimit, RateLimitConfig, RateLimitStrategy,
+    RouteRateLimit,
+};
 pub use redirect::{Redirect, RedirectConfig, RedirectRule, TrailingSlash};
 pub use request_id::{IdGenerator, RequestId, RequestIdConfig};
 pub use request_limits::{RequestLimits, RequestLimitsConfig};
@@ -73,7 +76,7 @@ pub use timeout::{Timeout, TimeoutConfig};
 pub use waf::{Waf, WafConfig, WafMode, WafRule, WafTarget};
 
 #[cfg(feature = "distributed")]
-pub use rate_limit::{DistributedRateLimit, DistributedRateLimitConfig};
+pub use rate_limit::{DistributedRateLimit, DistributedRateLimitConfig, RouteRateLimiter};
 
 // Re-export core middleware types from octopus-core
 pub use octopus_core::middleware::{Middleware, Next};

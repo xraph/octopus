@@ -21,9 +21,11 @@ octopus-k8s = { path = "../octopus-k8s", optional = true }
 octopus-metrics = { path = "../octopus-metrics" }
 octopus-compression = { path = "../octopus-compression" }
 octopus-tls = { path = "../octopus-tls" }
+octopus-scripting = { path = "../octopus-scripting" }
 octopus-protocols = { path = "../octopus-protocols" }
 octopus-plugin-runtime = { path = "../octopus-plugin-runtime" }
-octopus-middleware = { path = "../octopus-middleware" }
+octopus-middleware = { path = "../octopus-middleware", features = ["distributed"] }
+octopus-state = { path = "../octopus-state" }
 octopus-auth = { path = "../octopus-auth" }
 
 # Async
@@ -55,6 +57,7 @@ tracing-subscriber.workspace = true
 bytes.workspace = true
 parking_lot.workspace = true
 arc-swap.workspace = true
+moka.workspace = true
 num_cpus.workspace = true
 
 # Serialization

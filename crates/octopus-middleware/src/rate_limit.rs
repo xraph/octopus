@@ -28,6 +28,22 @@ type SharedLimiter = Arc<GovernorRateLimiter<NotKeyed, InMemoryState, DefaultClo
 /// A map of keys (path or identity) to their dedicated limiters.
 type KeyedLimiters = Arc<DashMap<String, SharedLimiter>>;
 
+/// Per-route rate-limit hint attached to a request after route matching.
+///
+/// The runtime inserts this (from `routes[].rate_limit`) once a route is matched,
+/// so the route-aware rate limiter can enforce a per-route window without
+/// re-matching. The `key` is the route's path pattern, giving a route-wide cap
+/// regardless of the concrete request path (so wildcard routes share one window).
+#[derive(Debug, Clone)]
+pub struct MatchedRouteRateLimit {
+    /// Stable key identifying the route (its path pattern).
+    pub key: String,
+    /// Maximum requests allowed per window for this route.
+    pub requests_per_window: u32,
+    /// Window duration.
+    pub window_size: Duration,
+}
+
 /// Rate limit strategy
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RateLimitStrategy {
@@ -509,6 +525,96 @@ impl<B: octopus_state::StateBackend> Middleware for DistributedRateLimit<B> {
     }
 }
 
+/// Per-route distributed rate limiter.
+///
+/// Reads [`MatchedRouteRateLimit`] from the request (attached by the runtime from
+/// `routes[].rate_limit`) and enforces a fixed window per route using a
+/// [`octopus_state::StateBackend`], so the limit holds across replicas. Requests
+/// for routes without a rate limit pass through untouched.
+#[cfg(feature = "distributed")]
+#[derive(Clone)]
+pub struct RouteRateLimiter<B: octopus_state::StateBackend> {
+    backend: B,
+    key_prefix: String,
+}
+
+#[cfg(feature = "distributed")]
+impl<B: octopus_state::StateBackend> RouteRateLimiter<B> {
+    /// Create a route rate limiter backed by `backend`.
+    pub fn new(backend: B) -> Self {
+        Self {
+            backend,
+            key_prefix: "octopus:rrl".to_string(),
+        }
+    }
+
+    /// Build the `429 Too Many Requests` response.
+    fn limited_response(window: Duration, limit: u32) -> Response<Body> {
+        Response::builder()
+            .status(StatusCode::TOO_MANY_REQUESTS)
+            .header("Content-Type", "application/json")
+            .header("Retry-After", window.as_secs().to_string())
+            .header("X-RateLimit-Limit", limit.to_string())
+            .header("X-RateLimit-Remaining", "0")
+            .header("X-RateLimit-Reset", window.as_secs().to_string())
+            .body(Full::new(Bytes::from(
+                serde_json::json!({
+                    "error": "rate_limit_exceeded",
+                    "message": "Rate limit exceeded",
+                    "retry_after": window.as_secs()
+                })
+                .to_string(),
+            )))
+            .expect("Failed to build rate limit response")
+    }
+}
+
+#[cfg(feature = "distributed")]
+impl<B: octopus_state::StateBackend> fmt::Debug for RouteRateLimiter<B> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RouteRateLimiter")
+            .field("key_prefix", &self.key_prefix)
+            .finish()
+    }
+}
+
+#[cfg(feature = "distributed")]
+#[async_trait]
+impl<B: octopus_state::StateBackend> Middleware for RouteRateLimiter<B> {
+    async fn call(&self, req: Request<Body>, next: Next) -> Result<Response<Body>> {
+        if let Some(rl) = req.extensions().get::<MatchedRouteRateLimit>().cloned() {
+            let window_secs = rl.window_size.as_secs().max(1);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let window_id = now / window_secs;
+            let key = format!("{}:{}:{}", self.key_prefix, rl.key, window_id);
+            let ttl = rl.window_size + Duration::from_secs(5);
+
+            let count = self
+                .backend
+                .increment(&key, 1, Some(ttl))
+                .await
+                .map_err(|e| octopus_core::Error::Internal(format!("State backend error: {e}")))?;
+
+            if count > rl.requests_per_window as i64 {
+                tracing::warn!(
+                    route = %rl.key,
+                    count,
+                    limit = rl.requests_per_window,
+                    "Per-route rate limit exceeded"
+                );
+                return Ok(Self::limited_response(
+                    rl.window_size,
+                    rl.requests_per_window,
+                ));
+            }
+        }
+        next.run(req).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -961,6 +1067,76 @@ mod tests {
             let body = response.into_body().collect().await.unwrap().to_bytes();
             let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
             assert_eq!(json["message"], "Custom limit hit");
+        }
+
+        use crate::rate_limit::{MatchedRouteRateLimit, RouteRateLimiter};
+
+        fn rl_ext(key: &str, limit: u32, window: Duration) -> MatchedRouteRateLimit {
+            MatchedRouteRateLimit {
+                key: key.to_string(),
+                requests_per_window: limit,
+                window_size: window,
+            }
+        }
+
+        #[tokio::test]
+        async fn test_route_rate_limit_enforces_per_route_window() {
+            let rl = RouteRateLimiter::new(InMemoryBackend::new());
+            let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(rl), Arc::new(TestHandler)]);
+
+            // limit 2/60s for route "/api/*"; concrete paths share the route window.
+            for path in ["/api/users/1", "/api/users/2"] {
+                let next = Next::new(stack.clone());
+                let mut req = Request::builder().uri(path).body(Body::from("")).unwrap();
+                req.extensions_mut()
+                    .insert(rl_ext("/api/*", 2, Duration::from_secs(60)));
+                assert_eq!(next.run(req).await.unwrap().status(), StatusCode::OK);
+            }
+
+            let next = Next::new(stack.clone());
+            let mut req = Request::builder()
+                .uri("/api/users/3")
+                .body(Body::from(""))
+                .unwrap();
+            req.extensions_mut()
+                .insert(rl_ext("/api/*", 2, Duration::from_secs(60)));
+            let resp = next.run(req).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+            assert!(resp.headers().contains_key("Retry-After"));
+        }
+
+        #[tokio::test]
+        async fn test_route_rate_limit_passes_through_without_extension() {
+            let rl = RouteRateLimiter::new(InMemoryBackend::new());
+            let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(rl), Arc::new(TestHandler)]);
+
+            for _ in 0..10 {
+                let next = Next::new(stack.clone());
+                let req = Request::builder().uri("/x").body(Body::from("")).unwrap();
+                assert_eq!(next.run(req).await.unwrap().status(), StatusCode::OK);
+            }
+        }
+
+        #[tokio::test]
+        async fn test_route_rate_limit_independent_per_route_key() {
+            let rl = RouteRateLimiter::new(InMemoryBackend::new());
+            let stack: Arc<[Arc<dyn Middleware>]> = Arc::new([Arc::new(rl), Arc::new(TestHandler)]);
+
+            // Exhaust /a (limit 1).
+            for expected in [StatusCode::OK, StatusCode::TOO_MANY_REQUESTS] {
+                let next = Next::new(stack.clone());
+                let mut req = Request::builder().uri("/a").body(Body::from("")).unwrap();
+                req.extensions_mut()
+                    .insert(rl_ext("/a", 1, Duration::from_secs(60)));
+                assert_eq!(next.run(req).await.unwrap().status(), expected);
+            }
+
+            // /b has its own window.
+            let next = Next::new(stack.clone());
+            let mut req = Request::builder().uri("/b").body(Body::from("")).unwrap();
+            req.extensions_mut()
+                .insert(rl_ext("/b", 1, Duration::from_secs(60)));
+            assert_eq!(next.run(req).await.unwrap().status(), StatusCode::OK);
         }
     }
 }

@@ -24,9 +24,10 @@ today.
   The top-level [`Config`](/docs/configuration) struct has **no** `middleware`
   list. You cannot declare an arbitrary, ordered middleware stack in YAML. The
   global chain is assembled in code from typed config — currently compression,
-  CORS (when a top-level `cors` block is set), security headers (when
-  `gateway.security_headers.enabled`), and the auth gateway. Older examples that
-  show a `middleware: [...]` array are inaccurate — that key is silently ignored.
+  CORS (when a top-level `cors` block is set), per-route rate limiting (when any
+  route sets `rate_limit`), security headers (when `gateway.security_headers.enabled`),
+  and the auth gateway. Older examples that show a `middleware: [...]` array are
+  inaccurate — that key is silently ignored.
 </Callout>
 
 ## The real middleware model
@@ -106,19 +107,16 @@ from the `logging` middleware.
 ## Per-route settings
 
 [Routes](/docs/configuration/routes) accept `rate_limit` and `cors` blocks, and
-there is a top-level `cors` block. **CORS is enforced** (see
-[CORS](/docs/middleware/cors)): setting the top-level `cors` block adds the CORS
-middleware to the chain, and `routes[].cors` overrides it per route. Per-route
-**rate limiting is not yet enforced**.
+there is a top-level `cors` block — all **enforced** today:
 
-<Callout type="warn" title="Per-route rate limiting is not active yet">
-  **`routes[].rate_limit`** is accepted and stored on the route (and surfaced
-  through the admin API, the Kubernetes translation layer, and FARP-generated
-  routes), but no middleware reads it during request handling — no `429` is
-  produced from this setting yet. To rate limit today, embed a rate-limit
-  middleware via the [builder](#using-middleware-programmatically) or place an
-  external proxy in front of the gateway.
-</Callout>
+- **`routes[].rate_limit`** — a route-aware limiter (`RouteRateLimiter`) enforces a
+  fixed window per route (keyed by the route's path) and returns `429` with
+  `Retry-After` when exceeded. It is added to the chain whenever any route declares
+  a limit. The counter is currently in-process (per replica); a shared backend for
+  cross-replica limits is planned.
+- **`routes[].cors`** / top-level **`cors`** — see [CORS](/docs/middleware/cors):
+  setting the top-level `cors` block adds the CORS middleware, and `routes[].cors`
+  overrides it per route.
 
 ## Catalogue of built-in middleware
 
@@ -135,7 +133,7 @@ below lists every implementation and its **current wiring status**:
 | Auth gateway | `auth_gateway.rs` | **Configurable (global)** | Added when `auth_providers` non-empty or `auth.global_enforce`. See [Authentication gateway](/docs/middleware/authentication). |
 | Compression | (`octopus-compression`) | **Configurable (global)** | Added when `gateway.compression.enabled`. See [Compression](/docs/middleware/compression). The crate also has its own `compression.rs`, used only via the builder. |
 | CORS | `cors.rs` | **Configurable (global + per-route)** | Added from the global `cors` config; applies `routes[].cors` overrides via `MatchedRouteCors`. See [CORS](/docs/middleware/cors). |
-| Rate limit | `rate_limit.rs` | Builder-only | Token-bucket / fixed-window; `routes[].rate_limit` is stored but not enforced. See [Rate limiting](/docs/middleware/rate-limiting). |
+| Rate limit | `rate_limit.rs` | **Configurable (per-route)** | `routes[].rate_limit` is enforced by a route-aware limiter (`RouteRateLimiter`, in-process state backend). The token-bucket `RateLimit` is builder-only. See [Rate limiting](/docs/middleware/rate-limiting). |
 | Request ID | `request_id.rs` | Builder-only | Distinct from the proxy's always-on `X-Request-ID` injection. |
 | Timeout | `timeout.rs` | Builder-only | Per-request timeout. Note `gateway.request_timeout` and `routes[].timeout` are applied by the proxy/router, not this middleware. |
 | Logging | `logging.rs` | Builder-only | Request/response access logging. |

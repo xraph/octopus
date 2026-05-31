@@ -1,84 +1,33 @@
 ---
 title: Rate limiting
-description: The rate-limit middleware (token-bucket / fixed-window), its strategies and responses — and the honest status of the route config.
+description: Per-route rate limiting (enforced), plus the builder-only token-bucket limiter and the distributed, state-backed variant.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
 # Rate limiting
 
-Octopus ships a full-featured rate-limit middleware (`octopus_middleware::RateLimit`)
-built on the `governor` token-bucket library, plus an optional distributed
-backend. The route schema exposes a per-route `rate_limit` block.
+A route's `routes[].rate_limit` block is **enforced**: when any route declares a limit, the gateway
+adds a route-aware limiter (`RouteRateLimiter`) to the request chain. The crate also ships a
+full-featured token-bucket limiter (`octopus_middleware::RateLimit`) and a distributed variant for
+embedded/library use.
 
-<Callout type="error" title="Rate limiting is not enforced by the gateway today">
-  The `RateLimit` middleware is **not** part of the runtime's global chain, and
-  the per-route `routes[].rate_limit` block is **not** enforced on the request
-  path. Specifically:
+<Callout type="info" title="What is enforced">
+  **`routes[].rate_limit` is enforced.** The route-aware limiter applies a **fixed window per route**
+  — keyed by the route's path pattern, so all requests matching a route (including wildcard paths)
+  share one window — and returns `429 Too Many Requests` when the window is exceeded. The counter is
+  currently held in an **in-process** state store (per replica); a shared backend (e.g. Redis) for
+  cross-replica limits is planned.
 
-  - `routes[].rate_limit` is parsed and stored on the router's route (and
-    surfaced via the admin API, the Kubernetes translation layer, and FARP), but
-    no middleware reads it when handling a request. No `429` is produced from it.
-  - The [auth gateway](/docs/middleware/authentication) sets an identity-based
-    rate-limit key (`AuthRateLimitKey`) in request extensions, but nothing in the
-    chain consumes it.
-  - Per-API-key `rate_limit` (on `auth_providers` API-key entries) is carried as
-    a principal attribute but is not enforced either.
-
-  This page documents the middleware and the schema for completeness and for
-  embedded/library use. To enforce rate limiting today, embed the middleware via
-  the [builder](/docs/middleware#using-middleware-programmatically) or use an
-  external proxy.
+  Not yet enforced: identity-based limiting (the auth gateway sets an `AuthRateLimitKey`, but nothing
+  consumes it) and per-API-key `rate_limit` on `auth_providers` entries.
 </Callout>
 
-## What the middleware does (when embedded)
-
-When present in a chain, `RateLimit` admits or rejects each request against a
-quota. On rejection it returns **`429 Too Many Requests`** with:
-
-- `Retry-After: <window seconds>`
-- `X-RateLimit-Limit: <requests_per_window>`
-- `X-RateLimit-Remaining: 0`
-- `X-RateLimit-Reset: <window seconds>`
-- a JSON body containing the error message and `retry_after`.
-
-### Strategies
-
-| Strategy | Behavior |
-| --- | --- |
-| Token bucket (default) | Allows bursts up to the quota, refilled over the window |
-| Fixed window | Simple per-window counter |
-
-### Key extractors
-
-The limiter can be keyed by:
-
-| Extractor | Key source |
-| --- | --- |
-| Global (default) | A single shared limiter for all traffic |
-| IP | Client IP address |
-| Header | A configured header (e.g. an API key header) |
-| Path | The request path |
-| Identity | The `AuthRateLimitKey` set by the auth gateway (`user:<id>`) |
-
-It also supports a map of per-path limits with independent quotas.
-
-### Distributed rate limiting
-
-With the crate's `distributed` feature enabled, a `DistributedRateLimit`
-variant backs the limiter with shared state (`octopus-state`) so limits hold
-across multiple gateway replicas. This is a compile-time feature of the
-middleware crate, not a gateway config toggle.
-
-## Configuration schema
-
-The per-route block validates and parses today even though it is not enforced.
-
-### `routes[].rate_limit`
+## `routes[].rate_limit`
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `requests_per_window` | int | _(required)_ | Requests allowed per window |
+| `requests_per_window` | int | _(required)_ | Requests allowed per window for the route |
 | `window_size` | duration | _(required)_ | Window length (e.g. `1s`, `1m`) |
 
 ```yaml
@@ -91,15 +40,42 @@ routes:
       window_size: 1m
 ```
 
-<Callout type="info">
-  Durations use humantime syntax (`1s`, `500ms`, `1m`, `1h`). Until enforcement
-  is wired up, treat this block as metadata only — surfaced in the admin API but
-  not applied to live traffic.
-</Callout>
+Durations use humantime syntax (`1s`, `500ms`, `1m`, `1h`). On the `429` response the limiter sets
+`Retry-After`, `X-RateLimit-Limit`, `X-RateLimit-Remaining: 0`, and `X-RateLimit-Reset`.
+
+## The builder-only token-bucket limiter
+
+`octopus_middleware::RateLimit` (built on the `governor` library) is a richer limiter available for
+embedded/library use via the [builder](/docs/middleware#using-middleware-programmatically) — it is
+**not** wired into the gateway binary. It supports:
+
+### Strategies
+
+| Strategy | Behavior |
+| --- | --- |
+| Token bucket (default) | Allows bursts up to the quota, refilled over the window |
+| Fixed window | Simple per-window counter |
+
+### Key extractors
+
+| Extractor | Key source |
+| --- | --- |
+| Global (default) | A single shared limiter for all traffic |
+| IP | Client IP address |
+| Header | A configured header (e.g. an API-key header) |
+| Path | The request path |
+| Identity | The `AuthRateLimitKey` set by the auth gateway (`user:<id>`) |
+
+It also supports a map of per-path limits with independent quotas.
+
+### Distributed variant
+
+With the crate's `distributed` feature, `DistributedRateLimit` backs a single limit with shared
+state (`octopus-state`) so it holds across replicas. The route-aware `RouteRateLimiter` that enforces
+`routes[].rate_limit` uses the same state abstraction (with an in-process backend today).
 
 ## Related
 
 - [Routes](/docs/configuration/routes) — where `routes[].rate_limit` lives.
-- [Authentication gateway](/docs/middleware/authentication) — sets the identity key.
-- [State](/docs/state) — the shared store behind distributed rate limiting.
-- [Middleware overview](/docs/middleware) — why rate limiting isn't in the chain.
+- [State](/docs/state) — the store behind shared rate-limit counters.
+- [Middleware overview](/docs/middleware) — the request-chain order and wiring status.

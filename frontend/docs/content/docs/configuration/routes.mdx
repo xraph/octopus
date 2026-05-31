@@ -57,11 +57,12 @@ routes:
 
 ## Rate limit
 
-<Callout type="warn">
-  Per-route `cors` **is enforced**: the CORS middleware runs in the chain and applies the matched
-  route's override, falling back to the global [`cors`](/docs/configuration/auth) policy. Per-route
-  `rate_limit` is currently **parsed and stored but not enforced** at request time — see
-  [Middleware](/docs/middleware) for what is wired today.
+<Callout type="info">
+  Per-route `rate_limit` and `cors` are **enforced**. `rate_limit` applies a fixed window per route
+  (keyed by the route's path), returning `429` with `Retry-After` when exceeded — note it currently
+  uses an in-process counter (per replica; a shared backend for cross-replica limits is planned).
+  `cors` applies the matched route's override when a top-level [`cors`](/docs/configuration/auth)
+  block is set (which adds the CORS middleware to the chain). See [Middleware](/docs/middleware).
 </Callout>
 
 The per-route `rate_limit` object uses a fixed window: a number of requests allowed per window

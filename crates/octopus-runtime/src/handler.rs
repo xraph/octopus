@@ -7,14 +7,14 @@ use bytes::Bytes;
 use http::{Request, Response, StatusCode};
 use http_body_util::{BodyExt, Either, Full};
 use hyper::body::Incoming;
-use octopus_core::{middleware::Middleware, Error, Result};
+use octopus_core::{middleware::Middleware, Error, Result, UpstreamCluster, UpstreamInstance};
 use octopus_farp::FarpApiHandler;
 use octopus_health::{CircuitBreaker, HealthTracker};
 use octopus_metrics::{ActivityLog, MetricsCollector, RequestOutcome};
 use octopus_plugin_runtime::PluginManager;
 use octopus_protocols::ProtocolHandler;
 use octopus_proxy::HttpProxy;
-use octopus_router::Router;
+use octopus_router::{BackendStrategy, Convention, ConventionTarget, Route, Router};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -31,6 +31,23 @@ fn buffered(data: impl Into<Bytes>) -> Body {
 /// Create a streaming body from an Incoming response
 fn streaming(incoming: Incoming) -> Body {
     Either::Right(incoming)
+}
+
+/// Process-wide Rhai engine for convention host-resolution scripts. Shared so
+/// the AST cache persists across requests (scripts compile once).
+fn host_script_engine() -> &'static octopus_scripting::RhaiEngine {
+    static ENGINE: std::sync::OnceLock<octopus_scripting::RhaiEngine> = std::sync::OnceLock::new();
+    ENGINE.get_or_init(octopus_scripting::RhaiEngine::new)
+}
+
+/// Bounded, TTL'd cache of `host` → resolved `ConventionTarget`, so the per-request
+/// Rhai/label derivation runs once per host. Bounded capacity defends against
+/// unbounded growth from random subdomains; the short TTL propagates CRD edits.
+fn new_resolve_cache() -> moka::sync::Cache<String, ConventionTarget> {
+    moka::sync::Cache::builder()
+        .max_capacity(10_000)
+        .time_to_live(std::time::Duration::from_secs(60))
+        .build()
 }
 
 /// HTTP request handler
@@ -57,6 +74,14 @@ pub struct RequestHandler {
     lifecycle: Option<LifecycleState>,
     /// Resolved probe endpoint paths.
     probe_routes: ProbeRoutes,
+    /// Whether to reject requests where `Host`/`:authority` disagrees with the
+    /// negotiated TLS SNI (anti host-spoofing). Default `true`.
+    enforce_sni_check: bool,
+    /// Bounded cache of `host` → resolved convention target (skips re-derivation).
+    resolve_cache: moka::sync::Cache<String, ConventionTarget>,
+    /// Keeps EndpointSlice-backed convention upstreams' pod instances live
+    /// (`None` = no Kubernetes watcher; convention falls back to Service DNS).
+    backend_watcher: Option<Arc<dyn octopus_core::BackendWatcher>>,
 }
 
 impl std::fmt::Debug for RequestHandler {
@@ -97,6 +122,9 @@ impl RequestHandler {
             admin_auth_provider: None,
             lifecycle: None,
             probe_routes: ProbeRoutes::default(),
+            enforce_sni_check: true,
+            resolve_cache: new_resolve_cache(),
+            backend_watcher: None,
         }
     }
 
@@ -143,6 +171,9 @@ impl RequestHandler {
             admin_auth_provider: None,
             lifecycle: None,
             probe_routes: ProbeRoutes::default(),
+            enforce_sni_check: true,
+            resolve_cache: new_resolve_cache(),
+            backend_watcher: None,
         }
     }
 
@@ -193,6 +224,9 @@ impl RequestHandler {
             admin_auth_provider: None,
             lifecycle: None,
             probe_routes: ProbeRoutes::default(),
+            enforce_sni_check: true,
+            resolve_cache: new_resolve_cache(),
+            backend_watcher: None,
         }
     }
 
@@ -224,6 +258,9 @@ impl RequestHandler {
             admin_auth_provider: None,
             lifecycle: None,
             probe_routes: ProbeRoutes::default(),
+            enforce_sni_check: true,
+            resolve_cache: new_resolve_cache(),
+            backend_watcher: None,
         }
     }
 
@@ -262,6 +299,141 @@ impl RequestHandler {
     /// Get the activity log
     pub fn activity_log(&self) -> Arc<ActivityLog> {
         Arc::clone(&self.activity_log)
+    }
+
+    /// Extract the request host used for host-aware routing.
+    ///
+    /// Prefers the HTTP/2 `:authority` (exposed as the URI host), falling back
+    /// to the `Host` header. Any port is stripped and the result is lowercased;
+    /// empty when no host is present. Host-agnostic routes match any value.
+    fn request_host<B>(req: &Request<B>) -> String {
+        if let Some(h) = req.uri().host() {
+            return h.to_ascii_lowercase();
+        }
+        req.headers()
+            .get("host")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.split(':').next().unwrap_or(s).trim().to_ascii_lowercase())
+            .unwrap_or_default()
+    }
+
+    /// Whether the request host is consistent with the negotiated TLS SNI.
+    /// An empty SNI (none negotiated, or plaintext) is treated as consistent.
+    /// Used to reject `Host`/`:authority` values that disagree with the SNI a
+    /// connection was established for (anti host-spoofing / HTTP/2 coalescing).
+    fn host_matches_sni(host: &str, sni: &str) -> bool {
+        sni.is_empty() || host == sni
+    }
+
+    /// Enable/disable the `Host == TLS SNI` anti-spoof check (default enabled).
+    pub fn set_enforce_sni_check(&mut self, enforce: bool) {
+        self.enforce_sni_check = enforce;
+    }
+
+    /// Install the backend watcher used to keep EndpointSlice-backed convention
+    /// upstreams' pod instances live.
+    pub fn set_backend_watcher(&mut self, watcher: Arc<dyn octopus_core::BackendWatcher>) {
+        self.backend_watcher = Some(watcher);
+    }
+
+    /// Whether to reject this request because its `Host`/`:authority` disagrees
+    /// with the negotiated TLS SNI. Always `false` when the check is disabled or
+    /// no SNI was negotiated.
+    fn should_reject_sni(&self, host: &str, sni: Option<&str>) -> bool {
+        if !self.enforce_sni_check {
+            return false;
+        }
+        match sni {
+            Some(s) => !Self::host_matches_sni(host, s),
+            None => false,
+        }
+    }
+
+    /// Service-DNS key for a convention target: `<svc>.<ns>.svc` (matching the
+    /// Gateway API translation's backend address form).
+    fn convention_key(target: &ConventionTarget) -> String {
+        format!("{}.{}.svc", target.service, target.namespace)
+    }
+
+    /// Build the Service-DNS upstream (key + single-instance cluster) for a
+    /// convention target.
+    fn convention_upstream(target: &ConventionTarget) -> (String, UpstreamCluster) {
+        let key = Self::convention_key(target);
+        let mut cluster = UpstreamCluster::new(key.clone());
+        cluster.add_instance(UpstreamInstance::new(
+            format!("{key}:{}", target.port),
+            key.clone(),
+            target.port,
+        ));
+        (key, cluster)
+    }
+
+    /// Idempotently register the Service-DNS upstream for a convention target,
+    /// returning its cluster key.
+    fn register_convention_upstream(&self, target: ConventionTarget) -> String {
+        let key = Self::convention_key(&target);
+        self.router
+            .ensure_upstream(&key, move || Self::convention_upstream(&target).1);
+        key
+    }
+
+    /// Resolve the upstream cluster name for a matched route and request host.
+    ///
+    /// For convention routes the `{namespace, service}` target is derived from
+    /// the host — first via the optional Rhai `script` (which may decline by
+    /// returning `()`), then falling back to the label `layout` — and a
+    /// Service-DNS upstream is lazily registered. Other routes use their declared
+    /// upstream name unchanged.
+    async fn resolve_upstream(&self, route: &Route, host: &str) -> Result<String> {
+        let Some(conv) = &route.convention else {
+            return Ok(route.upstream_name.clone());
+        };
+
+        // Cache the (expensive) derivation per host; always run the cheap
+        // registration/keep-alive step below so cached hits stay live.
+        let target = match self.resolve_cache.get(host) {
+            Some(t) => t,
+            None => {
+                let t = self.derive_target(conv, host).await?;
+                self.resolve_cache.insert(host.to_string(), t.clone());
+                t
+            }
+        };
+
+        // EndpointSlice backend: delegate to the watcher, which keeps the
+        // cluster's pod instances live. Falls back to Service DNS when no
+        // watcher is installed (e.g. running without the Kubernetes operator).
+        if matches!(conv.backend, BackendStrategy::EndpointSlice) {
+            if let Some(watcher) = &self.backend_watcher {
+                let key = Self::convention_key(&target);
+                watcher.ensure(&target.namespace, &target.service, target.port, &key);
+                return Ok(key);
+            }
+        }
+        Ok(self.register_convention_upstream(target))
+    }
+
+    /// Derive the convention target for a host: optional Rhai script first
+    /// (which may decline by returning `()`), then the label `layout`.
+    async fn derive_target(&self, conv: &Convention, host: &str) -> Result<ConventionTarget> {
+        if let Some(script) = &conv.script {
+            match host_script_engine().resolve_host(script, host).await {
+                Ok(Some(res)) => {
+                    return Ok(ConventionTarget {
+                        namespace: res.namespace,
+                        service: res.service,
+                        port: res.port.unwrap_or(conv.port),
+                    });
+                }
+                Ok(None) => {} // script declined → fall back to label parsing
+                Err(e) => {
+                    warn!(host = %host, error = %e, "host-resolution script failed; falling back to convention layout");
+                }
+            }
+        }
+        conv.resolve(host).ok_or_else(|| {
+            Error::RouteNotFound(format!("host '{host}' does not match the route convention"))
+        })
     }
 
     /// Handle an incoming HTTP request (from Hyper with Incoming body)
@@ -507,8 +679,31 @@ impl RequestHandler {
             }
         }
 
+        let host = Self::request_host(&req);
+
+        // Anti host-spoofing: reject when the Host/:authority disagrees with the
+        // TLS SNI the connection was established for (also the correct response
+        // for HTTP/2 connection-coalescing across tenants). Gated by config.
+        let sni = req
+            .extensions()
+            .get::<octopus_tls::TlsSniName>()
+            .and_then(|s| s.0.as_deref());
+        if self.should_reject_sni(&host, sni) {
+            warn!(host = %host, sni = ?sni, "Host does not match TLS SNI; returning 421");
+            let resp = Response::builder()
+                .status(StatusCode::MISDIRECTED_REQUEST)
+                .body(buffered(Bytes::from_static(
+                    b"Misdirected Request: Host does not match TLS SNI",
+                )))
+                .map_err(|e| Error::Config(e.to_string()))?;
+            return Ok(resp);
+        }
+
         // Pre-match route to inject auth context into extensions for auth middleware
-        if let Ok(route) = self.router.find_route(req.method(), req.uri().path()) {
+        if let Ok(route) = self
+            .router
+            .find_route(&host, req.method(), req.uri().path())
+        {
             req.extensions_mut()
                 .insert(octopus_middleware::MatchedRouteAuth {
                     auth_provider: route.auth_provider.clone(),
@@ -529,6 +724,17 @@ impl RequestHandler {
                         allowed_headers: cors_override.allowed_headers.clone(),
                         allow_credentials: cors_override.allow_credentials,
                         max_age: cors_override.max_age,
+                    });
+            }
+
+            // Inject the per-route rate limit (keyed by the route's path pattern)
+            // so the route-aware rate limiter can enforce it.
+            if let Some((requests_per_window, window_size)) = route.rate_limit {
+                req.extensions_mut()
+                    .insert(octopus_middleware::MatchedRouteRateLimit {
+                        key: route.path.clone(),
+                        requests_per_window,
+                        window_size,
                     });
             }
         }
@@ -583,18 +789,20 @@ impl RequestHandler {
     async fn handle_websocket_upgrade(&self, mut req: Request<Incoming>) -> Result<Response<Body>> {
         let method = req.method().clone();
         let path = req.uri().path().to_string();
+        let host = Self::request_host(&req);
 
         tracing::info!(path = %path, "WebSocket upgrade request");
 
         // 1. Route match
-        let route = self.router.find_route(&method, &path).map_err(|e| {
+        let route = self.router.find_route(&host, &method, &path).map_err(|e| {
             tracing::warn!(path = %path, error = %e, "No route for WebSocket");
             Error::RouteNotFound(format!("No route for WebSocket path: {path}"))
         })?;
 
-        // Select upstream instance
-        let instance = self.router.select_instance(&route.upstream_name).map_err(|e| {
-            tracing::error!(upstream = %route.upstream_name, error = %e, "No upstream for WebSocket");
+        // Select upstream instance (convention routes derive it from the host)
+        let upstream_key = self.resolve_upstream(&route, &host).await?;
+        let instance = self.router.select_instance(&upstream_key).map_err(|e| {
+            tracing::error!(upstream = %upstream_key, error = %e, "No upstream for WebSocket");
             Error::NoHealthyUpstream
         })?;
 
@@ -728,24 +936,23 @@ impl RequestHandler {
     async fn handle_sse_proxy(&self, req: Request<Incoming>) -> Result<Response<Body>> {
         let method = req.method().clone();
         let path = req.uri().path().to_string();
+        let host = Self::request_host(&req);
         let query = req.uri().query().map(|q| q.to_string());
 
         tracing::info!(path = %path, method = %method, "SSE streaming proxy request");
 
         // Route match
-        let route = self.router.find_route(&method, &path).map_err(|e| {
+        let route = self.router.find_route(&host, &method, &path).map_err(|e| {
             tracing::warn!(path = %path, error = %e, "No route for SSE");
             Error::RouteNotFound(format!("No route for SSE path: {path}"))
         })?;
 
-        // Select upstream instance
-        let instance = self
-            .router
-            .select_instance(&route.upstream_name)
-            .map_err(|e| {
-                tracing::error!(upstream = %route.upstream_name, error = %e, "No upstream for SSE");
-                Error::NoHealthyUpstream
-            })?;
+        // Select upstream instance (convention routes derive it from the host)
+        let upstream_key = self.resolve_upstream(&route, &host).await?;
+        let instance = self.router.select_instance(&upstream_key).map_err(|e| {
+            tracing::error!(upstream = %upstream_key, error = %e, "No upstream for SSE");
+            Error::NoHealthyUpstream
+        })?;
 
         // Build upstream URL with path rewriting + query string
         let mut upstream_path = path.clone();
@@ -910,6 +1117,7 @@ impl RequestHandler {
     async fn handle_grpc_proxy(&self, req: Request<Incoming>) -> Result<Response<Body>> {
         let method = req.method().clone();
         let path = req.uri().path().to_string();
+        let host = Self::request_host(&req);
 
         info!(path = %path, "gRPC proxy request");
 
@@ -937,18 +1145,16 @@ impl RequestHandler {
         debug!(service = %service, method = %rpc_method, "Routing gRPC request");
 
         // Route to upstream — first check explicit gRPC services map, then fall back to router
-        let route = self.router.find_route(&method, &path).map_err(|e| {
+        let route = self.router.find_route(&host, &method, &path).map_err(|e| {
             warn!(service = %service, error = %e, "No route for gRPC service");
             Error::RouteNotFound(format!("No route for gRPC service: {service}"))
         })?;
 
-        let instance = self
-            .router
-            .select_instance(&route.upstream_name)
-            .map_err(|e| {
-                error!(upstream = %route.upstream_name, error = %e, "No upstream for gRPC");
-                Error::NoHealthyUpstream
-            })?;
+        let upstream_key = self.resolve_upstream(&route, &host).await?;
+        let instance = self.router.select_instance(&upstream_key).map_err(|e| {
+            error!(upstream = %upstream_key, error = %e, "No upstream for gRPC");
+            Error::NoHealthyUpstream
+        })?;
 
         // Build upstream URL
         let upstream_base = instance.base_url();
@@ -1065,12 +1271,13 @@ impl RequestHandler {
         let start_time = Instant::now();
         let method = req.method().clone();
         let path = req.uri().path().to_string();
+        let host = Self::request_host(&req);
 
         // Track active connections
         self.metrics_collector.increment_active_connections();
 
         // Find matching route
-        let route = match self.router.find_route(&method, &path) {
+        let route = match self.router.find_route(&host, &method, &path) {
             Ok(route) => route,
             Err(e) => {
                 let latency = start_time.elapsed();
@@ -1102,8 +1309,9 @@ impl RequestHandler {
             "Route matched"
         );
 
-        // Get upstream instance
-        let instance = match self.router.select_instance(&route.upstream_name) {
+        // Get upstream instance (convention routes derive it from the host)
+        let upstream_key = self.resolve_upstream(&route, &host).await?;
+        let instance = match self.router.select_instance(&upstream_key) {
             Ok(instance) => instance,
             Err(e) => {
                 let latency = start_time.elapsed();
@@ -1268,5 +1476,244 @@ mod tests {
     async fn test_handler_creation() {
         let handler = create_test_handler();
         assert_eq!(handler.request_count.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn sni_check_respects_enforce_flag() {
+        let mut handler = create_test_handler();
+        // Enforced by default: mismatch rejects, match/no-SNI allowed.
+        assert!(handler.should_reject_sni("evil.com", Some("good.com")));
+        assert!(!handler.should_reject_sni("good.com", Some("good.com")));
+        assert!(!handler.should_reject_sni("anything.com", None));
+        // Disabled: never rejects, even on mismatch.
+        handler.set_enforce_sni_check(false);
+        assert!(!handler.should_reject_sni("evil.com", Some("good.com")));
+    }
+
+    #[test]
+    fn host_sni_anti_spoof_rules() {
+        // No SNI negotiated → cannot compare, allow.
+        assert!(RequestHandler::host_matches_sni("foo.acme.com", ""));
+        // Host equals SNI → allow.
+        assert!(RequestHandler::host_matches_sni(
+            "foo.acme.com",
+            "foo.acme.com"
+        ));
+        // Host disagrees with SNI → reject (spoof / coalescing mismatch).
+        assert!(!RequestHandler::host_matches_sni(
+            "evil.com",
+            "foo.acme.com"
+        ));
+    }
+
+    #[test]
+    fn convention_upstream_builds_service_dns_cluster() {
+        let target = ConventionTarget {
+            namespace: "acme".into(),
+            service: "orders".into(),
+            port: 8080,
+        };
+        let (key, cluster) = RequestHandler::convention_upstream(&target);
+        assert_eq!(key, "orders.acme.svc", "Service-DNS upstream key");
+        assert_eq!(cluster.name, "orders.acme.svc");
+        assert_eq!(cluster.instances.len(), 1);
+        assert_eq!(cluster.instances[0].address, "orders.acme.svc");
+        assert_eq!(cluster.instances[0].port, 8080);
+    }
+
+    #[tokio::test]
+    async fn resolve_upstream_passes_through_when_no_convention() {
+        let handler = create_test_handler();
+        let route = octopus_router::RouteBuilder::new()
+            .method(http::Method::GET)
+            .path("/x")
+            .upstream_name("declared-up")
+            .build()
+            .unwrap();
+        assert_eq!(
+            handler
+                .resolve_upstream(&route, "anything.com")
+                .await
+                .unwrap(),
+            "declared-up"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_upstream_derives_and_registers_convention_upstream() {
+        let handler = create_test_handler();
+        let conv = octopus_router::Convention {
+            base_suffix: ".platform.com".into(),
+            roles: vec![
+                octopus_router::LabelRole::Service,
+                octopus_router::LabelRole::Namespace,
+            ],
+            default_service: None,
+            port: 8080,
+            script: None,
+            backend: octopus_router::BackendStrategy::default(),
+        };
+        let route = octopus_router::RouteBuilder::new()
+            .method(http::Method::GET)
+            .path("/*rest")
+            .upstream_name("placeholder")
+            .host(octopus_router::HostMatch::Wildcard(".platform.com".into()))
+            .convention(Some(conv))
+            .build()
+            .unwrap();
+
+        let key = handler
+            .resolve_upstream(&route, "orders.acme.platform.com")
+            .await
+            .unwrap();
+        assert_eq!(key, "orders.acme.svc");
+        assert!(
+            handler.router.get_upstream("orders.acme.svc").is_some(),
+            "convention upstream lazily registered"
+        );
+
+        // A host that doesn't fit the convention is rejected.
+        assert!(handler
+            .resolve_upstream(&route, "platform.com")
+            .await
+            .is_err());
+    }
+
+    fn convention_route_with_script(script: &str) -> octopus_router::Route {
+        let conv = octopus_router::Convention {
+            base_suffix: ".platform.com".into(),
+            roles: vec![
+                octopus_router::LabelRole::Service,
+                octopus_router::LabelRole::Namespace,
+            ],
+            default_service: None,
+            port: 8080,
+            script: Some(script.into()),
+            backend: octopus_router::BackendStrategy::default(),
+        };
+        octopus_router::RouteBuilder::new()
+            .method(http::Method::GET)
+            .path("/*rest")
+            .upstream_name("placeholder")
+            .host(octopus_router::HostMatch::Wildcard(".platform.com".into()))
+            .convention(Some(conv))
+            .build()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn resolve_upstream_rhai_script_overrides_layout() {
+        let handler = create_test_handler();
+        let route = convention_route_with_script(
+            r#"#{ namespace: "override-ns", service: "override-svc" }"#,
+        );
+        // The script wins over the label layout; port falls back to the convention's.
+        let key = handler
+            .resolve_upstream(&route, "orders.acme.platform.com")
+            .await
+            .unwrap();
+        assert_eq!(key, "override-svc.override-ns.svc");
+        assert!(handler
+            .router
+            .get_upstream("override-svc.override-ns.svc")
+            .is_some());
+    }
+
+    #[derive(Debug, Default)]
+    struct FakeBackendWatcher {
+        calls: std::sync::Mutex<Vec<(String, String, u16, String)>>,
+    }
+    impl octopus_core::BackendWatcher for FakeBackendWatcher {
+        fn ensure(&self, namespace: &str, service: &str, port: u16, key: &str) {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((namespace.into(), service.into(), port, key.into()));
+        }
+    }
+
+    #[tokio::test]
+    async fn endpointslice_convention_delegates_to_backend_watcher() {
+        let mut handler = create_test_handler();
+        let fake = Arc::new(FakeBackendWatcher::default());
+        handler.set_backend_watcher(fake.clone());
+
+        let conv = octopus_router::Convention {
+            base_suffix: ".platform.com".into(),
+            roles: vec![
+                octopus_router::LabelRole::Service,
+                octopus_router::LabelRole::Namespace,
+            ],
+            default_service: None,
+            port: 8080,
+            script: None,
+            backend: BackendStrategy::EndpointSlice,
+        };
+        let route = octopus_router::RouteBuilder::new()
+            .method(http::Method::GET)
+            .path("/*rest")
+            .upstream_name("placeholder")
+            .host(octopus_router::HostMatch::Wildcard(".platform.com".into()))
+            .convention(Some(conv))
+            .build()
+            .unwrap();
+
+        let key = handler
+            .resolve_upstream(&route, "orders.acme.platform.com")
+            .await
+            .unwrap();
+        assert_eq!(key, "orders.acme.svc");
+
+        let calls = fake.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1, "EndpointSlice convention calls the watcher");
+        assert_eq!(
+            calls[0],
+            (
+                "acme".to_string(),
+                "orders".to_string(),
+                8080,
+                "orders.acme.svc".to_string()
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_cache_reuses_derivation_for_same_host() {
+        let handler = create_test_handler();
+        // uuid() yields a fresh value every derivation, so identical keys across
+        // two resolves of the same host prove the derivation was cached.
+        let route = convention_route_with_script(r#"#{ namespace: "ns", service: uuid() }"#);
+
+        let k1 = handler
+            .resolve_upstream(&route, "foo.platform.com")
+            .await
+            .unwrap();
+        let k2 = handler
+            .resolve_upstream(&route, "foo.platform.com")
+            .await
+            .unwrap();
+        assert_eq!(
+            k1, k2,
+            "second resolve served from cache (uuid not regenerated)"
+        );
+
+        // A different host derives fresh.
+        let k3 = handler
+            .resolve_upstream(&route, "bar.platform.com")
+            .await
+            .unwrap();
+        assert_ne!(k1, k3, "distinct hosts derive independently");
+    }
+
+    #[tokio::test]
+    async fn resolve_upstream_rhai_decline_falls_back_to_layout() {
+        let handler = create_test_handler();
+        // Script declines (returns unit) → label layout is used.
+        let route = convention_route_with_script("()");
+        let key = handler
+            .resolve_upstream(&route, "orders.acme.platform.com")
+            .await
+            .unwrap();
+        assert_eq!(key, "orders.acme.svc");
     }
 }

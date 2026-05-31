@@ -215,6 +215,17 @@ impl Server {
             "Request middleware chain built"
         );
 
+        // Add the route-aware rate limiter when any route declares a `rate_limit`.
+        // It reads the per-route `MatchedRouteRateLimit` extension injected by the
+        // handler and enforces a fixed window. Uses an in-process state backend;
+        // swap for a shared backend (e.g. Redis) for cross-replica limits.
+        if self.config.routes.iter().any(|r| r.rate_limit.is_some()) {
+            let backend = octopus_state::InMemoryBackend::new();
+            middlewares.push(Arc::new(octopus_middleware::RouteRateLimiter::new(backend))
+                as Arc<dyn octopus_core::middleware::Middleware>);
+            tracing::info!("Per-route rate limiting enabled");
+        }
+
         // Initialize auth providers from config and add auth middleware
         let mut auth_registry: Option<Arc<octopus_auth::AuthProviderRegistry>> = None;
         if !self.config.auth_providers.is_empty() || self.config.auth.global_enforce {
