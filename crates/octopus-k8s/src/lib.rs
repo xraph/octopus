@@ -30,6 +30,7 @@ pub mod refgrant;
 pub mod status;
 pub mod tls;
 pub mod translate;
+pub mod validate;
 
 pub use endpoints::EndpointWatchManager;
 pub use error::{K8sError, Result};

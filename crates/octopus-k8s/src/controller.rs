@@ -22,8 +22,11 @@ use crate::translate::{
 };
 use futures::TryStreamExt;
 use k8s_openapi::api::core::v1::{ConfigMap, Secret};
+use crate::status::{build_status, ReconcileOutcome};
+use crate::validate::{validate_policy, validate_route, validate_upstream};
 use kube::{
-    api::Api,
+    api::{Api, Patch, PatchParams},
+    core::NamespaceResourceScope,
     runtime::{watcher, watcher::Config as WatcherConfig},
     Client,
 };
@@ -31,7 +34,7 @@ use octopus_core::UpstreamCluster;
 use octopus_router::Router;
 use octopus_tls::SwappableTlsAcceptor;
 use std::collections::{BTreeMap, HashMap};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// Reconciles routing resources into the live [`Router`].
 pub struct RouteReconciler {
@@ -53,6 +56,9 @@ pub struct RouteReconciler {
     /// Gateway's listener hostnames change.
     httproutes: Mutex<HashMap<String, HTTPRouteSpec>>,
     grpcroutes: Mutex<HashMap<String, GRPCRouteSpec>>,
+    /// Kubernetes client, set once at startup. Enables `.status` writeback;
+    /// when absent (e.g. in unit tests) status patches are silently skipped.
+    client: OnceLock<Client>,
 }
 
 impl std::fmt::Debug for RouteReconciler {
@@ -74,7 +80,50 @@ impl RouteReconciler {
             gateways: Mutex::new(HashMap::new()),
             httproutes: Mutex::new(HashMap::new()),
             grpcroutes: Mutex::new(HashMap::new()),
+            client: OnceLock::new(),
         }
+    }
+
+    /// Provide the Kubernetes client used for `.status` writeback. Called once
+    /// at startup; subsequent calls are ignored.
+    pub fn set_client(&self, client: Client) {
+        let _ = self.client.set(client);
+    }
+
+    /// Patch the `.status` subresource of namespaced resource `K` named
+    /// `namespace/name` with the condition for `outcome`. A no-op when no client
+    /// has been set. Runs the actual patch on a spawned task so callers stay sync.
+    fn write_status<K>(
+        &self,
+        name: &str,
+        namespace: &str,
+        generation: Option<i64>,
+        outcome: &ReconcileOutcome,
+    ) where
+        K: kube::Resource<Scope = NamespaceResourceScope>
+            + Clone
+            + std::fmt::Debug
+            + serde::de::DeserializeOwned
+            + 'static,
+        <K as kube::Resource>::DynamicType: Default,
+    {
+        let Some(client) = self.client.get().cloned() else {
+            return;
+        };
+        let now = k8s_openapi::chrono::Utc::now().to_rfc3339();
+        let status = build_status(generation, outcome, &now);
+        let (name, namespace) = (name.to_string(), namespace.to_string());
+        let kind = std::any::type_name::<K>();
+        tokio::spawn(async move {
+            let api: Api<K> = Api::namespaced(client, &namespace);
+            let patch = serde_json::json!({ "status": status });
+            if let Err(e) = api
+                .patch_status(&name, &PatchParams::default(), &Patch::Merge(&patch))
+                .await
+            {
+                tracing::warn!(resource = kind, name = %name, namespace = %namespace, error = %e, "status writeback failed");
+            }
+        });
     }
 
     /// Seed static (config-file) routes so they survive merges with
@@ -452,6 +501,9 @@ pub async fn start(
     tls_acceptor: Option<SwappableTlsAcceptor>,
 ) -> crate::Result<()> {
     let client = Client::try_default().await?;
+    // Hand the client to the reconciler so it can write `.status` back onto
+    // reconciled Octopus resources.
+    reconciler.set_client(client.clone());
 
     let scopes: Vec<Option<String>> = if namespaces.is_empty() {
         vec![None]
@@ -794,7 +846,13 @@ fn on_octopus_route(rec: &RouteReconciler, event: watcher::Event<OctopusRoute>) 
     match event {
         watcher::Event::Apply(o) | watcher::Event::InitApply(o) => {
             if let Some((name, ns)) = ident(&o) {
-                rec.upsert_octopus_route(&name, &ns, &o.spec);
+                let outcome = validate_route(&o.spec);
+                if outcome == ReconcileOutcome::Accepted {
+                    rec.upsert_octopus_route(&name, &ns, &o.spec);
+                } else {
+                    rec.remove_octopus_route(&name, &ns);
+                }
+                rec.write_status::<OctopusRoute>(&name, &ns, o.metadata.generation, &outcome);
             }
         }
         watcher::Event::Delete(o) => {
@@ -810,7 +868,13 @@ fn on_octopus_upstream(rec: &RouteReconciler, event: watcher::Event<OctopusUpstr
     match event {
         watcher::Event::Apply(o) | watcher::Event::InitApply(o) => {
             if let Some((name, ns)) = ident(&o) {
-                rec.upsert_octopus_upstream(&name, &ns, &o.spec);
+                let outcome = validate_upstream(&o.spec);
+                if outcome == ReconcileOutcome::Accepted {
+                    rec.upsert_octopus_upstream(&name, &ns, &o.spec);
+                } else {
+                    rec.remove_octopus_upstream(&name, &ns);
+                }
+                rec.write_status::<OctopusUpstream>(&name, &ns, o.metadata.generation, &outcome);
             }
         }
         watcher::Event::Delete(o) => {
@@ -826,7 +890,13 @@ fn on_octopus_policy(rec: &RouteReconciler, event: watcher::Event<OctopusPolicy>
     match event {
         watcher::Event::Apply(o) | watcher::Event::InitApply(o) => {
             if let Some((name, ns)) = ident(&o) {
-                rec.upsert_policy(&name, &ns, &o.spec);
+                let outcome = validate_policy(&o.spec);
+                if outcome == ReconcileOutcome::Accepted {
+                    rec.upsert_policy(&name, &ns, &o.spec);
+                } else {
+                    rec.remove_policy(&name, &ns);
+                }
+                rec.write_status::<OctopusPolicy>(&name, &ns, o.metadata.generation, &outcome);
             }
         }
         watcher::Event::Delete(o) => {
