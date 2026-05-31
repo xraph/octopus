@@ -17,44 +17,48 @@ pub struct TlsAcceptor {
     _reloader: Option<Arc<CertificateReloader>>,
 }
 
+/// Build a rustls [`ServerConfig`] from [`TlsConfig`]: loads the cert/key files,
+/// configures optional mTLS client verification, and sets HTTP/2 + HTTP/1.1 ALPN.
+///
+/// Shared by [`TlsAcceptor::new`] and the file-based hot-reload path, so a
+/// reloaded config preserves mTLS and ALPN.
+pub fn build_server_config(config: &TlsConfig) -> Result<ServerConfig> {
+    crate::ensure_crypto_provider();
+    config.validate()?;
+
+    let certs = load_certificates(&config.cert_file)?;
+    let private_key = load_private_key(&config.key_file)?;
+
+    let mut server_config = if let Some(ref ca_file) = config.client_ca_file {
+        let mtls_cfg = crate::mtls::MtlsConfig {
+            ca_cert_file: ca_file.clone(),
+            require_client_cert: config.require_client_cert,
+        };
+        let verifier = mtls_cfg.build_client_verifier()?;
+        info!(
+            ca_file = %ca_file.display(),
+            require = config.require_client_cert,
+            "mTLS client authentication enabled"
+        );
+        ServerConfig::builder()
+            .with_client_cert_verifier(verifier)
+            .with_single_cert(certs, private_key)
+            .map_err(|e| Error::Config(format!("Failed to build TLS config with mTLS: {e}")))?
+    } else {
+        ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(certs, private_key)
+            .map_err(|e| Error::Config(format!("Failed to build TLS config: {e}")))?
+    };
+
+    server_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+    Ok(server_config)
+}
+
 impl TlsAcceptor {
     /// Create a new TLS acceptor from configuration
     pub fn new(config: &TlsConfig) -> Result<Self> {
-        crate::ensure_crypto_provider();
-
-        // Validate configuration
-        config.validate()?;
-
-        // Load certificates and private key
-        let certs = load_certificates(&config.cert_file)?;
-        let private_key = load_private_key(&config.key_file)?;
-
-        // Build TLS server configuration (with optional mTLS)
-        let mut server_config = if let Some(ref ca_file) = config.client_ca_file {
-            let mtls_cfg = crate::mtls::MtlsConfig {
-                ca_cert_file: ca_file.clone(),
-                require_client_cert: config.require_client_cert,
-            };
-            let verifier = mtls_cfg.build_client_verifier()?;
-            info!(
-                ca_file = %ca_file.display(),
-                require = config.require_client_cert,
-                "mTLS client authentication enabled"
-            );
-            ServerConfig::builder()
-                .with_client_cert_verifier(verifier)
-                .with_single_cert(certs, private_key)
-                .map_err(|e| Error::Config(format!("Failed to build TLS config with mTLS: {e}")))?
-        } else {
-            ServerConfig::builder()
-                .with_no_client_auth()
-                .with_single_cert(certs, private_key)
-                .map_err(|e| Error::Config(format!("Failed to build TLS config: {e}")))?
-        };
-
-        // Configure ALPN protocols (HTTP/1.1 and HTTP/2)
-        server_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-
+        let server_config = build_server_config(config)?;
         let inner = RustlsAcceptor::from(Arc::new(server_config));
 
         // Set up certificate reloading if enabled
@@ -122,6 +126,23 @@ where
     let certs = server_conn.peer_certificates()?;
     let cert_der = certs.first()?;
     extract_cn_from_der(cert_der.as_ref())
+}
+
+/// The TLS SNI server name negotiated for this connection.
+///
+/// Stored in request extensions so the gateway can route on it and reject
+/// `Host`/`:authority` values that disagree with the negotiated SNI (anti
+/// host-spoofing for multi-tenant routing). Lowercased by rustls.
+#[derive(Debug, Clone)]
+pub struct TlsSniName(pub Option<String>);
+
+/// Extract the negotiated SNI server name from a completed TLS handshake.
+pub fn extract_server_name<IO>(tls_stream: &tokio_rustls::server::TlsStream<IO>) -> Option<String>
+where
+    IO: AsyncRead + AsyncWrite + Unpin,
+{
+    let (_, server_conn) = tls_stream.get_ref();
+    server_conn.server_name().map(String::from)
 }
 
 /// Parse a DER-encoded X.509 certificate and extract the subject CN

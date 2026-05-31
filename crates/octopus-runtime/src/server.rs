@@ -22,8 +22,8 @@ use tokio::sync::RwLock;
 enum TlsMode {
     /// Plain HTTP.
     Plain,
-    /// File-based TLS from static configuration.
-    Static(octopus_tls::TlsAcceptor),
+    /// File-based TLS from static configuration (hot-swappable; reloads on cert change).
+    Static(octopus_tls::SwappableTlsAcceptor),
     /// Operator-managed, hot-swappable TLS (Gateway listener Secrets).
     Operator(octopus_tls::SwappableTlsAcceptor),
 }
@@ -73,6 +73,42 @@ async fn serve_io<IO>(
     {
         tracing::error!("Connection error: {}", e);
     }
+}
+
+/// Spawn a background task that reloads the file-based TLS certificate when the
+/// cert file's modification time changes, rebuilding the config (preserving mTLS
+/// and ALPN) and swapping it into the live acceptor with no downtime.
+fn spawn_cert_reload(
+    acceptor: octopus_tls::SwappableTlsAcceptor,
+    tls_cfg: octopus_tls::TlsConfig,
+    interval: Duration,
+) {
+    tokio::spawn(async move {
+        let cert_path = tls_cfg.cert_file.clone();
+        let mut last = std::fs::metadata(&cert_path)
+            .and_then(|m| m.modified())
+            .ok();
+        let mut ticker = tokio::time::interval(interval);
+        ticker.tick().await; // consume the immediate first tick
+        loop {
+            ticker.tick().await;
+            let current = std::fs::metadata(&cert_path)
+                .and_then(|m| m.modified())
+                .ok();
+            if current != last {
+                match octopus_tls::build_server_config(&tls_cfg) {
+                    Ok(cfg) => {
+                        acceptor.swap(Arc::new(cfg));
+                        last = current;
+                        tracing::info!(cert = ?cert_path, "Reloaded TLS certificate");
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "TLS certificate reload failed; keeping current");
+                    }
+                }
+            }
+        }
+    });
 }
 
 /// HTTP server
@@ -178,11 +214,20 @@ impl Server {
                 reload_interval_secs: tls_config.reload_interval_secs,
             };
 
-            match octopus_tls::TlsAcceptor::new(&tls_cfg) {
-                Ok(acceptor) => {
+            match octopus_tls::build_server_config(&tls_cfg) {
+                Ok(server_config) => {
+                    let acceptor = octopus_tls::SwappableTlsAcceptor::new(Arc::new(server_config));
+                    if tls_config.enable_cert_reload {
+                        spawn_cert_reload(
+                            acceptor.clone(),
+                            tls_cfg.clone(),
+                            Duration::from_secs(tls_config.reload_interval_secs),
+                        );
+                    }
                     tracing::info!(
                         cert = %tls_config.cert_file,
                         tls_version = %tls_config.min_tls_version,
+                        reload = tls_config.enable_cert_reload,
                         "HTTPS enabled"
                     );
                     Some(acceptor)

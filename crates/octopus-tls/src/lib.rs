@@ -23,7 +23,10 @@ pub mod mtls;
 pub mod reloadable;
 pub mod sni;
 
-pub use acceptor::{extract_client_cn, TlsAcceptor, TlsClientCn};
+pub use acceptor::{
+    build_server_config, extract_client_cn, extract_server_name, TlsAcceptor, TlsClientCn,
+    TlsSniName,
+};
 pub use config::TlsConfig;
 pub use loader::{load_certificates, load_private_key, CertificateReloader};
 pub use mtls::{MtlsConfig, TargetTlsConfig};

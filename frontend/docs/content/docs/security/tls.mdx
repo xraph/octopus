@@ -76,15 +76,15 @@ with the [mTLS auth provider](/docs/security/mtls).
 ## Certificate hot reload (file-based)
 
 When `enable_cert_reload` is `true`, a background task checks the certificate file's modification
-time every `reload_interval_secs` and, on change, reloads the certificate and key from disk into the
-reloader's store, keeping the previous material if a reload fails.
+time every `reload_interval_secs` and, on change, rebuilds the server config from disk (preserving
+mTLS and ALPN) and **swaps it into the live acceptor** — connections accepted afterward use the new
+certificate without a restart. If a rebuild fails (for example, a half-written file), the previous
+certificate is kept and the error is logged.
 
-<Callout type="warn">
-  For the **file-based** acceptor, the reloader detects and reads updated files, but the
-  certificate actively served by the running rustls acceptor is built once at startup and is **not**
-  swapped in place by the file reloader. True zero-downtime certificate swapping is provided by the
-  Kubernetes operator path below (`SwappableTlsAcceptor`). If you rotate file-based certificates,
-  plan for a restart to pick up the new material reliably.
+<Callout type="info">
+  The file-based path and the Kubernetes operator path use the same swappable acceptor
+  (`SwappableTlsAcceptor`), so certificate rotation is zero-downtime in both. (`min_tls_version`
+  remains advisory regardless of path — see above.)
 </Callout>
 
 ## Kubernetes-managed TLS
