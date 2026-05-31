@@ -255,7 +255,7 @@ impl ManifestValidator {
         {
             // Fallback to basic validation
             match manifest.validate() {
-                Ok(_) => Ok(vec![]),
+                Ok(()) => Ok(vec![]),
                 Err(e) => Ok(vec![e.to_string()]),
             }
         }
