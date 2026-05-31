@@ -351,6 +351,7 @@ jobs:
     permissions:
       "id-token": "write"
       "packages": "write"
+      "contents": "read"
 
   custom-publish-helm:
     needs:
@@ -365,6 +366,7 @@ jobs:
     permissions:
       "id-token": "write"
       "packages": "write"
+      "contents": "write"
 
   custom-publish-windows:
     needs:
@@ -379,6 +381,7 @@ jobs:
     permissions:
       "id-token": "write"
       "packages": "write"
+      "contents": "write"
 
   announce:
     needs:
