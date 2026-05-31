@@ -27,15 +27,21 @@ jobs:
         id: prep
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           echo "build_date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
-          if [ -n "$DOCKERHUB_USERNAME" ]; then
+          # Mirror to Docker Hub only when BOTH credentials are present —
+          # gating on the username alone would let the login step fail the job
+          # if the token were missing.
+          if [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_TOKEN" ]; then
+            dockerhub_image="docker.io/${{ vars.DOCKERHUB_REPO || 'xraph/octopus' }}"
             echo "dockerhub_enabled=true" >> "$GITHUB_OUTPUT"
-            echo "dockerhub_image=docker.io/${{ vars.DOCKERHUB_REPO || 'xraph/octopus' }}" >> "$GITHUB_OUTPUT"
+            echo "dockerhub_image=${dockerhub_image}" >> "$GITHUB_OUTPUT"
+            echo "Docker Hub publishing enabled -> ${dockerhub_image}"
           else
             echo "dockerhub_enabled=false" >> "$GITHUB_OUTPUT"
             echo "dockerhub_image=" >> "$GITHUB_OUTPUT"
-            echo "::warning::DOCKERHUB_USERNAME secret not set — publishing to ghcr.io only."
+            echo "::warning::DOCKERHUB_USERNAME/DOCKERHUB_TOKEN not both set — publishing to ghcr.io only."
           fi
 
       - name: Set up QEMU
