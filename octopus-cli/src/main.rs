@@ -6,6 +6,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use octopus_config::{load_and_merge, load_config};
 use octopus_runtime::{ServerBuilder, SignalHandler};
+use opentelemetry_otlp::WithExportConfig;
 use std::path::PathBuf;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -85,6 +86,10 @@ async fn main() -> Result<()> {
             // Run server
             tracing::info!("Server starting...");
             server.run().await?;
+
+            // Flush any pending OTLP trace batches before exit (no-op if tracing
+            // is disabled).
+            opentelemetry::global::shutdown_tracer_provider();
 
             tracing::info!("Server stopped");
             Ok(())
@@ -244,6 +249,19 @@ fn resolve_logging(
     (level, format)
 }
 
+/// The OTLP endpoint to export traces to, or `None` when tracing is disabled or
+/// no endpoint is configured. The `jaeger_endpoint` field is treated as an OTLP
+/// endpoint (e.g. `http://localhost:4317`).
+fn trace_export_endpoint(
+    obs: Option<&octopus_config::types::ObservabilityConfig>,
+) -> Option<String> {
+    let obs = obs?;
+    if !obs.tracing.enabled {
+        return None;
+    }
+    obs.tracing.jaeger_endpoint.clone()
+}
+
 fn init_tracing(
     cli_level: Option<&str>,
     obs: Option<&octopus_config::types::ObservabilityConfig>,
@@ -256,7 +274,25 @@ fn init_tracing(
         // when attempting multicast on VPN tunnel interfaces (utun*).
         .add_directive("mdns_sd=warn".parse()?);
 
-    let registry = tracing_subscriber::registry().with(filter);
+    // Optional OTLP trace exporter, enabled by `observability.tracing`.
+    let otel_layer = match trace_export_endpoint(obs) {
+        Some(endpoint) => {
+            let tracer = opentelemetry_otlp::new_pipeline()
+                .tracing()
+                .with_exporter(
+                    opentelemetry_otlp::new_exporter()
+                        .tonic()
+                        .with_endpoint(endpoint.clone()),
+                )
+                .install_batch(opentelemetry_sdk::runtime::Tokio)
+                .map_err(|e| anyhow::anyhow!("failed to start OTLP trace exporter: {e}"))?;
+            tracing::info!(otlp_endpoint = %endpoint, "Distributed tracing enabled (OTLP)");
+            Some(tracing_opentelemetry::layer().with_tracer(tracer))
+        }
+        None => None,
+    };
+
+    let registry = tracing_subscriber::registry().with(filter).with(otel_layer);
     match format {
         LogFormat::Json => registry
             .with(tracing_subscriber::fmt::layer().with_target(false).json())
@@ -314,5 +350,32 @@ mod tests {
         let obs = obs_with("info", "json");
         let (_, format) = resolve_logging(None, Some(&obs));
         assert_eq!(format, LogFormat::Json);
+    }
+
+    #[test]
+    fn trace_endpoint_none_when_disabled() {
+        let mut obs = obs_with("info", "text");
+        obs.tracing.enabled = false;
+        obs.tracing.jaeger_endpoint = Some("http://localhost:4317".into());
+        assert_eq!(trace_export_endpoint(Some(&obs)), None);
+    }
+
+    #[test]
+    fn trace_endpoint_some_when_enabled_with_endpoint() {
+        let mut obs = obs_with("info", "text");
+        obs.tracing.enabled = true;
+        obs.tracing.jaeger_endpoint = Some("http://localhost:4317".into());
+        assert_eq!(
+            trace_export_endpoint(Some(&obs)).as_deref(),
+            Some("http://localhost:4317")
+        );
+    }
+
+    #[test]
+    fn trace_endpoint_none_when_enabled_without_endpoint() {
+        let mut obs = obs_with("info", "text");
+        obs.tracing.enabled = true;
+        obs.tracing.jaeger_endpoint = None;
+        assert_eq!(trace_export_endpoint(Some(&obs)), None);
     }
 }

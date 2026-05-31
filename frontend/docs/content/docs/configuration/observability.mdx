@@ -12,11 +12,12 @@ and has sensible defaults. For conceptual coverage, see the [Observability](/doc
 section.
 
 <Callout type="warn">
-  Runtime status: **tracing is not yet wired** (`tracing.*` is parsed but no exporter is started).
-  `metrics.endpoint` is **inert** (metrics are always served on the fixed `/metrics` and `/__metrics`
-  paths on the listen port), but `metrics.enabled: false` now gates the endpoint to a `404`.
-  `logging.level` and `logging.format` (`json` or `text`) **are** honored; a `--log-level` flag
-  overrides the level. See [Observability](/docs/observability) for exactly what is emitted today.
+  Runtime status: `metrics.endpoint` is **inert** (metrics are always served on the fixed `/metrics`
+  and `/__metrics` paths on the listen port), but `metrics.enabled: false` gates the endpoint to a
+  `404`. `logging.level` and `logging.format` (`json` or `text`) are honored (a `--log-level` flag
+  overrides the level). `tracing` exports spans over OTLP when `tracing.enabled` and an endpoint are
+  set — see [Observability → Tracing](/docs/observability/tracing). See
+  [Observability](/docs/observability) for what is emitted today.
 </Callout>
 
 ```yaml

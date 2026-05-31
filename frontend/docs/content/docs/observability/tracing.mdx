@@ -1,62 +1,49 @@
 ---
 title: Tracing
-description: What distributed tracing support exists in Octopus today — and what is configured but not yet wired.
+description: Distributed tracing via OpenTelemetry — export the gateway's spans to an OTLP collector behind observability.tracing.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
 # Tracing
 
-This page is deliberately blunt about the state of distributed tracing in
-Octopus, so you do not configure something that has no effect.
+When enabled, Octopus exports its `tracing` spans to an OpenTelemetry collector
+over **OTLP** (gRPC). Tracing is **off by default**.
+
+## Enabling
+
+```yaml
+observability:
+  tracing:
+    enabled: true
+    jaeger_endpoint: http://localhost:4317 # an OTLP/gRPC endpoint
+```
+
+| Field | Type | Default | Effect |
+| --- | --- | --- | --- |
+| `observability.tracing.enabled` | boolean | `false` | When `true` (and an endpoint is set), installs a batched OTLP span exporter. |
+| `observability.tracing.jaeger_endpoint` | string \| null | none | The **OTLP** endpoint to export to (gRPC, e.g. `http://localhost:4317`). |
 
 <Callout type="warn">
-  **Distributed tracing is not wired in the runtime today.** A
-  [`observability.tracing`](/docs/configuration/observability) config block
-  exists (`enabled`, `jaeger_endpoint`), but the gateway does **not** read it to
-  build a tracer, does **not** start an OTLP or Jaeger exporter, and does **not**
-  propagate trace context to upstreams. Setting `tracing.enabled: true` or a
-  `jaeger_endpoint` currently has no runtime effect.
+  Despite the field name, `jaeger_endpoint` is treated as an **OTLP** endpoint
+  (default OTLP/gRPC port `4317`), not the legacy Jaeger Thrift endpoint (`14268`).
+  Modern Jaeger (≥ 1.35) accepts OTLP directly, so point this at your collector's
+  OTLP receiver. If `enabled` is `true` but no endpoint is set, no exporter starts.
 </Callout>
 
-## What actually runs
+## What is exported
 
-The gateway initializes the [`tracing`](https://docs.rs/tracing) crate purely
-for **structured logging** — a `tracing_subscriber` formatting layer plus an
-`EnvFilter`. That is the diagnostic instrumentation that is live today. See the
-[Logging](/docs/observability/logging) page for how that is set up and
-controlled.
-
-The internal `tracing::info!` / `debug!` / `warn!` spans and events you see in
-the logs are emitted by the gateway code, but they are **not** exported to any
-distributed-tracing backend. There is no span exporter configured.
-
-## What is present but inert
-
-| Config field | Type | Default | Runtime effect today |
-| --- | --- | --- | --- |
-| `observability.tracing.enabled` | boolean | `false` | None — not read by the runtime. |
-| `observability.tracing.jaeger_endpoint` | string \| null | none | None — no exporter is built from it. |
-
-The default for `enabled` is `false`, so a default deployment is in the correct
-state: tracing off, nothing claiming to export.
+The gateway's internal spans and events (request handling, proxying, discovery,
+lifecycle) are exported as OpenTelemetry spans through a batched OTLP exporter on
+the Tokio runtime. Pending batches are flushed on graceful shutdown.
 
 <Callout type="info">
-  The workspace pulls in OpenTelemetry and OTLP crates as dependencies, but they
-  are not yet connected to a tracer in the gateway's startup path. If you need
-  end-to-end traces today, terminate tracing at your service mesh or upstream
-  services rather than expecting the gateway to emit spans.
+  **W3C trace-context propagation to upstreams is not yet wired** — the gateway
+  exports its own spans but does not currently inject `traceparent` headers into
+  proxied requests, so upstream spans won't automatically join the gateway's trace.
 </Callout>
-
-## Recommendation
-
-- Leave `observability.tracing.enabled: false` (the default).
-- For request-level visibility now, rely on [structured logs](/docs/observability/logging)
-  and the per-route data in the [Admin API](/docs/observability/admin-api).
-- For Prometheus-based latency and request volume, use
-  [Metrics](/docs/observability/metrics).
 
 ## Related
 
-- [Logging](/docs/observability/logging) — the `tracing` subscriber that is actually wired.
+- [Logging](/docs/observability/logging) — the same `tracing` subscriber drives both.
 - [Configuration → Observability](/docs/configuration/observability) — the `tracing` block schema.
