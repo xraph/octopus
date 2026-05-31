@@ -1,9 +1,12 @@
 # Manual release trigger.
 #
-# The cargo-dist release workflow (release.yml) fires on a `vX.Y.Z` tag push.
-# This wrapper lets you cut a release from the Actions UI ("Run workflow") or
-# `gh workflow run release-dispatch.yml -f tag=vX.Y.Z`: it creates and pushes the
-# tag, which then triggers release.yml.
+# The cargo-dist release workflow (release.yml) fires on a `vX.Y.Z` tag push AND
+# requires the workspace version to match the tag (otherwise: "this workspace
+# doesn't have anything for dist to Release!"). This wrapper lets you cut a
+# release from the Actions UI ("Run workflow") or
+# `gh workflow run release-dispatch.yml -f tag=vX.Y.Z`: it bumps the workspace
+# version in Cargo.toml to match the tag, commits that to the branch, then
+# creates and pushes the tag — which triggers release.yml.
 #
 # IMPORTANT: a tag pushed with the default GITHUB_TOKEN does NOT trigger other
 # workflows, so the push must use a PAT — CUSTOM_GITHUB_TOKEN — with `repo`
@@ -33,6 +36,7 @@ jobs:
     env:
       DISPATCH_TOKEN: ${{ secrets.CUSTOM_GITHUB_TOKEN || secrets.RELEASE_DISPATCH_TOKEN || secrets.GORELEASER_TOKEN }}
       TAG: ${{ inputs.tag }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
     steps:
       - name: Require a PAT
         run: |
@@ -57,15 +61,38 @@ jobs:
           ref: ${{ inputs.ref || github.ref }}
           fetch-depth: 0
 
-      - name: Create and push tag
+      - name: Bump version, tag, and push
         run: |
           set -euo pipefail
+
           if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
-            echo "::error::Tag $TAG already exists on origin."
+            echo "::error::Tag $TAG already exists on origin. Pick a new version or delete the tag first."
             exit 1
           fi
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # cargo-dist requires [workspace.package].version to equal the tag
+          # version, so bump it to match before tagging.
+          VERSION="${TAG#v}"
+          awk -v v="$VERSION" '
+            /^\[/ { inwp = ($0 == "[workspace.package]") }
+            inwp && /^version[[:space:]]*=/ && !done { sub(/"[^"]*"/, "\"" v "\""); done = 1 }
+            { print }
+          ' Cargo.toml > Cargo.toml.tmp && mv Cargo.toml.tmp Cargo.toml
+
+          if git diff --quiet -- Cargo.toml; then
+            echo "Workspace version already $VERSION — no bump commit needed."
+          else
+            BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+            [ "$BRANCH" = "HEAD" ] && BRANCH="$DEFAULT_BRANCH"
+            git add Cargo.toml
+            git commit -m "chore(release): $TAG"
+            git push origin "HEAD:$BRANCH"
+            echo "Bumped workspace version to $VERSION and pushed to $BRANCH."
+          fi
+
           git tag -a "$TAG" -m "Release $TAG"
           git push origin "$TAG"
           echo "Pushed $TAG — the Release workflow will now run on the tag push."
