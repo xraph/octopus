@@ -7,6 +7,10 @@ members = ["cargo:."]
 cargo-dist-version = "0.32.0"
 # CI backends to support
 ci = "github"
+# release.yml is hand-tuned (the reusable publish jobs need explicit `contents`
+# permissions that `dist generate` doesn't emit), so don't fail the run when the
+# committed CI differs from dist's freshly-generated output.
+allow-dirty = ["ci"]
 # The installers to generate for each app. (No powershell: Windows is built
 # best-effort outside the cargo-dist matrix — see publish-windows.yml — so it
 # can fail without blocking the release, which cargo-dist's own matrix can't do.)
