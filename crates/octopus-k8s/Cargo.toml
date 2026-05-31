@@ -31,6 +31,9 @@ tokio.workspace = true
 async-trait.workspace = true
 futures.workspace = true
 
+# Data structures
+dashmap.workspace = true
+
 # Error handling
 thiserror.workspace = true
 

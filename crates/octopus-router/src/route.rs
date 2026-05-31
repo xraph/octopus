@@ -1,5 +1,7 @@
 //! Route definition and builder
 
+use crate::convention::Convention;
+use crate::host::HostMatch;
 use http::Method;
 use octopus_core::{Error, Result};
 use std::collections::HashMap;
@@ -10,6 +12,9 @@ use std::time::Duration;
 pub struct Route {
     /// HTTP method
     pub method: Method,
+
+    /// Host the route is scoped to (defaults to [`HostMatch::Any`]).
+    pub host: HostMatch,
 
     /// Path pattern (e.g., "/users/:id")
     pub path: String,
@@ -52,6 +57,11 @@ pub struct Route {
 
     /// Per-route CORS override
     pub cors: Option<RouteCorsOverride>,
+
+    /// Convention for deriving the upstream from the request host (multi-tenant
+    /// subdomain routing). When set, the handler derives `{namespace, service}`
+    /// from the host instead of using `upstream_name`.
+    pub convention: Option<Convention>,
 }
 
 /// Per-route CORS override configuration
@@ -80,6 +90,7 @@ impl Route {
 #[derive(Debug, Default)]
 pub struct RouteBuilder {
     method: Option<Method>,
+    host: HostMatch,
     path: Option<String>,
     upstream_name: Option<String>,
     priority: i32,
@@ -94,6 +105,7 @@ pub struct RouteBuilder {
     timeout: Option<Duration>,
     rate_limit: Option<(u32, Duration)>,
     cors: Option<RouteCorsOverride>,
+    convention: Option<Convention>,
 }
 
 impl RouteBuilder {
@@ -105,6 +117,12 @@ impl RouteBuilder {
     /// Set the HTTP method
     pub fn method(mut self, method: Method) -> Self {
         self.method = Some(method);
+        self
+    }
+
+    /// Set the host this route is scoped to (defaults to [`HostMatch::Any`])
+    pub fn host(mut self, host: HostMatch) -> Self {
+        self.host = host;
         self
     }
 
@@ -192,6 +210,12 @@ impl RouteBuilder {
         self
     }
 
+    /// Set the host-derivation convention for this route.
+    pub fn convention(mut self, convention: Option<Convention>) -> Self {
+        self.convention = convention;
+        self
+    }
+
     /// Build the route
     pub fn build(self) -> Result<Route> {
         let method = self
@@ -213,6 +237,7 @@ impl RouteBuilder {
 
         Ok(Route {
             method,
+            host: self.host,
             path,
             upstream_name,
             priority: self.priority,
@@ -227,6 +252,7 @@ impl RouteBuilder {
             timeout: self.timeout,
             rate_limit: self.rate_limit,
             cors: self.cors,
+            convention: self.convention,
         })
     }
 }
@@ -234,6 +260,60 @@ impl RouteBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn route_defaults_to_any_host() {
+        let route = RouteBuilder::new()
+            .method(Method::GET)
+            .path("/x")
+            .upstream_name("u")
+            .build()
+            .unwrap();
+        assert_eq!(route.host, HostMatch::Any);
+    }
+
+    #[test]
+    fn route_builder_sets_convention() {
+        let conv = crate::Convention {
+            base_suffix: ".platform.com".into(),
+            roles: vec![crate::LabelRole::Service, crate::LabelRole::Namespace],
+            default_service: None,
+            port: 8080,
+            script: None,
+            backend: crate::BackendStrategy::default(),
+        };
+        let route = RouteBuilder::new()
+            .method(Method::GET)
+            .path("/x")
+            .upstream_name("u")
+            .convention(Some(conv.clone()))
+            .build()
+            .unwrap();
+        assert_eq!(route.convention, Some(conv));
+    }
+
+    #[test]
+    fn route_defaults_to_no_convention() {
+        let route = RouteBuilder::new()
+            .method(Method::GET)
+            .path("/x")
+            .upstream_name("u")
+            .build()
+            .unwrap();
+        assert_eq!(route.convention, None);
+    }
+
+    #[test]
+    fn route_builder_sets_host() {
+        let route = RouteBuilder::new()
+            .method(Method::GET)
+            .path("/x")
+            .upstream_name("u")
+            .host(HostMatch::Exact("a.com".into()))
+            .build()
+            .unwrap();
+        assert_eq!(route.host, HostMatch::Exact("a.com".into()));
+    }
 
     #[test]
     fn test_route_builder() {

@@ -56,7 +56,9 @@
 // Auth provider system
 pub mod apikey_provider;
 pub mod authz;
+pub mod authzen;
 pub mod forward_provider;
+pub mod introspection_provider;
 pub mod jwt_provider;
 pub mod mtls_provider;
 pub mod oidc;
@@ -71,6 +73,7 @@ pub mod token;
 
 // Re-exports: new provider system
 pub use authz::{AuthzEvaluator, RouteAuthzContext};
+pub use authzen::{AuthZenClient, Authorizer};
 pub use opa::{AuthzContext, AuthzDecision, OpaClient};
 pub use registry::{
     AuthProviderInstance, AuthProviderRegistry, AuthRequest, AuthResult, Principal,
@@ -85,6 +88,7 @@ pub use token::{ApiKey, ApiKeyStore};
 // Re-exports: providers
 pub use apikey_provider::ApiKeyProvider;
 pub use forward_provider::ForwardAuthProvider;
+pub use introspection_provider::IntrospectionProvider;
 pub use jwt_provider::JwtProvider;
 pub use mtls_provider::MtlsProvider;
 pub use oidc::OidcProvider;

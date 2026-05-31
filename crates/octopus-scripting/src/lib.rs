@@ -36,7 +36,7 @@ pub use context::{RequestContext, ResponseContext, ScriptContext};
 pub use engine::{ScriptEngine, ScriptLanguage, ScriptSource};
 pub use error::{Result, ScriptError};
 pub use middleware::{ScriptMiddleware, ScriptMiddlewareConfig};
-pub use rhai_engine::RhaiEngine;
+pub use rhai_engine::{HostResolution, RhaiEngine};
 
 /// Prelude with commonly used types
 pub mod prelude {

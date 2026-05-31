@@ -282,6 +282,62 @@ impl RhaiEngine {
             Ok(true) // Default: continue
         }
     }
+
+    /// Evaluate a host-resolution script: the script is given the request `host`
+    /// (as a string variable `host`) and returns a map
+    /// `#{ namespace: "...", service: "...", port: 8080 }` (port optional) to map
+    /// the host to a backend, or `()` to decline (the caller then falls back to
+    /// its default resolution). The script body is AST-cached by content hash.
+    pub async fn resolve_host(&self, script: &str, host: &str) -> Result<Option<HostResolution>> {
+        // Content-hashed name so distinct scripts get distinct AST cache slots
+        // (`ScriptSource::inline` names everything "inline").
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        std::hash::Hash::hash(script, &mut hasher);
+        let name = format!("hostscript-{:x}", std::hash::Hasher::finish(&hasher));
+        let source = ScriptSource::inline_named(script, name);
+
+        let ast = self.get_ast(&source).await?;
+        let mut scope = Scope::new();
+        scope.push("host", host.to_string());
+
+        let result: Dynamic = self
+            .engine
+            .eval_ast_with_scope(&mut scope, &ast)
+            .map_err(|e| ScriptError::RuntimeError {
+                message: e.to_string(),
+                line: None,
+            })?;
+
+        Ok(Self::extract_host_resolution(result))
+    }
+
+    /// Extract a [`HostResolution`] from a script's return value. Returns `None`
+    /// if the value is not a map, or lacks both `namespace` and `service`.
+    fn extract_host_resolution(result: Dynamic) -> Option<HostResolution> {
+        let map = result.try_cast::<rhai::Map>()?;
+        let namespace = map.get("namespace")?.clone().try_cast::<String>()?;
+        let service = map.get("service")?.clone().try_cast::<String>()?;
+        let port = map
+            .get("port")
+            .and_then(|v| v.clone().try_cast::<i64>())
+            .map(|p| p as u16);
+        Some(HostResolution {
+            namespace,
+            service,
+            port,
+        })
+    }
+}
+
+/// A backend mapping produced by a host-resolution script.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostResolution {
+    /// Target Kubernetes namespace.
+    pub namespace: String,
+    /// Target Service name.
+    pub service: String,
+    /// Optional target port (caller supplies a default when absent).
+    pub port: Option<u16>,
 }
 
 impl Default for RhaiEngine {
@@ -351,6 +407,60 @@ impl ScriptEngine for RhaiEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn resolve_host_returns_mapping_with_optional_port() {
+        let engine = RhaiEngine::new();
+        let script = r#"#{ namespace: "acme", service: "orders", port: 8080 }"#;
+        let r = engine
+            .resolve_host(script, "orders.acme.platform.com")
+            .await
+            .unwrap();
+        assert_eq!(
+            r,
+            Some(HostResolution {
+                namespace: "acme".into(),
+                service: "orders".into(),
+                port: Some(8080),
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_host_can_use_host_and_decline() {
+        let engine = RhaiEngine::new();
+        let script = r#"if host == "special.example.com" { #{ namespace: "vip", service: "web" } } else { () }"#;
+
+        let matched = engine
+            .resolve_host(script, "special.example.com")
+            .await
+            .unwrap();
+        assert_eq!(
+            matched,
+            Some(HostResolution {
+                namespace: "vip".into(),
+                service: "web".into(),
+                port: None,
+            })
+        );
+
+        let declined = engine
+            .resolve_host(script, "other.example.com")
+            .await
+            .unwrap();
+        assert_eq!(declined, None, "returning () declines");
+    }
+
+    #[tokio::test]
+    async fn resolve_host_incomplete_map_declines() {
+        let engine = RhaiEngine::new();
+        // missing `service`
+        let script = r#"#{ namespace: "acme" }"#;
+        assert_eq!(
+            engine.resolve_host(script, "x.acme.com").await.unwrap(),
+            None
+        );
+    }
 
     #[tokio::test]
     async fn test_rhai_engine_basic() {

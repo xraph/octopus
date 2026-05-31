@@ -22,11 +22,15 @@
     unreachable_pub
 )]
 
+pub mod convention;
+pub mod host;
 pub mod load_balancer;
 pub mod matcher;
 pub mod route;
 pub mod trie;
 
+pub use convention::{BackendStrategy, Convention, ConventionTarget, LabelRole};
+pub use host::HostMatch;
 pub use load_balancer::{new_load_balancer, LoadBalancer};
 pub use matcher::{Match, PathMatcher};
 pub use route::{Route, RouteBuilder, RouteCorsOverride};
@@ -89,14 +93,16 @@ impl Router {
         Ok(())
     }
 
-    /// Match a request path
-    pub fn match_route(&self, method: &Method, path: &str) -> Result<Match> {
+    /// Match a request `host` + path. `host` must be lowercased by the caller;
+    /// pass `""` (or any value) when host-scoping is irrelevant — host-agnostic
+    /// routes match every host.
+    pub fn match_route(&self, host: &str, method: &Method, path: &str) -> Result<Match> {
         let trie = self
             .tries
             .get(method)
             .ok_or_else(|| Error::RouteNotFound(format!("No routes for method {method}")))?;
 
-        trie.match_path(path)
+        trie.match_path(host, path)
             .ok_or_else(|| Error::RouteNotFound(path.to_string()))
     }
 
@@ -111,6 +117,22 @@ impl Router {
         self.load_balancers.insert(name.clone(), Arc::from(lb));
 
         tracing::debug!(upstream = %name, strategy = ?strategy, "Upstream registered");
+    }
+
+    /// Register an upstream cluster lazily and race-free: if `name` is not yet
+    /// known, `build` is invoked once to create it (and its load balancer).
+    /// Concurrent callers for the same name register exactly one cluster.
+    ///
+    /// Used for convention-derived upstreams (e.g. `k8s://<ns>/<svc>`) that are
+    /// materialized on first request rather than declared up front.
+    pub fn ensure_upstream(&self, name: &str, build: impl FnOnce() -> UpstreamCluster) {
+        use dashmap::mapref::entry::Entry;
+        if let Entry::Vacant(slot) = self.upstreams.entry(name.to_string()) {
+            let cluster = build();
+            let lb = new_load_balancer(cluster.strategy);
+            self.load_balancers.insert(name.to_string(), Arc::from(lb));
+            slot.insert(cluster);
+        }
     }
 
     /// Get an upstream cluster
@@ -149,9 +171,9 @@ impl Router {
         tracing::debug!("All routes cleared");
     }
 
-    /// Find a route for a given method and path (convenience method for handler)
-    pub fn find_route(&self, method: &Method, path: &str) -> Result<Route> {
-        let matched = self.match_route(method, path)?;
+    /// Find a route for a given host, method and path (convenience for the handler)
+    pub fn find_route(&self, host: &str, method: &Method, path: &str) -> Result<Route> {
+        let matched = self.match_route(host, method, path)?;
         Ok(matched.route)
     }
 
@@ -261,9 +283,33 @@ mod tests {
 
         router.add_route(route).unwrap();
 
-        let matched = router.match_route(&Method::GET, "/users/123").unwrap();
+        let matched = router
+            .match_route("example.com", &Method::GET, "/users/123")
+            .unwrap();
         assert_eq!(matched.route.path, "/users/:id");
         assert_eq!(matched.params.get("id"), Some(&"123".to_string()));
+    }
+
+    #[test]
+    fn ensure_upstream_registers_once_and_is_idempotent() {
+        use std::cell::Cell;
+        let router = Router::new();
+        let calls = Cell::new(0u32);
+
+        router.ensure_upstream("k8s://acme/orders", || {
+            calls.set(calls.get() + 1);
+            UpstreamCluster::new("k8s://acme/orders")
+        });
+        assert!(router.get_upstream("k8s://acme/orders").is_some());
+        assert_eq!(calls.get(), 1);
+
+        // Second call for the same key is a no-op (builder not invoked again).
+        router.ensure_upstream("k8s://acme/orders", || {
+            calls.set(calls.get() + 1);
+            UpstreamCluster::new("k8s://acme/orders")
+        });
+        assert_eq!(calls.get(), 1, "builder runs only on first ensure");
+        assert_eq!(router.upstream_count(), 1);
     }
 
     #[test]

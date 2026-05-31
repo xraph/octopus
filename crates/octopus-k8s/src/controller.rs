@@ -7,19 +7,21 @@
 
 use crate::apply::apply_to_router;
 use crate::crds::{
-    OctopusPolicy, OctopusPolicySpec, OctopusRoute, OctopusRouteSpec, OctopusUpstream,
-    OctopusUpstreamSpec,
+    ConventionSpec, OctopusPolicy, OctopusPolicySpec, OctopusRoute, OctopusRouteSpec,
+    OctopusUpstream, OctopusUpstreamSpec,
 };
-use crate::gateway_api::{GRPCRoute, GRPCRouteSpec, Gateway, HTTPRoute, HTTPRouteSpec};
+use crate::gateway_api::{
+    GRPCRoute, GRPCRouteSpec, Gateway, GatewaySpec, HTTPRoute, HTTPRouteSpec, ParentRef,
+};
 use crate::ir::{IntermediateRoute, RouteSource, RouteStore, SourceKey};
 use crate::policy::{apply_overlays, PolicyOverlay};
-use crate::refgrant::ReferenceGrant;
+use crate::refgrant::{is_permitted, RefRequest, ReferenceGrant, ReferenceGrantSpec};
 use crate::tls::TlsReconciler;
 use crate::translate::{
     grpcroute_to_route, httproute_to_route, octopus_route_to_route, octopus_upstream_to_cluster,
 };
 use futures::TryStreamExt;
-use k8s_openapi::api::core::v1::Secret;
+use k8s_openapi::api::core::v1::{ConfigMap, Secret};
 use kube::{
     api::Api,
     runtime::{watcher, watcher::Config as WatcherConfig},
@@ -28,7 +30,7 @@ use kube::{
 use octopus_core::UpstreamCluster;
 use octopus_router::Router;
 use octopus_tls::SwappableTlsAcceptor;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 
 /// Reconciles routing resources into the live [`Router`].
@@ -37,6 +39,20 @@ pub struct RouteReconciler {
     /// Policy overlays keyed by `namespace/name`.
     policies: Mutex<HashMap<String, PolicyOverlay>>,
     router: Arc<Router>,
+    /// Raw OctopusRoute specs (`ns/name` → spec), retained so routes can be
+    /// re-translated when a referenced ConfigMap or ReferenceGrant changes.
+    octopus_routes: Mutex<HashMap<String, OctopusRouteSpec>>,
+    /// ConfigMap data (`ns/name` → data) for resolving convention `script_ref`s.
+    configmaps: Mutex<HashMap<String, BTreeMap<String, String>>>,
+    /// ReferenceGrants (`ns/name` → (grant namespace, spec)) for cross-namespace
+    /// ConfigMap script references.
+    route_grants: Mutex<HashMap<String, (String, ReferenceGrantSpec)>>,
+    /// Parent `Gateway` specs (`ns/name` → spec) for hostname intersection.
+    gateways: Mutex<HashMap<String, GatewaySpec>>,
+    /// Raw HTTPRoute/GRPCRoute specs retained for re-translation when a parent
+    /// Gateway's listener hostnames change.
+    httproutes: Mutex<HashMap<String, HTTPRouteSpec>>,
+    grpcroutes: Mutex<HashMap<String, GRPCRouteSpec>>,
 }
 
 impl std::fmt::Debug for RouteReconciler {
@@ -52,6 +68,12 @@ impl RouteReconciler {
             store: Mutex::new(RouteStore::new()),
             policies: Mutex::new(HashMap::new()),
             router,
+            octopus_routes: Mutex::new(HashMap::new()),
+            configmaps: Mutex::new(HashMap::new()),
+            route_grants: Mutex::new(HashMap::new()),
+            gateways: Mutex::new(HashMap::new()),
+            httproutes: Mutex::new(HashMap::new()),
+            grpcroutes: Mutex::new(HashMap::new()),
         }
     }
 
@@ -70,7 +92,16 @@ impl RouteReconciler {
 
     /// Upsert an `HTTPRoute` and re-apply the merged routing table.
     pub fn upsert_httproute(&self, name: &str, namespace: &str, spec: &HTTPRouteSpec) {
-        let (routes, upstreams) = httproute_to_route(name, namespace, spec);
+        if let Ok(mut m) = self.httproutes.lock() {
+            m.insert(format!("{namespace}/{name}"), spec.clone());
+        }
+        self.translate_httproute(name, namespace, spec);
+        self.reapply();
+    }
+
+    fn translate_httproute(&self, name: &str, namespace: &str, spec: &HTTPRouteSpec) {
+        let listeners = self.listener_hostnames_for(&spec.parent_refs, namespace);
+        let (routes, upstreams) = httproute_to_route(name, namespace, spec, &listeners);
         if let Ok(mut store) = self.store.lock() {
             store.insert(
                 SourceKey::new(RouteSource::GatewayApi, format!("{namespace}/{name}")),
@@ -78,11 +109,13 @@ impl RouteReconciler {
                 upstreams,
             );
         }
-        self.reapply();
     }
 
     /// Remove an `HTTPRoute` and re-apply the merged routing table.
     pub fn remove_httproute(&self, name: &str, namespace: &str) {
+        if let Ok(mut m) = self.httproutes.lock() {
+            m.remove(&format!("{namespace}/{name}"));
+        }
         if let Ok(mut store) = self.store.lock() {
             store.remove(&SourceKey::new(
                 RouteSource::GatewayApi,
@@ -94,7 +127,16 @@ impl RouteReconciler {
 
     /// Upsert a `GRPCRoute` and re-apply the merged routing table.
     pub fn upsert_grpcroute(&self, name: &str, namespace: &str, spec: &GRPCRouteSpec) {
-        let (routes, upstreams) = grpcroute_to_route(name, namespace, spec);
+        if let Ok(mut m) = self.grpcroutes.lock() {
+            m.insert(format!("{namespace}/{name}"), spec.clone());
+        }
+        self.translate_grpcroute(name, namespace, spec);
+        self.reapply();
+    }
+
+    fn translate_grpcroute(&self, name: &str, namespace: &str, spec: &GRPCRouteSpec) {
+        let listeners = self.listener_hostnames_for(&spec.parent_refs, namespace);
+        let (routes, upstreams) = grpcroute_to_route(name, namespace, spec, &listeners);
         if let Ok(mut store) = self.store.lock() {
             store.insert(
                 SourceKey::new(RouteSource::GatewayApi, format!("grpc/{namespace}/{name}")),
@@ -102,11 +144,13 @@ impl RouteReconciler {
                 upstreams,
             );
         }
-        self.reapply();
     }
 
     /// Remove a `GRPCRoute` and re-apply the merged routing table.
     pub fn remove_grpcroute(&self, name: &str, namespace: &str) {
+        if let Ok(mut m) = self.grpcroutes.lock() {
+            m.remove(&format!("{namespace}/{name}"));
+        }
         if let Ok(mut store) = self.store.lock() {
             store.remove(&SourceKey::new(
                 RouteSource::GatewayApi,
@@ -118,7 +162,18 @@ impl RouteReconciler {
 
     /// Upsert an `OctopusRoute` and re-apply.
     pub fn upsert_octopus_route(&self, name: &str, namespace: &str, spec: &OctopusRouteSpec) {
-        let routes = octopus_route_to_route(name, namespace, spec);
+        if let Ok(mut m) = self.octopus_routes.lock() {
+            m.insert(format!("{namespace}/{name}"), spec.clone());
+        }
+        self.translate_octopus_route(name, namespace, spec);
+        self.reapply();
+    }
+
+    /// Translate one OctopusRoute into the store, resolving any ConfigMap-backed
+    /// convention `script_ref` to an inline script first. Does not re-apply.
+    fn translate_octopus_route(&self, name: &str, namespace: &str, spec: &OctopusRouteSpec) {
+        let effective = self.with_resolved_script(namespace, spec);
+        let routes = octopus_route_to_route(name, namespace, &effective);
         if let Ok(mut store) = self.store.lock() {
             store.insert(
                 SourceKey::new(RouteSource::OctopusRoute, format!("{namespace}/{name}")),
@@ -126,11 +181,180 @@ impl RouteReconciler {
                 Vec::new(),
             );
         }
+    }
+
+    /// Return a spec whose convention script is populated from its `script_ref`
+    /// ConfigMap when applicable; otherwise the spec unchanged.
+    fn with_resolved_script(&self, route_ns: &str, spec: &OctopusRouteSpec) -> OctopusRouteSpec {
+        let Some(conv) = &spec.convention else {
+            return spec.clone();
+        };
+        if conv.script.is_some() || conv.script_ref.is_none() {
+            return spec.clone();
+        }
+        let grants_by_ns = self.grants_by_ns();
+        let resolved = match self.configmaps.lock() {
+            Ok(cms) => resolve_script_ref(conv, route_ns, &cms, &grants_by_ns),
+            Err(_) => None,
+        };
+        match resolved {
+            Some(script) => {
+                let mut s = spec.clone();
+                if let Some(c) = &mut s.convention {
+                    c.script = Some(script);
+                }
+                s
+            }
+            None => spec.clone(),
+        }
+    }
+
+    /// Group known ReferenceGrants by their (target) namespace for lookups.
+    fn grants_by_ns(&self) -> HashMap<String, Vec<ReferenceGrantSpec>> {
+        let mut out: HashMap<String, Vec<ReferenceGrantSpec>> = HashMap::new();
+        if let Ok(grants) = self.route_grants.lock() {
+            for (ns, spec) in grants.values() {
+                out.entry(ns.clone()).or_default().push(spec.clone());
+            }
+        }
+        out
+    }
+
+    /// Re-translate every retained OctopusRoute (e.g. after a ConfigMap or
+    /// ReferenceGrant change) and re-apply once.
+    fn reresolve_octopus_routes(&self) {
+        let specs: Vec<(String, String)> = match self.octopus_routes.lock() {
+            Ok(m) => m.keys().cloned().filter_map(|k| split_key(&k)).collect(),
+            Err(_) => return,
+        };
+        for (ns, name) in specs {
+            let spec = self
+                .octopus_routes
+                .lock()
+                .ok()
+                .and_then(|m| m.get(&format!("{ns}/{name}")).cloned());
+            if let Some(spec) = spec {
+                self.translate_octopus_route(&name, &ns, &spec);
+            }
+        }
+        self.reapply();
+    }
+
+    /// Store/replace a ConfigMap's data and re-resolve dependent routes.
+    pub fn set_configmap(&self, name: &str, namespace: &str, data: BTreeMap<String, String>) {
+        if let Ok(mut m) = self.configmaps.lock() {
+            m.insert(format!("{namespace}/{name}"), data);
+        }
+        self.reresolve_octopus_routes();
+    }
+
+    /// Drop a ConfigMap and re-resolve dependent routes.
+    pub fn remove_configmap(&self, name: &str, namespace: &str) {
+        if let Ok(mut m) = self.configmaps.lock() {
+            m.remove(&format!("{namespace}/{name}"));
+        }
+        self.reresolve_octopus_routes();
+    }
+
+    /// Store/replace a ReferenceGrant and re-resolve dependent routes.
+    pub fn set_route_grant(&self, name: &str, namespace: &str, spec: ReferenceGrantSpec) {
+        if let Ok(mut m) = self.route_grants.lock() {
+            m.insert(format!("{namespace}/{name}"), (namespace.to_string(), spec));
+        }
+        self.reresolve_octopus_routes();
+    }
+
+    /// Drop a ReferenceGrant and re-resolve dependent routes.
+    pub fn remove_route_grant(&self, name: &str, namespace: &str) {
+        if let Ok(mut m) = self.route_grants.lock() {
+            m.remove(&format!("{namespace}/{name}"));
+        }
+        self.reresolve_octopus_routes();
+    }
+
+    /// Union of the hostnames of the listeners the given `parent_refs` attach to.
+    /// Empty = unconstrained (no parent found yet, or listeners have no hostname).
+    fn listener_hostnames_for(&self, parent_refs: &[ParentRef], route_ns: &str) -> Vec<String> {
+        let Ok(gateways) = self.gateways.lock() else {
+            return Vec::new();
+        };
+        let mut out: Vec<String> = Vec::new();
+        for pr in parent_refs {
+            let gw_ns = pr.namespace.as_deref().unwrap_or(route_ns);
+            let Some(gw) = gateways.get(&format!("{gw_ns}/{}", pr.name)) else {
+                continue;
+            };
+            for l in &gw.listeners {
+                if pr.section_name.as_ref().is_some_and(|s| s != &l.name) {
+                    continue;
+                }
+                if let Some(h) = &l.hostname {
+                    if !out.contains(h) {
+                        out.push(h.clone());
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Store/replace a parent `Gateway` and re-translate dependent routes.
+    pub fn set_gateway_route(&self, name: &str, namespace: &str, spec: GatewaySpec) {
+        if let Ok(mut m) = self.gateways.lock() {
+            m.insert(format!("{namespace}/{name}"), spec);
+        }
+        self.reresolve_gateway_routes();
+    }
+
+    /// Drop a parent `Gateway` and re-translate dependent routes.
+    pub fn remove_gateway_route(&self, name: &str, namespace: &str) {
+        if let Ok(mut m) = self.gateways.lock() {
+            m.remove(&format!("{namespace}/{name}"));
+        }
+        self.reresolve_gateway_routes();
+    }
+
+    /// Re-translate every retained Gateway-API route (after a Gateway change),
+    /// then re-apply once.
+    fn reresolve_gateway_routes(&self) {
+        let https: Vec<(String, String)> = self
+            .httproutes
+            .lock()
+            .map(|m| m.keys().filter_map(|k| split_key(k)).collect())
+            .unwrap_or_default();
+        for (ns, name) in https {
+            let spec = self
+                .httproutes
+                .lock()
+                .ok()
+                .and_then(|m| m.get(&format!("{ns}/{name}")).cloned());
+            if let Some(spec) = spec {
+                self.translate_httproute(&name, &ns, &spec);
+            }
+        }
+        let grpcs: Vec<(String, String)> = self
+            .grpcroutes
+            .lock()
+            .map(|m| m.keys().filter_map(|k| split_key(k)).collect())
+            .unwrap_or_default();
+        for (ns, name) in grpcs {
+            let spec = self
+                .grpcroutes
+                .lock()
+                .ok()
+                .and_then(|m| m.get(&format!("{ns}/{name}")).cloned());
+            if let Some(spec) = spec {
+                self.translate_grpcroute(&name, &ns, &spec);
+            }
+        }
         self.reapply();
     }
 
     /// Remove an `OctopusRoute` and re-apply.
     pub fn remove_octopus_route(&self, name: &str, namespace: &str) {
+        if let Ok(mut m) = self.octopus_routes.lock() {
+            m.remove(&format!("{namespace}/{name}"));
+        }
         if let Ok(mut store) = self.store.lock() {
             store.remove(&SourceKey::new(
                 RouteSource::OctopusRoute,
@@ -324,6 +548,24 @@ fn spawn_watchers(client: Client, reconciler: Arc<RouteReconciler>, namespace: O
         );
         async move { run_watcher(api, rec, "OctopusPolicy", on_octopus_policy).await }
     });
+    tokio::spawn({
+        let (api, rec) = (
+            api::<ConfigMap>(&client, &namespace),
+            Arc::clone(&reconciler),
+        );
+        async move { run_watcher(api, rec, "ConfigMap", on_configmap).await }
+    });
+    tokio::spawn({
+        let (api, rec) = (
+            api::<ReferenceGrant>(&client, &namespace),
+            Arc::clone(&reconciler),
+        );
+        async move { run_watcher(api, rec, "ReferenceGrant(routes)", on_route_grant).await }
+    });
+    tokio::spawn({
+        let (api, rec) = (api::<Gateway>(&client, &namespace), Arc::clone(&reconciler));
+        async move { run_watcher(api, rec, "Gateway(routes)", on_gateway_route).await }
+    });
 }
 
 /// Drive a context `ctx` from a resource's watch stream until it ends.
@@ -355,6 +597,103 @@ fn ident<K: kube::Resource>(obj: &K) -> Option<(String, String)> {
     match (&meta.name, &meta.namespace) {
         (Some(name), Some(ns)) => Some((name.clone(), ns.clone())),
         _ => None,
+    }
+}
+
+/// Resolve a convention's `script_ref` against known ConfigMaps. Returns the
+/// script text to inline, or `None` (inline script wins, no ref, ConfigMap/key
+/// absent, or a cross-namespace ref without a permitting `ReferenceGrant`).
+fn resolve_script_ref(
+    convention: &ConventionSpec,
+    route_ns: &str,
+    configmaps: &HashMap<String, BTreeMap<String, String>>,
+    grants_by_ns: &HashMap<String, Vec<ReferenceGrantSpec>>,
+) -> Option<String> {
+    if convention.script.is_some() {
+        return None; // inline script wins
+    }
+    let r = convention.script_ref.as_ref()?;
+    let cm_ns = r.namespace.as_deref().unwrap_or(route_ns);
+
+    // Cross-namespace references require a permitting ReferenceGrant in the
+    // ConfigMap's namespace; same-namespace needs none.
+    if cm_ns != route_ns {
+        let req = RefRequest {
+            from_group: "gateway.octopus.io",
+            from_kind: "OctopusRoute",
+            from_namespace: route_ns,
+            to_group: "",
+            to_kind: "ConfigMap",
+            to_name: &r.name,
+        };
+        let grants = grants_by_ns.get(cm_ns).map(Vec::as_slice).unwrap_or(&[]);
+        if !is_permitted(grants, &req) {
+            tracing::warn!(
+                configmap = %format!("{cm_ns}/{}", r.name),
+                from_ns = %route_ns,
+                "cross-namespace script ConfigMap reference not permitted by any ReferenceGrant"
+            );
+            return None;
+        }
+    }
+
+    configmaps
+        .get(&format!("{cm_ns}/{}", r.name))?
+        .get(&r.key)
+        .cloned()
+}
+
+/// Split a `namespace/name` store key into its parts.
+fn split_key(key: &str) -> Option<(String, String)> {
+    key.split_once('/')
+        .map(|(ns, name)| (ns.to_string(), name.to_string()))
+}
+
+fn on_configmap(rec: &RouteReconciler, event: watcher::Event<ConfigMap>) {
+    match event {
+        watcher::Event::Apply(o) | watcher::Event::InitApply(o) => {
+            if let Some((name, ns)) = ident(&o) {
+                rec.set_configmap(&name, &ns, o.data.clone().unwrap_or_default());
+            }
+        }
+        watcher::Event::Delete(o) => {
+            if let Some((name, ns)) = ident(&o) {
+                rec.remove_configmap(&name, &ns);
+            }
+        }
+        watcher::Event::Init | watcher::Event::InitDone => {}
+    }
+}
+
+fn on_route_grant(rec: &RouteReconciler, event: watcher::Event<ReferenceGrant>) {
+    match event {
+        watcher::Event::Apply(o) | watcher::Event::InitApply(o) => {
+            if let Some((name, ns)) = ident(&o) {
+                rec.set_route_grant(&name, &ns, o.spec.clone());
+            }
+        }
+        watcher::Event::Delete(o) => {
+            if let Some((name, ns)) = ident(&o) {
+                rec.remove_route_grant(&name, &ns);
+            }
+        }
+        watcher::Event::Init | watcher::Event::InitDone => {}
+    }
+}
+
+fn on_gateway_route(rec: &RouteReconciler, event: watcher::Event<Gateway>) {
+    match event {
+        watcher::Event::Apply(o) | watcher::Event::InitApply(o) => {
+            if let Some((name, ns)) = ident(&o) {
+                rec.set_gateway_route(&name, &ns, o.spec.clone());
+            }
+        }
+        watcher::Event::Delete(o) => {
+            if let Some((name, ns)) = ident(&o) {
+                rec.remove_gateway_route(&name, &ns);
+            }
+        }
+        watcher::Event::Init | watcher::Event::InitDone => {}
     }
 }
 
@@ -502,8 +841,131 @@ fn on_octopus_policy(rec: &RouteReconciler, event: watcher::Event<OctopusPolicy>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::gateway_api::{HttpBackendRef, HttpPathMatch, HttpRouteMatch, HttpRouteRule};
+    use crate::crds::ScriptConfigMapRef;
+    use crate::gateway_api::{
+        GatewayListener, HttpBackendRef, HttpPathMatch, HttpRouteMatch, HttpRouteRule,
+    };
+    use crate::refgrant::{ReferenceGrantFrom, ReferenceGrantTo};
     use http::Method;
+
+    #[test]
+    fn httproute_hostnames_intersect_parent_gateway_listener() {
+        let router = Arc::new(Router::new());
+        let rec = RouteReconciler::new(Arc::clone(&router));
+
+        // A Gateway "gw" in ns "infra" with a wildcard listener.
+        rec.set_gateway_route(
+            "gw",
+            "infra",
+            GatewaySpec {
+                gateway_class_name: "octopus".into(),
+                listeners: vec![GatewayListener {
+                    name: "https".into(),
+                    hostname: Some("*.acme.com".into()),
+                    port: 443,
+                    protocol: "HTTPS".into(),
+                    tls: None,
+                }],
+            },
+        );
+
+        // An HTTPRoute attaching to gw, declaring one in-scope and one out-of-scope host.
+        let mut spec = httproute_spec("/", "svc", 80);
+        spec.parent_refs = vec![ParentRef {
+            name: "gw".into(),
+            namespace: Some("infra".into()),
+            section_name: None,
+        }];
+        spec.hostnames = vec!["api.acme.com".into(), "evil.com".into()];
+        rec.upsert_httproute("r", "default", &spec);
+
+        // Only the host within the listener's wildcard attaches.
+        assert!(router.match_route("api.acme.com", &Method::GET, "/").is_ok());
+        assert!(router.match_route("evil.com", &Method::GET, "/").is_err());
+    }
+
+    fn conv_with_ref(name: &str, key: &str, namespace: Option<&str>) -> ConventionSpec {
+        ConventionSpec {
+            base_domain: "platform.com".into(),
+            layout: vec!["service".into(), "namespace".into()],
+            default_service: None,
+            port: None,
+            script: None,
+            script_ref: Some(ScriptConfigMapRef {
+                name: name.into(),
+                key: key.into(),
+                namespace: namespace.map(Into::into),
+            }),
+            backend_strategy: None,
+        }
+    }
+
+    #[test]
+    fn script_ref_resolves_same_namespace() {
+        let mut cms = HashMap::new();
+        let mut data = BTreeMap::new();
+        data.insert("resolve.rhai".to_string(), "#{ namespace: \"x\" }".to_string());
+        cms.insert("acme/scripts".to_string(), data);
+
+        let conv = conv_with_ref("scripts", "resolve.rhai", None);
+        let got = resolve_script_ref(&conv, "acme", &cms, &HashMap::new());
+        assert_eq!(got.as_deref(), Some("#{ namespace: \"x\" }"));
+    }
+
+    #[test]
+    fn script_ref_missing_configmap_or_key_is_none() {
+        let conv = conv_with_ref("scripts", "resolve.rhai", None);
+        assert_eq!(resolve_script_ref(&conv, "acme", &HashMap::new(), &HashMap::new()), None);
+
+        let mut cms = HashMap::new();
+        cms.insert("acme/scripts".to_string(), BTreeMap::new()); // present, wrong key
+        assert_eq!(resolve_script_ref(&conv, "acme", &cms, &HashMap::new()), None);
+    }
+
+    #[test]
+    fn inline_script_takes_precedence_over_ref() {
+        let mut conv = conv_with_ref("scripts", "resolve.rhai", None);
+        conv.script = Some("inline".into());
+        let mut cms = HashMap::new();
+        let mut data = BTreeMap::new();
+        data.insert("resolve.rhai".to_string(), "from-cm".to_string());
+        cms.insert("acme/scripts".to_string(), data);
+        assert_eq!(resolve_script_ref(&conv, "acme", &cms, &HashMap::new()), None);
+    }
+
+    #[test]
+    fn cross_namespace_ref_requires_grant() {
+        let mut cms = HashMap::new();
+        let mut data = BTreeMap::new();
+        data.insert("k".to_string(), "script".to_string());
+        cms.insert("shared/scripts".to_string(), data);
+        let conv = conv_with_ref("scripts", "k", Some("shared"));
+
+        // No grant → denied.
+        assert_eq!(resolve_script_ref(&conv, "acme", &cms, &HashMap::new()), None);
+
+        // Grant in the target ns permitting OctopusRoute@acme → ConfigMap.
+        let mut grants = HashMap::new();
+        grants.insert(
+            "shared".to_string(),
+            vec![ReferenceGrantSpec {
+                from: vec![ReferenceGrantFrom {
+                    group: "gateway.octopus.io".into(),
+                    kind: "OctopusRoute".into(),
+                    namespace: "acme".into(),
+                }],
+                to: vec![ReferenceGrantTo {
+                    group: "".into(),
+                    kind: "ConfigMap".into(),
+                    name: None,
+                }],
+            }],
+        );
+        assert_eq!(
+            resolve_script_ref(&conv, "acme", &cms, &grants).as_deref(),
+            Some("script")
+        );
+    }
 
     fn httproute_spec(path: &str, svc: &str, port: u16) -> HTTPRouteSpec {
         HTTPRouteSpec {
@@ -540,17 +1002,23 @@ mod tests {
             &httproute_spec("/api", "api-svc", 8080),
         );
         assert!(
-            router.match_route(&Method::GET, "/api").is_ok(),
+            router
+                .match_route("example.com", &Method::GET, "/api")
+                .is_ok(),
             "exact prefix matches"
         );
         assert!(
-            router.match_route(&Method::GET, "/api/users").is_ok(),
+            router
+                .match_route("example.com", &Method::GET, "/api/users")
+                .is_ok(),
             "subpath matches via wildcard"
         );
 
         rec.remove_httproute("api-route", "default");
         assert!(
-            router.match_route(&Method::GET, "/api").is_err(),
+            router
+                .match_route("example.com", &Method::GET, "/api")
+                .is_err(),
             "route removed after delete"
         );
     }
@@ -569,7 +1037,9 @@ mod tests {
             )],
             vec![UpstreamCluster::new("static-up")],
         );
-        assert!(router.match_route(&Method::GET, "/static").is_ok());
+        assert!(router
+            .match_route("example.com", &Method::GET, "/static")
+            .is_ok());
 
         rec.upsert_httproute(
             "api-route",
@@ -577,21 +1047,29 @@ mod tests {
             &httproute_spec("/api", "api-svc", 8080),
         );
         assert!(
-            router.match_route(&Method::GET, "/static").is_ok(),
+            router
+                .match_route("example.com", &Method::GET, "/static")
+                .is_ok(),
             "static preserved"
         );
         assert!(
-            router.match_route(&Method::GET, "/api").is_ok(),
+            router
+                .match_route("example.com", &Method::GET, "/api")
+                .is_ok(),
             "gateway route added"
         );
 
         rec.remove_httproute("api-route", "default");
         assert!(
-            router.match_route(&Method::GET, "/static").is_ok(),
+            router
+                .match_route("example.com", &Method::GET, "/static")
+                .is_ok(),
             "static still present"
         );
         assert!(
-            router.match_route(&Method::GET, "/api").is_err(),
+            router
+                .match_route("example.com", &Method::GET, "/api")
+                .is_err(),
             "gateway route gone"
         );
     }
@@ -630,7 +1108,9 @@ mod tests {
             },
         );
 
-        let m = router.match_route(&Method::GET, "/orders").unwrap();
+        let m = router
+            .match_route("example.com", &Method::GET, "/orders")
+            .unwrap();
         assert_eq!(m.route.upstream_name, "orders-up");
         assert_eq!(m.route.auth_provider, None, "no inline auth yet");
 
@@ -649,7 +1129,9 @@ mod tests {
                 ..Default::default()
             },
         );
-        let m = router.match_route(&Method::GET, "/orders").unwrap();
+        let m = router
+            .match_route("example.com", &Method::GET, "/orders")
+            .unwrap();
         assert_eq!(
             m.route.auth_provider.as_deref(),
             Some("jwt"),
@@ -658,7 +1140,9 @@ mod tests {
 
         // Removing the policy reverts the enrichment.
         rec.remove_policy("orders-auth", "shop");
-        let m = router.match_route(&Method::GET, "/orders").unwrap();
+        let m = router
+            .match_route("example.com", &Method::GET, "/orders")
+            .unwrap();
         assert_eq!(m.route.auth_provider, None, "policy removal reverts auth");
     }
 }

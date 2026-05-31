@@ -36,7 +36,7 @@ export function Banner({
   rainbowColors?: string[];
 
   /**
-   * Change Authsome layout styles
+   * Change Octopus layout styles
    *
    * @defaultValue true
    */

@@ -39,7 +39,12 @@ gateway:
 
   # Max request body size (in bytes)
   max_body_size: 10485760  # 10MB
-  
+
+  # Reject requests whose Host/:authority disagrees with the negotiated TLS SNI
+  # (anti host-spoofing; also the correct HTTP/2 connection-coalescing response).
+  # Default true. Set false when TLS is terminated upstream or Host != SNI is expected.
+  enforce_sni_check: true
+
   # TLS/HTTPS configuration (optional)
   # Uncomment to enable HTTPS
   # tls:

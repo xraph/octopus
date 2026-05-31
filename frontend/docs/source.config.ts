@@ -20,7 +20,12 @@ import type { ElementContent } from 'hast';
 // see https://fumadocs.dev/docs/mdx/collections
 export const docs = defineDocs({
   docs: {
-    schema: frontmatterSchema,
+    schema: frontmatterSchema.extend({
+      // Optional live-component preview: maps to an export of `@/components/preview`.
+      preview: z.string().optional(),
+      // Marks a section index page that renders its child pages as cards.
+      index: z.boolean().optional(),
+    }),
     postprocess: {
       includeProcessedMarkdown: true,
     },

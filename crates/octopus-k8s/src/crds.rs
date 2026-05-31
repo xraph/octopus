@@ -125,6 +125,58 @@ pub struct OctopusRouteSpec {
     /// Reference to a Rhai script (e.g. a ConfigMap name).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub script_ref: Option<String>,
+    /// Convention for deriving the backend from the request host (multi-tenant
+    /// subdomain routing). When set, this route becomes a single wildcard route
+    /// (`*.<baseDomain>`) whose upstream is derived per request from the host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub convention: Option<ConventionSpec>,
+}
+
+/// Host-to-backend convention: derive `{namespace, service}` from the request
+/// host instead of declaring a route per tenant.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ConventionSpec {
+    /// Base domain, e.g. `platform.com`. The route matches `*.<baseDomain>`.
+    pub base_domain: String,
+    /// Label roles for the tenant prefix, left to right. Recognized values:
+    /// `service`, `namespace` (alias `tenant`), `ignore`. For example
+    /// `["service","namespace"]` maps `orders.acme.platform.com` to Service
+    /// `orders` in namespace `acme`.
+    pub layout: Vec<String>,
+    /// Service name to use when `layout` has no `service` entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_service: Option<String>,
+    /// Upstream port for the derived Service (default 80).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    /// Optional inline Rhai script mapping `host` → `#{namespace, service[, port]}`,
+    /// overriding the label `layout` when it returns a mapping (otherwise the
+    /// layout is used). Receives the request `host` as a string variable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script: Option<String>,
+    /// Load the host-resolution Rhai script from a ConfigMap (ignored when an
+    /// inline `script` is set). Cross-namespace refs require a `ReferenceGrant`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script_ref: Option<ScriptConfigMapRef>,
+    /// Backend load-balancing: `ServiceDNS` (default) routes to the cluster
+    /// Service DNS name; `EndpointSlice` watches the Service's EndpointSlices and
+    /// balances across pod IPs directly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backend_strategy: Option<String>,
+}
+
+/// Reference to a key in a ConfigMap holding a Rhai host-resolution script.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ScriptConfigMapRef {
+    /// ConfigMap name.
+    pub name: String,
+    /// Data key within the ConfigMap.
+    pub key: String,
+    /// ConfigMap namespace (defaults to the route's namespace).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
 }
 
 /// An upstream cluster with explicit targets and load-balancing policy.

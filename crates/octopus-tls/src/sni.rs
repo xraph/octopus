@@ -14,6 +14,9 @@ use std::sync::Arc;
 #[derive(Debug, Default)]
 pub struct SniCertResolver {
     by_host: HashMap<String, Arc<CertifiedKey>>,
+    /// Wildcard certs keyed by suffix with a leading dot (e.g. `.acme.com` for
+    /// `*.acme.com`). Longest matching suffix wins.
+    wildcards: Vec<(String, Arc<CertifiedKey>)>,
     default: Option<Arc<CertifiedKey>>,
 }
 
@@ -23,15 +26,25 @@ impl SniCertResolver {
         Self::default()
     }
 
-    /// Add (or replace) the certificate served for `hostname`.
+    /// Add (or replace) the certificate served for `hostname`. A `*.base`
+    /// hostname registers a wildcard that matches any subdomain of `base`.
     pub fn add(
         &mut self,
         hostname: impl Into<String>,
         cert_pem: &[u8],
         key_pem: &[u8],
     ) -> Result<()> {
-        let key = certified_key_from_pem(cert_pem, key_pem)?;
-        self.by_host.insert(hostname.into(), Arc::new(key));
+        let hostname = hostname.into();
+        let ck = Arc::new(certified_key_from_pem(cert_pem, key_pem)?);
+        if let Some(rest) = hostname.strip_prefix("*.") {
+            let suffix = format!(".{rest}");
+            match self.wildcards.iter_mut().find(|(s, _)| *s == suffix) {
+                Some(slot) => slot.1 = ck,
+                None => self.wildcards.push((suffix, ck)),
+            }
+        } else {
+            self.by_host.insert(hostname, ck);
+        }
         Ok(())
     }
 
@@ -42,14 +55,14 @@ impl SniCertResolver {
         Ok(())
     }
 
-    /// Number of host-specific certificates tracked.
+    /// Number of host-specific certificates tracked (exact + wildcard).
     pub fn len(&self) -> usize {
-        self.by_host.len()
+        self.by_host.len() + self.wildcards.len()
     }
 
     /// Whether no host-specific certificates are tracked.
     pub fn is_empty(&self) -> bool {
-        self.by_host.is_empty()
+        self.by_host.is_empty() && self.wildcards.is_empty()
     }
 
     /// Consume the resolver into a rustls [`ServerConfig`] that performs SNI
@@ -67,7 +80,23 @@ impl SniCertResolver {
     /// [`ResolvesServerCert::resolve`]).
     fn lookup(&self, server_name: Option<&str>) -> Option<Arc<CertifiedKey>> {
         if let Some(name) = server_name {
+            // Exact host wins over any wildcard.
             if let Some(ck) = self.by_host.get(name) {
+                return Some(Arc::clone(ck));
+            }
+            // Otherwise the most specific (longest) matching wildcard suffix.
+            let mut best_len = 0usize;
+            let mut best_ck: Option<&Arc<CertifiedKey>> = None;
+            for (suffix, ck) in &self.wildcards {
+                if name.len() > suffix.len()
+                    && name.ends_with(suffix.as_str())
+                    && suffix.len() > best_len
+                {
+                    best_len = suffix.len();
+                    best_ck = Some(ck);
+                }
+            }
+            if let Some(ck) = best_ck {
                 return Some(Arc::clone(ck));
             }
         }
@@ -149,6 +178,36 @@ MZJwLhzCrGHJXk0exP7K73agVp3RiDz7w/rmMBCmhSCppD+vpl7vMnZ9
             Arc::ptr_eq(&default_cert, &none_sni),
             "unknown host and no-SNI both use default"
         );
+    }
+
+    #[test]
+    fn wildcard_matches_subdomains_exact_wins_apex_falls_to_default() {
+        let mut r = SniCertResolver::new();
+        r.add("*.acme.com", CERT.as_bytes(), KEY.as_bytes())
+            .unwrap(); // wildcard slot
+        r.add("api.acme.com", CERT.as_bytes(), KEY.as_bytes())
+            .unwrap(); // exact slot
+        r.set_default(CERT.as_bytes(), KEY.as_bytes()).unwrap(); // default slot
+
+        let sub = r
+            .lookup(Some("foo.acme.com"))
+            .expect("subdomain → wildcard");
+        let exact = r.lookup(Some("api.acme.com")).expect("exact host");
+        let other = r.lookup(Some("zzz.org")).expect("unrelated → default");
+        let apex = r
+            .lookup(Some("acme.com"))
+            .expect("apex is not a subdomain → default");
+
+        // Subdomain uses the wildcard cert — distinct from both exact and default.
+        assert!(
+            !Arc::ptr_eq(&sub, &exact),
+            "subdomain uses wildcard, not exact"
+        );
+        assert!(!Arc::ptr_eq(&sub, &other), "wildcard differs from default");
+        // Exact host wins over the wildcard and is distinct from default.
+        assert!(!Arc::ptr_eq(&exact, &other), "exact differs from default");
+        // Apex (no subdomain label) is not matched by the wildcard → default.
+        assert!(Arc::ptr_eq(&apex, &other), "apex falls back to default");
     }
 
     #[test]

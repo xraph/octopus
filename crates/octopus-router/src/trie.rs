@@ -17,10 +17,12 @@ struct TrieNode {
     /// Wildcard child (e.g., *filepath)
     wildcard_child: Option<Box<TrieNode>>,
 
-    /// Route at this node (if terminal)
-    route: Option<Route>,
+    /// Routes at this node (terminal). Multiple routes may share a method+path
+    /// when they are scoped to different hosts; selection picks the most
+    /// specific host at match time.
+    routes: Vec<Route>,
 
-    /// Path matcher for this node
+    /// Path matcher for this node (shared by all routes here — same path)
     matcher: Option<PathMatcher>,
 }
 
@@ -30,7 +32,7 @@ impl TrieNode {
             children: HashMap::new(),
             param_child: None,
             wildcard_child: None,
-            route: None,
+            routes: Vec::new(),
             matcher: None,
         }
     }
@@ -81,16 +83,19 @@ impl RouteTrie {
             }
         }
 
-        // Store route and matcher at terminal node
-        if current.route.is_some() {
+        // Store route and matcher at terminal node. The same path may host
+        // several routes (one per host), but a given (path, host) is unique.
+        if current.routes.iter().any(|r| r.host == route.host) {
             return Err(Error::Config(format!(
-                "Route already exists: {}",
-                route.path
+                "Route already exists: {} (host {:?})",
+                route.path, route.host
             )));
         }
 
-        current.matcher = Some(PathMatcher::new(route.path.clone()));
-        current.route = Some(route);
+        if current.matcher.is_none() {
+            current.matcher = Some(PathMatcher::new(route.path.clone()));
+        }
+        current.routes.push(route);
         self.count += 1;
 
         Ok(())
@@ -100,23 +105,26 @@ impl RouteTrie {
     pub fn remove(&mut self, path: &str) -> Result<()> {
         let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 
-        if Self::remove_recursive(&mut self.root, &segments, 0) {
-            self.count -= 1;
+        let removed = Self::remove_recursive(&mut self.root, &segments, 0);
+        if removed > 0 {
+            self.count -= removed;
             Ok(())
         } else {
             Err(Error::RouteNotFound(path.to_string()))
         }
     }
 
-    fn remove_recursive(node: &mut TrieNode, segments: &[&str], index: usize) -> bool {
+    /// Returns the number of routes removed at the matched terminal node.
+    fn remove_recursive(node: &mut TrieNode, segments: &[&str], index: usize) -> usize {
         if index == segments.len() {
-            // Reached end of path
-            if node.route.is_some() {
-                node.route = None;
+            // Reached end of path — drop every route registered here.
+            if !node.routes.is_empty() {
+                let removed = node.routes.len();
+                node.routes.clear();
                 node.matcher = None;
-                return true;
+                return removed;
             }
-            return false;
+            return 0;
         }
 
         let segment = segments[index];
@@ -133,33 +141,51 @@ impl RouteTrie {
             return Self::remove_recursive(child, segments, index + 1);
         }
 
-        false
+        0
     }
 
-    /// Match a path against routes in the trie
-    pub fn match_path(&self, path: &str) -> Option<Match> {
+    /// Match a request `host` + `path` against routes in the trie.
+    ///
+    /// Only routes whose host matches are considered; among those, the most
+    /// specific host wins (exact > wildcard > any), then higher priority.
+    /// `host` must be lowercased by the caller.
+    pub fn match_path(&self, host: &str, path: &str) -> Option<Match> {
         let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
 
         let mut matches = Vec::new();
-        Self::match_recursive(&self.root, &segments, 0, &mut matches);
+        Self::match_recursive(&self.root, host, &segments, 0, &mut matches);
 
-        // Return highest priority match
-        matches.sort_by_key(|b| std::cmp::Reverse(b.route.priority));
+        // Most specific host first, then highest priority.
+        matches.sort_by(|a, b| {
+            b.route
+                .host
+                .specificity()
+                .cmp(&a.route.host.specificity())
+                .then(b.route.priority.cmp(&a.route.priority))
+        });
         matches.into_iter().next()
     }
 
-    fn match_recursive(node: &TrieNode, segments: &[&str], index: usize, matches: &mut Vec<Match>) {
+    fn match_recursive(
+        node: &TrieNode,
+        host: &str,
+        segments: &[&str],
+        index: usize,
+        matches: &mut Vec<Match>,
+    ) {
         if index == segments.len() {
-            // Reached end of path, check if there's a route here
-            if let Some(route) = &node.route {
-                if let Some(matcher) = &node.matcher {
-                    let path = format!("/{}", segments.join("/"));
-                    if let Some(params) = matcher.matches(&path) {
-                        matches.push(Match {
-                            route: route.clone(),
-                            params,
-                            wildcard: None,
-                        });
+            // Reached end of path — collect every host-matching route here.
+            if let Some(matcher) = &node.matcher {
+                let path = format!("/{}", segments.join("/"));
+                if let Some(params) = matcher.matches(&path) {
+                    for route in &node.routes {
+                        if route.host.matches(host) {
+                            matches.push(Match {
+                                route: route.clone(),
+                                params: params.clone(),
+                                wildcard: None,
+                            });
+                        }
                     }
                 }
             }
@@ -170,25 +196,27 @@ impl RouteTrie {
 
         // Try static match first (highest priority)
         if let Some(child) = node.children.get(segment) {
-            Self::match_recursive(child, segments, index + 1, matches);
+            Self::match_recursive(child, host, segments, index + 1, matches);
         }
 
         // Try parameter match
         if let Some(ref child) = node.param_child {
-            Self::match_recursive(child, segments, index + 1, matches);
+            Self::match_recursive(child, host, segments, index + 1, matches);
         }
 
         // Try wildcard match (lowest priority)
         if let Some(ref child) = node.wildcard_child {
-            if let Some(route) = &child.route {
-                if let Some(matcher) = &child.matcher {
-                    let path = format!("/{}", segments.join("/"));
-                    if let Some(params) = matcher.matches(&path) {
-                        matches.push(Match {
-                            route: route.clone(),
-                            params,
-                            wildcard: Some(segments[index..].join("/")),
-                        });
+            if let Some(matcher) = &child.matcher {
+                let path = format!("/{}", segments.join("/"));
+                if let Some(params) = matcher.matches(&path) {
+                    for route in &child.routes {
+                        if route.host.matches(host) {
+                            matches.push(Match {
+                                route: route.clone(),
+                                params: params.clone(),
+                                wildcard: Some(segments[index..].join("/")),
+                            });
+                        }
                     }
                 }
             }
@@ -213,7 +241,7 @@ impl RouteTrie {
     }
 
     fn collect_routes(node: &TrieNode, routes: &mut Vec<Route>) {
-        if let Some(ref route) = node.route {
+        for route in &node.routes {
             routes.push(route.clone());
         }
 
@@ -240,8 +268,117 @@ impl Default for RouteTrie {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::host::HostMatch;
     use crate::RouteBuilder;
     use http::Method;
+
+    fn route_h(path: &str, upstream: &str, host: HostMatch) -> Route {
+        RouteBuilder::new()
+            .method(Method::GET)
+            .path(path)
+            .upstream_name(upstream)
+            .host(host)
+            .build()
+            .unwrap()
+    }
+
+    #[test]
+    fn same_path_different_hosts_coexist() {
+        let mut trie = RouteTrie::new();
+        trie.insert(route_h(
+            "/api",
+            "acme-up",
+            HostMatch::Exact("acme.example.com".into()),
+        ))
+        .unwrap();
+        trie.insert(route_h(
+            "/api",
+            "globex-up",
+            HostMatch::Exact("globex.example.com".into()),
+        ))
+        .unwrap();
+
+        assert_eq!(trie.len(), 2);
+        assert_eq!(
+            trie.match_path("acme.example.com", "/api")
+                .unwrap()
+                .route
+                .upstream_name,
+            "acme-up"
+        );
+        assert_eq!(
+            trie.match_path("globex.example.com", "/api")
+                .unwrap()
+                .route
+                .upstream_name,
+            "globex-up"
+        );
+    }
+
+    #[test]
+    fn exact_host_beats_wildcard_beats_any_same_path() {
+        let mut trie = RouteTrie::new();
+        trie.insert(route_h("/api", "any-up", HostMatch::Any))
+            .unwrap();
+        trie.insert(route_h(
+            "/api",
+            "wild-up",
+            HostMatch::Wildcard(".example.com".into()),
+        ))
+        .unwrap();
+        trie.insert(route_h(
+            "/api",
+            "exact-up",
+            HostMatch::Exact("api.example.com".into()),
+        ))
+        .unwrap();
+
+        // exact host is the most specific
+        assert_eq!(
+            trie.match_path("api.example.com", "/api")
+                .unwrap()
+                .route
+                .upstream_name,
+            "exact-up"
+        );
+        // a different subdomain falls through to the wildcard
+        assert_eq!(
+            trie.match_path("foo.example.com", "/api")
+                .unwrap()
+                .route
+                .upstream_name,
+            "wild-up"
+        );
+        // an unrelated host falls through to the any-host route
+        assert_eq!(
+            trie.match_path("other.org", "/api")
+                .unwrap()
+                .route
+                .upstream_name,
+            "any-up"
+        );
+    }
+
+    #[test]
+    fn no_host_match_returns_none_when_no_any_route() {
+        let mut trie = RouteTrie::new();
+        trie.insert(route_h(
+            "/api",
+            "acme-up",
+            HostMatch::Exact("acme.example.com".into()),
+        ))
+        .unwrap();
+        assert!(trie.match_path("other.com", "/api").is_none());
+    }
+
+    #[test]
+    fn duplicate_path_and_host_is_rejected() {
+        let mut trie = RouteTrie::new();
+        trie.insert(route_h("/api", "u1", HostMatch::Exact("a.com".into())))
+            .unwrap();
+        let dup = trie.insert(route_h("/api", "u2", HostMatch::Exact("a.com".into())));
+        assert!(dup.is_err(), "same (path, host) must be rejected");
+    }
 
     #[test]
     fn test_insert_and_match_static() {
@@ -257,7 +394,7 @@ mod tests {
         trie.insert(route).unwrap();
         assert_eq!(trie.len(), 1);
 
-        let matched = trie.match_path("/users").unwrap();
+        let matched = trie.match_path("example.com", "/users").unwrap();
         assert_eq!(matched.route.path, "/users");
     }
 
@@ -274,7 +411,7 @@ mod tests {
 
         trie.insert(route).unwrap();
 
-        let matched = trie.match_path("/users/123").unwrap();
+        let matched = trie.match_path("example.com", "/users/123").unwrap();
         assert_eq!(matched.route.path, "/users/:id");
         assert_eq!(matched.params.get("id"), Some(&"123".to_string()));
     }
@@ -305,7 +442,7 @@ mod tests {
         trie.insert(route2).unwrap();
 
         // Should match high priority route
-        let matched = trie.match_path("/api/users").unwrap();
+        let matched = trie.match_path("example.com", "/api/users").unwrap();
         assert_eq!(matched.route.upstream_name, "users");
     }
 
@@ -326,7 +463,7 @@ mod tests {
         trie.remove("/users/:id").unwrap();
         assert_eq!(trie.len(), 0);
 
-        assert!(trie.match_path("/users/123").is_none());
+        assert!(trie.match_path("example.com", "/users/123").is_none());
     }
 
     #[test]
@@ -355,25 +492,28 @@ mod tests {
 
         // Test various matches
         assert_eq!(
-            trie.match_path("/api/users").unwrap().route.upstream_name,
+            trie.match_path("example.com", "/api/users")
+                .unwrap()
+                .route
+                .upstream_name,
             "users-static"
         );
         assert_eq!(
-            trie.match_path("/api/users/123")
+            trie.match_path("example.com", "/api/users/123")
                 .unwrap()
                 .route
                 .upstream_name,
             "users-detail"
         );
         assert_eq!(
-            trie.match_path("/api/users/123/posts")
+            trie.match_path("example.com", "/api/users/123/posts")
                 .unwrap()
                 .route
                 .upstream_name,
             "user-posts"
         );
         assert_eq!(
-            trie.match_path("/static/css/main.css")
+            trie.match_path("example.com", "/static/css/main.css")
                 .unwrap()
                 .route
                 .upstream_name,

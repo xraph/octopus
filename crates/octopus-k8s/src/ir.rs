@@ -8,6 +8,7 @@
 
 use http::Method;
 use octopus_core::UpstreamCluster;
+use octopus_router::{Convention, HostMatch};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -71,6 +72,9 @@ pub struct RateLimit {
 pub struct IntermediateRoute {
     /// HTTP method.
     pub method: Method,
+    /// Host this route is scoped to (Gateway API `hostnames`). Defaults to
+    /// [`HostMatch::Any`] for host-agnostic sources.
+    pub host: HostMatch,
     /// Match path (may contain `:param` / `*wildcard`).
     pub path: String,
     /// Target upstream cluster name.
@@ -100,6 +104,9 @@ pub struct IntermediateRoute {
     pub timeout: Option<Duration>,
     /// Per-route rate limit.
     pub rate_limit: Option<RateLimit>,
+    /// Convention for deriving the upstream from the request host. When set, the
+    /// route is host-wildcarded and its upstream is resolved per request.
+    pub convention: Option<Convention>,
 }
 
 impl IntermediateRoute {
@@ -112,6 +119,7 @@ impl IntermediateRoute {
     ) -> Self {
         Self {
             method,
+            host: HostMatch::Any,
             path: path.into(),
             upstream: upstream.into(),
             priority: 0,
@@ -126,12 +134,19 @@ impl IntermediateRoute {
             authz_rule: None,
             timeout: None,
             rate_limit: None,
+            convention: None,
         }
     }
 
     /// Set an explicit priority.
     pub fn with_priority(mut self, priority: i32) -> Self {
         self.priority = priority;
+        self
+    }
+
+    /// Scope this route to a host.
+    pub fn with_host(mut self, host: HostMatch) -> Self {
+        self.host = host;
         self
     }
 }
@@ -191,15 +206,21 @@ impl RouteStore {
 
     /// Merge every source into one conflict-free [`RoutingTable`].
     ///
-    /// Routes that collide on `method`+`path` are resolved by highest
-    /// `priority`, then by [`RouteSource::precedence`]. Upstreams are
-    /// deduplicated by name, preferring the higher-precedence source.
+    /// Routes that collide on `method`+`path`+`host` are resolved by highest
+    /// `priority`, then by [`RouteSource::precedence`]. Routes scoped to
+    /// different hosts do not collide. Upstreams are deduplicated by name,
+    /// preferring the higher-precedence source.
     pub fn merge(&self) -> RoutingTable {
-        // Resolve route collisions on (method, path).
-        let mut best: HashMap<(Method, String), &IntermediateRoute> = HashMap::new();
+        // Resolve route collisions on (method, path, host) — routes scoped to
+        // different hosts never collide.
+        let mut best: HashMap<(Method, String, HostMatch), &IntermediateRoute> = HashMap::new();
         for set in self.entries.values() {
             for candidate in &set.routes {
-                let key = (candidate.method.clone(), candidate.path.clone());
+                let key = (
+                    candidate.method.clone(),
+                    candidate.path.clone(),
+                    candidate.host.clone(),
+                );
                 match best.get(&key) {
                     Some(existing) if !route_wins(candidate, existing) => {}
                     _ => {
@@ -268,6 +289,34 @@ mod tests {
         t.routes
             .iter()
             .find(|r| &r.method == method && r.path == path)
+    }
+
+    #[test]
+    fn same_method_path_different_host_both_survive_merge() {
+        let mut store = RouteStore::new();
+        store.insert(
+            SourceKey::new(RouteSource::GatewayApi, "acme"),
+            vec![
+                route(Method::GET, "/api", "acme-up", RouteSource::GatewayApi)
+                    .with_host(HostMatch::Exact("acme.example.com".into())),
+            ],
+            vec![],
+        );
+        store.insert(
+            SourceKey::new(RouteSource::GatewayApi, "globex"),
+            vec![
+                route(Method::GET, "/api", "globex-up", RouteSource::GatewayApi)
+                    .with_host(HostMatch::Exact("globex.example.com".into())),
+            ],
+            vec![],
+        );
+
+        let table = store.merge();
+        assert_eq!(
+            table.routes.iter().filter(|r| r.path == "/api").count(),
+            2,
+            "same method+path but different hosts must NOT collide"
+        );
     }
 
     #[test]

@@ -24,12 +24,9 @@ import { getMDXComponents } from '@/mdx-components';
 import { LLMCopyButton, ViewOptions } from '@/components/ai/page-actions';
 import * as path from 'node:path';
 import { Banner } from 'fumadocs-ui/components/banner';
-import { Installation } from '@/components/preview/installation';
-import { Customisation } from '@/components/preview/customisation';
-import { DocsBody, DocsPage } from 'fumadocs-ui/page';
+import { DocsPage } from 'fumadocs-ui/page';
 import { NotFound } from '@/components/not-found';
 import { getSuggestions } from './suggestions';
-import { APIPage } from 'fumadocs-openapi/ui';
 
 function PreviewRenderer({ preview }: { preview: string }): ReactNode {
   if (preview && preview in Preview) {
@@ -51,18 +48,6 @@ export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
 
   if (!page)
     return <NotFound getSuggestions={() => getSuggestions(slug.join(' '))} />;
-
-  if (page.data.type === 'openapi') {
-    return (
-      <DocsPage>
-        <h1 className="text-[1.75em] font-semibold">{page.data.title}</h1>
-        <p className="text-fd-muted-foreground mb-6">{page.data.description}</p>
-        <DocsBody>
-          <APIPage {...page.data.getAPIPageProps()} />
-        </DocsBody>
-      </DocsPage>
-    );
-  }
 
   const { body: Mdx, toc, lastModified, preview } = page.data;
 
@@ -129,8 +114,6 @@ export default async function Page(props: PageProps<'/docs/[[...slug]]'>) {
             DocsCategory: ({ url }) => {
               return <DocsCategory url={url ?? page.url} />;
             },
-            Installation,
-            Customisation,
           })}
         />
         {page.data.index ? <DocsCategory url={page.url} /> : null}

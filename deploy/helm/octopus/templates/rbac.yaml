@@ -11,6 +11,10 @@ rules:
   - apiGroups: [""]
     resources: ["services", "endpoints"]
     verbs: ["get", "list", "watch"]
+  # ConfigMaps backing convention host-resolution scripts (script_ref).
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
   # Primary discovery source — reflects pod scale up/down.
   - apiGroups: ["discovery.k8s.io"]
     resources: ["endpointslices"]

@@ -1,11 +1,12 @@
 //! Translate Gateway API resources into the intermediate routing representation.
 
-use crate::crds::{OctopusRouteSpec, OctopusUpstreamSpec};
+use crate::crds::{ConventionSpec, OctopusRouteSpec, OctopusUpstreamSpec};
 use crate::gateway_api::{GRPCRouteSpec, GrpcMethodMatch, HTTPRouteSpec, HttpBackendRef};
 use crate::ir::{IntermediateRoute, RateLimit, RouteSource};
 use http::Method;
 use octopus_core::types::LoadBalanceStrategy;
 use octopus_core::{UpstreamCluster, UpstreamInstance};
+use octopus_router::{BackendStrategy, Convention, HostMatch, LabelRole};
 use std::time::Duration;
 
 /// Wildcard parameter name used to emulate Gateway API `PathPrefix` semantics
@@ -18,14 +19,19 @@ const PREFIX_WILDCARD: &str = "octopus_prefix";
 const DEFAULT_METHODS: &[&str] = &["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 
 /// Translate an `HTTPRoute` into intermediate routes and the upstream clusters
-/// they target. `name`/`namespace` are the route's own identity.
+/// they target. `name`/`namespace` are the route's own identity;
+/// `listener_hostnames` is the union of the parent Gateway listener hostnames the
+/// route attaches to (empty = unconstrained), intersected with the route's own.
 pub fn httproute_to_route(
     name: &str,
     namespace: &str,
     spec: &HTTPRouteSpec,
+    listener_hostnames: &[String],
 ) -> (Vec<IntermediateRoute>, Vec<UpstreamCluster>) {
     let mut routes = Vec::new();
     let mut upstreams = Vec::new();
+    // Effective hostnames = route hostnames ∩ parent listener hostnames.
+    let hosts = intersect_hostnames(&spec.hostnames, listener_hostnames);
 
     for (idx, rule) in spec.rules.iter().enumerate() {
         if rule.backend_refs.is_empty() {
@@ -80,24 +86,106 @@ pub fn httproute_to_route(
                         tracing::warn!(method = %method_str, "Invalid HTTP method; skipping");
                         continue;
                     };
-                    let mut route = IntermediateRoute::new(
-                        method,
-                        path.clone(),
-                        &cluster_name,
-                        RouteSource::GatewayApi,
-                    );
-                    route.source_id = format!("{namespace}/{name}");
-                    if replace_prefix.is_some() {
-                        route.strip_prefix = Some(path_value.clone());
-                        route.add_prefix = replace_prefix.clone();
+                    for host in &hosts {
+                        let mut route = IntermediateRoute::new(
+                            method.clone(),
+                            path.clone(),
+                            &cluster_name,
+                            RouteSource::GatewayApi,
+                        );
+                        route.host = host.clone();
+                        route.source_id = format!("{namespace}/{name}");
+                        if replace_prefix.is_some() {
+                            route.strip_prefix = Some(path_value.clone());
+                            route.add_prefix = replace_prefix.clone();
+                        }
+                        routes.push(route);
                     }
-                    routes.push(route);
                 }
             }
         }
     }
 
     (routes, upstreams)
+}
+
+/// Build a router [`Convention`] from a CRD [`ConventionSpec`].
+fn convention_from_spec(spec: &ConventionSpec) -> Convention {
+    let roles = spec
+        .layout
+        .iter()
+        .map(|r| match r.as_str() {
+            "service" => LabelRole::Service,
+            "namespace" | "tenant" => LabelRole::Namespace,
+            _ => LabelRole::Ignore,
+        })
+        .collect();
+    let backend = match spec.backend_strategy.as_deref() {
+        Some(s) if s.eq_ignore_ascii_case("endpointslice") => BackendStrategy::EndpointSlice,
+        _ => BackendStrategy::ServiceDns,
+    };
+    Convention {
+        base_suffix: format!(".{}", spec.base_domain.trim_matches('.')),
+        roles,
+        default_service: spec.default_service.clone(),
+        port: spec.port.unwrap_or(80),
+        script: spec.script.clone(),
+        backend,
+    }
+}
+
+/// Gateway API hostname overlap of two hostnames (exact or wildcard). Returns the
+/// more specific hostname when they intersect, else `None`. `*.x` matches strict
+/// subdomains of `x` (not the apex `x`).
+fn host_overlap(a: &str, b: &str) -> Option<String> {
+    if a == b {
+        return Some(a.to_string());
+    }
+    match (a.strip_prefix("*."), b.strip_prefix("*.")) {
+        // Both wildcards: the one whose suffix is a subdomain of the other wins.
+        (Some(asfx), Some(bsfx)) => {
+            if asfx.ends_with(&format!(".{bsfx}")) {
+                Some(a.to_string())
+            } else if bsfx.ends_with(&format!(".{asfx}")) {
+                Some(b.to_string())
+            } else {
+                None
+            }
+        }
+        // a is a wildcard, b exact: keep b if it is a strict subdomain of a's suffix.
+        (Some(asfx), None) => b.ends_with(&format!(".{asfx}")).then(|| b.to_string()),
+        (None, Some(bsfx)) => a.ends_with(&format!(".{bsfx}")).then(|| a.to_string()),
+        // Both exact and unequal → no overlap.
+        (None, None) => None,
+    }
+}
+
+/// Effective host matchers for a route: the Gateway-API intersection of the
+/// route's `hostnames` with its parent listener `hostnames`.
+///
+/// - both empty → match any host;
+/// - one empty → the other (the non-empty side constrains);
+/// - both set → pairwise intersection (empty result = no attachment → no routes).
+fn intersect_hostnames(route_hosts: &[String], listener_hosts: &[String]) -> Vec<HostMatch> {
+    match (route_hosts.is_empty(), listener_hosts.is_empty()) {
+        (true, true) => vec![HostMatch::Any],
+        (true, false) => listener_hosts.iter().map(|h| HostMatch::parse(h)).collect(),
+        (false, true) => route_hosts.iter().map(|h| HostMatch::parse(h)).collect(),
+        (false, false) => {
+            let mut out: Vec<HostMatch> = Vec::new();
+            for r in route_hosts {
+                for l in listener_hosts {
+                    if let Some(h) = host_overlap(r, l) {
+                        let m = HostMatch::parse(&h);
+                        if !out.contains(&m) {
+                            out.push(m);
+                        }
+                    }
+                }
+            }
+            out
+        }
+    }
 }
 
 /// Build an upstream cluster from a set of backend references.
@@ -162,6 +250,9 @@ pub fn octopus_route_to_route(
     } else {
         spec.methods.clone()
     };
+    // A convention turns this route into one wildcard-host route whose upstream
+    // is derived per request from the host.
+    let convention = spec.convention.as_ref().map(convention_from_spec);
 
     let mut routes = Vec::new();
     for method_str in &methods {
@@ -189,6 +280,10 @@ pub fn octopus_route_to_route(
             requests: rl.requests,
             window: Duration::from_secs(rl.window_seconds),
         });
+        if let Some(conv) = &convention {
+            route.host = HostMatch::Wildcard(conv.base_suffix.clone());
+            route.convention = Some(conv.clone());
+        }
         routes.push(route);
     }
     routes
@@ -221,10 +316,12 @@ pub fn grpcroute_to_route(
     name: &str,
     namespace: &str,
     spec: &GRPCRouteSpec,
+    listener_hostnames: &[String],
 ) -> (Vec<IntermediateRoute>, Vec<UpstreamCluster>) {
     let mut routes = Vec::new();
     let mut upstreams = Vec::new();
     let source_id = format!("{namespace}/{name}");
+    let hosts = intersect_hostnames(&spec.hostnames, listener_hostnames);
 
     for (idx, rule) in spec.rules.iter().enumerate() {
         if rule.backend_refs.is_empty() {
@@ -240,14 +337,17 @@ pub fn grpcroute_to_route(
             rule.matches.clone()
         };
         for m in &matches {
-            let mut route = IntermediateRoute::new(
-                Method::POST,
-                grpc_path(m.method.as_ref()),
-                &cluster_name,
-                RouteSource::GatewayApi,
-            );
-            route.source_id = source_id.clone();
-            routes.push(route);
+            for host in &hosts {
+                let mut route = IntermediateRoute::new(
+                    Method::POST,
+                    grpc_path(m.method.as_ref()),
+                    &cluster_name,
+                    RouteSource::GatewayApi,
+                );
+                route.host = host.clone();
+                route.source_id = source_id.clone();
+                routes.push(route);
+            }
         }
     }
 
@@ -322,7 +422,7 @@ mod tests {
             backend_refs: vec![backend("api-svc", 8080, None)],
         }]);
 
-        let (routes, upstreams) = httproute_to_route("api-route", "default", &s);
+        let (routes, upstreams) = httproute_to_route("api-route", "default", &s, &[]);
 
         assert_eq!(upstreams.len(), 1, "one upstream cluster for the rule");
         let cluster = &upstreams[0];
@@ -344,6 +444,139 @@ mod tests {
     }
 
     #[test]
+    fn hostnames_become_per_host_routes() {
+        let mut s = spec(vec![HttpRouteRule {
+            matches: vec![prefix_match("/api", Some("GET"))],
+            filters: vec![],
+            backend_refs: vec![backend("api-svc", 8080, None)],
+        }]);
+        s.hostnames = vec!["api.example.com".into(), "*.acme.com".into()];
+
+        let (routes, _) = httproute_to_route("api-route", "default", &s, &[]);
+
+        let hosts: std::collections::HashSet<_> = routes.iter().map(|r| r.host.clone()).collect();
+        assert!(
+            hosts.contains(&HostMatch::Exact("api.example.com".into())),
+            "exact hostname mapped"
+        );
+        assert!(
+            hosts.contains(&HostMatch::Wildcard(".acme.com".into())),
+            "wildcard hostname mapped"
+        );
+        assert!(
+            !hosts.contains(&HostMatch::Any),
+            "explicit hostnames must not yield Any"
+        );
+    }
+
+    #[test]
+    fn no_hostnames_yields_any_host() {
+        let s = spec(vec![HttpRouteRule {
+            matches: vec![prefix_match("/api", Some("GET"))],
+            filters: vec![],
+            backend_refs: vec![backend("api-svc", 8080, None)],
+        }]);
+        let (routes, _) = httproute_to_route("api-route", "default", &s, &[]);
+        assert!(
+            routes.iter().all(|r| r.host == HostMatch::Any),
+            "no hostnames → any-host routes (legacy behavior)"
+        );
+    }
+
+    #[test]
+    fn octopus_route_convention_becomes_wildcard_host_route() {
+        let spec = OctopusRouteSpec {
+            path: "/*rest".into(),
+            upstream: "unused".into(),
+            methods: vec!["GET".into()],
+            convention: Some(ConventionSpec {
+                base_domain: "platform.com".into(),
+                layout: vec!["service".into(), "namespace".into()],
+                default_service: None,
+                port: Some(8080),
+                script: None,
+                script_ref: None,
+                backend_strategy: None,
+            }),
+            ..Default::default()
+        };
+
+        let routes = octopus_route_to_route("tenants", "default", &spec);
+
+        assert!(!routes.is_empty());
+        for r in &routes {
+            assert_eq!(
+                r.host,
+                HostMatch::Wildcard(".platform.com".into()),
+                "convention route is wildcard-scoped to the base domain"
+            );
+            let conv = r.convention.as_ref().expect("convention carried on route");
+            let t = conv.resolve("orders.acme.platform.com").unwrap();
+            assert_eq!(t.service, "orders");
+            assert_eq!(t.namespace, "acme");
+            assert_eq!(t.port, 8080);
+        }
+    }
+
+    #[test]
+    fn convention_backend_strategy_parses() {
+        let mut spec = ConventionSpec {
+            base_domain: "x.com".into(),
+            layout: vec!["service".into(), "namespace".into()],
+            default_service: None,
+            port: None,
+            script: None,
+            script_ref: None,
+            backend_strategy: Some("EndpointSlice".into()),
+        };
+        assert_eq!(
+            convention_from_spec(&spec).backend,
+            BackendStrategy::EndpointSlice
+        );
+        spec.backend_strategy = Some("servicedns".into());
+        assert_eq!(convention_from_spec(&spec).backend, BackendStrategy::ServiceDns);
+        spec.backend_strategy = None;
+        assert_eq!(convention_from_spec(&spec).backend, BackendStrategy::ServiceDns);
+    }
+
+    #[test]
+    fn intersect_both_empty_matches_any() {
+        assert_eq!(intersect_hostnames(&[], &[]), vec![HostMatch::Any]);
+    }
+
+    #[test]
+    fn intersect_route_empty_inherits_listener() {
+        assert_eq!(
+            intersect_hostnames(&[], &["*.a.com".to_string()]),
+            vec![HostMatch::Wildcard(".a.com".into())]
+        );
+    }
+
+    #[test]
+    fn intersect_listener_empty_uses_route() {
+        assert_eq!(
+            intersect_hostnames(&["api.a.com".to_string()], &[]),
+            vec![HostMatch::Exact("api.a.com".into())]
+        );
+    }
+
+    #[test]
+    fn intersect_wildcard_listener_narrows_to_exact_route() {
+        assert_eq!(
+            intersect_hostnames(&["api.a.com".to_string()], &["*.a.com".to_string()]),
+            vec![HostMatch::Exact("api.a.com".into())]
+        );
+    }
+
+    #[test]
+    fn intersect_disjoint_yields_no_hosts() {
+        assert!(
+            intersect_hostnames(&["api.a.com".to_string()], &["api.b.com".to_string()]).is_empty(),
+            "non-overlapping hostnames attach nothing"
+        );
+    }
+
+    #[test]
     fn url_rewrite_replace_prefix_sets_strip_and_add() {
         let s = spec(vec![HttpRouteRule {
             matches: vec![prefix_match("/api", Some("GET"))],
@@ -361,7 +594,7 @@ mod tests {
             backend_refs: vec![backend("api-svc", 8080, None)],
         }]);
 
-        let (routes, _) = httproute_to_route("api-route", "default", &s);
+        let (routes, _) = httproute_to_route("api-route", "default", &s, &[]);
         assert!(!routes.is_empty());
         for r in &routes {
             assert_eq!(r.strip_prefix.as_deref(), Some("/api"));
@@ -377,7 +610,7 @@ mod tests {
             backend_refs: vec![backend("v1", 80, Some(80)), backend("v2", 80, Some(20))],
         }]);
 
-        let (_, upstreams) = httproute_to_route("split", "prod", &s);
+        let (_, upstreams) = httproute_to_route("split", "prod", &s, &[]);
         assert_eq!(upstreams.len(), 1);
         let cluster = &upstreams[0];
         assert_eq!(cluster.instances.len(), 2, "one instance per backend");
@@ -414,7 +647,7 @@ mod tests {
             backend_refs: vec![backend("svc", 80, None)],
         }]);
 
-        let (routes, _) = httproute_to_route("r", "default", &s);
+        let (routes, _) = httproute_to_route("r", "default", &s, &[]);
         let methods: std::collections::HashSet<String> =
             routes.iter().map(|r| r.method.to_string()).collect();
         assert!(methods.contains("GET") && methods.contains("POST") && methods.contains("DELETE"));
@@ -430,7 +663,7 @@ mod tests {
             backend_refs: vec![backend("svc", 80, None)],
         }]);
 
-        let (routes, _) = httproute_to_route("r", "default", &s);
+        let (routes, _) = httproute_to_route("r", "default", &s, &[]);
         let paths: std::collections::HashSet<&str> =
             routes.iter().map(|r| r.path.as_str()).collect();
         assert!(paths.contains("/"), "catch-all root");
@@ -561,6 +794,7 @@ mod tests {
             "echo",
             "default",
             &grpc_spec(vec![grpc_match(Some("echo.Echo"), Some("Ping"))]),
+            &[],
         );
         assert_eq!(upstreams.len(), 1);
         assert_eq!(upstreams[0].instances[0].address, "grpc-svc.default.svc");
@@ -577,13 +811,14 @@ mod tests {
             "echo",
             "default",
             &grpc_spec(vec![grpc_match(Some("echo.Echo"), None)]),
+            &[],
         );
         assert_eq!(routes[0].path, "/echo.Echo/*octopus_prefix");
     }
 
     #[test]
     fn grpc_empty_matches_is_catch_all() {
-        let (routes, _) = grpcroute_to_route("echo", "default", &grpc_spec(vec![]));
+        let (routes, _) = grpcroute_to_route("echo", "default", &grpc_spec(vec![]), &[]);
         assert_eq!(routes.len(), 1);
         assert_eq!(routes[0].path, "/*octopus_prefix");
         assert_eq!(routes[0].method, Method::POST);

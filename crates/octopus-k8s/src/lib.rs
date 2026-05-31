@@ -21,6 +21,7 @@ pub mod apply;
 pub mod controller;
 pub mod crd;
 pub mod crds;
+pub mod endpoints;
 pub mod error;
 pub mod gateway_api;
 pub mod ir;
@@ -29,4 +30,5 @@ pub mod refgrant;
 pub mod tls;
 pub mod translate;
 
+pub use endpoints::EndpointWatchManager;
 pub use error::{K8sError, Result};

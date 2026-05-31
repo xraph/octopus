@@ -14,7 +14,7 @@ export const metadata = createMetadata({
     template: '%s | Octopus',
     default: 'Octopus',
   },
-  description: 'The framework for building authentication systems',
+  description: 'An API gateway written in Rust',
   metadataBase: baseUrl,
 });
 

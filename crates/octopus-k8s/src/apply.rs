@@ -51,6 +51,7 @@ fn build_route(route: &IntermediateRoute) -> Result<Route> {
     let mut builder = RouteBuilder::new()
         .path(&route.path)
         .method(route.method.clone())
+        .host(route.host.clone())
         .upstream_name(&route.upstream)
         .priority(route.priority)
         .auth_provider(route.auth_provider.as_deref())
@@ -68,6 +69,9 @@ fn build_route(route: &IntermediateRoute) -> Result<Route> {
     }
     if let Some(rl) = &route.rate_limit {
         builder = builder.rate_limit(rl.requests, rl.window);
+    }
+    if route.convention.is_some() {
+        builder = builder.convention(route.convention.clone());
     }
 
     builder.build().map_err(|e| K8sError::Apply(e.to_string()))
@@ -100,7 +104,9 @@ mod tests {
         apply_to_router(&router, &t).unwrap();
 
         assert!(router.get_upstream("up").is_some(), "upstream registered");
-        let m = router.match_route(&Method::GET, "/api").unwrap();
+        let m = router
+            .match_route("example.com", &Method::GET, "/api")
+            .unwrap();
         assert_eq!(m.route.upstream_name, "up");
         assert_eq!(router.get_all_routes().len(), 2);
     }
@@ -121,7 +127,9 @@ mod tests {
             ),
         )
         .unwrap();
-        assert!(router.match_route(&Method::GET, "/old").is_ok());
+        assert!(router
+            .match_route("example.com", &Method::GET, "/old")
+            .is_ok());
 
         apply_to_router(
             &router,
@@ -136,9 +144,13 @@ mod tests {
             ),
         )
         .unwrap();
-        assert!(router.match_route(&Method::GET, "/new").is_ok());
+        assert!(router
+            .match_route("example.com", &Method::GET, "/new")
+            .is_ok());
         assert!(
-            router.match_route(&Method::GET, "/old").is_err(),
+            router
+                .match_route("example.com", &Method::GET, "/old")
+                .is_err(),
             "previous routes cleared on re-apply"
         );
     }
@@ -151,7 +163,9 @@ mod tests {
         route.priority = 7;
         apply_to_router(&router, &table(vec![route], "up")).unwrap();
 
-        let m = router.match_route(&Method::GET, "/x").unwrap();
+        let m = router
+            .match_route("example.com", &Method::GET, "/x")
+            .unwrap();
         assert_eq!(m.route.strip_prefix.as_deref(), Some("/x"));
         assert_eq!(m.route.priority, 7);
     }

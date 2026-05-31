@@ -1,5 +1,6 @@
 //! Authorization engine combining role/scope checks, Rhai scripts, and OPA
 
+use crate::authzen::{AuthZenClient, Authorizer};
 use crate::opa::{AuthzContext, AuthzDecision, OpaClient};
 use crate::registry::Principal;
 use octopus_config::types::{AuthzAction, AuthzConfig, AuthzEngine, AuthzRule};
@@ -23,6 +24,7 @@ pub struct AuthzEvaluator {
     engine: AuthzEngine,
     global_rules: Vec<AuthzRule>,
     opa: Option<Arc<OpaClient>>,
+    authzen: Option<Arc<AuthZenClient>>,
     rhai_engine: rhai::Engine,
 }
 
@@ -32,6 +34,7 @@ impl std::fmt::Debug for AuthzEvaluator {
             .field("engine", &self.engine)
             .field("global_rules_count", &self.global_rules.len())
             .field("opa", &self.opa.is_some())
+            .field("authzen", &self.authzen.is_some())
             .finish()
     }
 }
@@ -41,6 +44,12 @@ impl AuthzEvaluator {
     pub fn from_config(config: &AuthzConfig) -> anyhow::Result<Self> {
         let opa = if let Some(ref opa_config) = config.opa {
             Some(Arc::new(OpaClient::from_config(opa_config)?))
+        } else {
+            None
+        };
+
+        let authzen = if let Some(ref az_config) = config.authzen {
+            Some(Arc::new(AuthZenClient::from_config(az_config)?))
         } else {
             None
         };
@@ -55,8 +64,34 @@ impl AuthzEvaluator {
             engine: config.engine.clone(),
             global_rules: config.global_rules.clone(),
             opa,
+            authzen,
             rhai_engine,
         })
+    }
+
+    /// Build the shared authorization context passed to external PDPs (OPA/AuthZEN).
+    fn build_context(
+        &self,
+        principal: &Principal,
+        request_method: &str,
+        request_path: &str,
+        request_headers: &HashMap<String, String>,
+        route_upstream: &str,
+        route_metadata: &HashMap<String, String>,
+    ) -> AuthzContext {
+        AuthzContext {
+            principal: principal.into(),
+            request: crate::opa::AuthzRequest {
+                method: request_method.to_string(),
+                path: request_path.to_string(),
+                headers: request_headers.clone(),
+            },
+            route: crate::opa::AuthzRoute {
+                upstream: route_upstream.to_string(),
+                path: request_path.to_string(),
+                metadata: route_metadata.clone(),
+            },
+        }
     }
 
     /// Evaluate authorization for a request
@@ -107,25 +142,60 @@ impl AuthzEvaluator {
             }
         }
 
+        // 3b. When AuthZEN is the primary engine it is authoritative for the
+        // whole request: subject = principal, action = HTTP method, resource =
+        // request path. (OpenID AuthZEN Authorization API 1.0.)
+        if matches!(self.engine, AuthzEngine::AuthZen) {
+            return if let Some(ref pdp) = self.authzen {
+                let ctx = self.build_context(
+                    principal,
+                    request_method,
+                    request_path,
+                    request_headers,
+                    route_upstream,
+                    route_metadata,
+                );
+                pdp.evaluate(&ctx).await
+            } else {
+                warn!("authz engine is AuthZen but no PDP configured; denying");
+                Ok(AuthzDecision::Deny("AuthZEN PDP not configured".to_string()))
+            };
+        }
+
         // 4. Evaluate global rules
         for global_rule in &self.global_rules {
             let decision = match global_rule.engine.as_ref().unwrap_or(&self.engine) {
                 AuthzEngine::Opa | AuthzEngine::Both => {
                     if let Some(ref opa) = self.opa {
-                        let ctx = AuthzContext {
-                            principal: principal.into(),
-                            request: crate::opa::AuthzRequest {
-                                method: request_method.to_string(),
-                                path: request_path.to_string(),
-                                headers: request_headers.clone(),
-                            },
-                            route: crate::opa::AuthzRoute {
-                                upstream: route_upstream.to_string(),
-                                path: request_path.to_string(),
-                                metadata: route_metadata.clone(),
-                            },
-                        };
+                        let ctx = self.build_context(
+                            principal,
+                            request_method,
+                            request_path,
+                            request_headers,
+                            route_upstream,
+                            route_metadata,
+                        );
                         opa.evaluate(&ctx).await?
+                    } else {
+                        self.evaluate_rhai_rule_sync(
+                            &global_rule.rule,
+                            principal,
+                            request_method,
+                            request_path,
+                        )?
+                    }
+                }
+                AuthzEngine::AuthZen => {
+                    if let Some(ref pdp) = self.authzen {
+                        let ctx = self.build_context(
+                            principal,
+                            request_method,
+                            request_path,
+                            request_headers,
+                            route_upstream,
+                            route_metadata,
+                        );
+                        pdp.evaluate(&ctx).await?
                     } else {
                         self.evaluate_rhai_rule_sync(
                             &global_rule.rule,

@@ -16,6 +16,7 @@
     unreachable_pub
 )]
 
+pub mod backend;
 pub mod error;
 pub mod middleware;
 pub mod request;
@@ -23,6 +24,7 @@ pub mod response;
 pub mod types;
 pub mod upstream;
 
+pub use backend::BackendWatcher;
 pub use error::{Error, Result};
 pub use middleware::{Body, Middleware, Next};
 pub use request::RequestContext;

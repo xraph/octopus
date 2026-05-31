@@ -1,7 +1,6 @@
 import type { BaseLayoutProps } from 'fumadocs-ui/layouts/shared';
 import { type LinkItemType } from 'fumadocs-ui/layouts/docs';
 import { AlbumIcon, Heart, LayoutTemplate } from 'lucide-react';
-import Image from 'next/image';
 
 export const linkItems: LinkItemType[] = [
   {
@@ -29,19 +28,7 @@ export const linkItems: LinkItemType[] = [
   // },
 ];
 
-export const logo = (
-  <>
-    <Image
-      alt="Authsome"
-      // src={Logo}
-      sizes="100px"
-      className="hidden w-20 md:w-24 [.uwu_&]:block"
-      aria-label="Authsome"
-    />
-
-    Authsome
-  </>
-);
+export const logo = <>Octopus</>;
 
 /**
  * Shared layout configurations
@@ -63,12 +50,12 @@ export function baseOptions(): BaseLayoutProps {
           >
             <circle cx={12} cy={12} r={12} fill="currentColor" />
           </svg>
-          Authsome
+          Octopus
         </>
       ),
     },
     // see https://fumadocs.dev/docs/ui/navigation/links
     links: [...linkItems],
-    githubUrl: 'https://github.com/xraph/authsome',
+    githubUrl: 'https://github.com/xraph/octopus',
   };
 }

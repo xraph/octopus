@@ -115,8 +115,9 @@ export function accordion(): ReactNode {
   return (
     <Wrapper>
       <Accordions type="single" collapsible>
-        <Accordion id="what-is-authsome" title="What is Authsome?">
-          A framework for building authentication systems
+        <Accordion id="what-is-octopus" title="What is Octopus?">
+          An API gateway written in Rust — service discovery, routing, load
+          balancing, and TLS for your services.
         </Accordion>
         <Accordion id="ux" title="What do we love?">
           We love websites with a good user experience
@@ -237,7 +238,7 @@ export function banner(): ReactNode {
     <Wrapper>
       <div className="flex flex-col gap-4">
         <Banner className="z-0" changeLayout={false}>
-          Be careful, Authsome is still in alpha stage.
+          Be careful, Octopus is still in alpha stage.
         </Banner>
 
         <Banner

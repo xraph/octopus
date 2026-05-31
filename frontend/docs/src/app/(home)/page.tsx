@@ -1,12 +1,13 @@
 import Link from "next/link";
 import {
   ArrowRight,
-  Shield,
   Zap,
-  Users,
-  Code,
-  Globe,
-  Lock,
+  Network,
+  Route,
+  Gauge,
+  Shield,
+  Layers,
+  Boxes,
 } from "lucide-react";
 import {
   Card,
@@ -36,32 +37,32 @@ function HeroSection() {
         <div className="mx-auto max-w-2xl text-center">
           <Badge variant="outline" className="mb-4">
             <Zap className="mr-1 h-3 w-3" />
-            Enterprise-Grade Authentication
+            Cloud-Native API Gateway
           </Badge>
           <h1 className="text-4xl font-bold tracking-tight text-foreground sm:text-6xl">
-            Auth
+            Octo
             <LineShadowText className="italic" shadowColor='black'>
-            some
+            pus
           </LineShadowText>
           </h1>
           <p className="mt-6 text-lg leading-8 text-muted-foreground">
-            A comprehensive, pluggable authentication framework for Go
-            applications. Built for enterprise with multi-tenancy, RBAC, and 12+
-            authentication methods.
+            A fast, programmable API gateway written in Rust. FARP service
+            discovery, dynamic host &amp; path routing, TLS/SNI termination, rate
+            limiting, and first-class Kubernetes CRDs.
           </p>
           <div className="mt-10 flex items-center justify-center gap-x-6">
             <Link
-              href="/portal"
+              href="/docs/installation"
               className="rounded-md bg-brand px-3.5 py-2.5 text-sm font-semibold text-brand-foreground shadow-sm hover:bg-brand/90 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
             >
               Get Started
               <ArrowRight className="ml-2 h-4 w-4 inline" />
             </Link>
             <Link
-              href="/docs/go/examples"
+              href="/docs/first-gateway"
               className="text-sm font-semibold leading-6 text-foreground hover:text-brand"
             >
-              View Examples <span aria-hidden="true">→</span>
+              Build your first gateway <span aria-hidden="true">→</span>
             </Link>
           </div>
         </div>
@@ -72,65 +73,65 @@ function HeroSection() {
 
 /**
  * Feature Cards Section with Aceternity UI Bento Grid
- * Showcases key capabilities of AuthSome with glassmorphism effects and hover animations
+ * Showcases key capabilities of Octopus with glassmorphism effects and hover animations
  */
 function FeaturesSection() {
   const features = [
     {
-      icon: Shield,
-      title: "Enterprise Security",
+      icon: Network,
+      title: "FARP Service Discovery",
       description:
-        "Built-in security features including rate limiting, device tracking, and audit logging with comprehensive threat detection.",
+        "Upstreams register themselves over FARP, so the gateway always routes to healthy, up-to-date backends — no manual endpoint wiring.",
       className: "md:col-span-2",
       header: (
         <div className="flex h-full min-h-[6rem] w-full flex-1 rounded-xl bg-gradient-to-br from-blue-500/10 via-purple-500/10 to-pink-500/10 dark:from-blue-500/20 dark:via-purple-500/20 dark:to-pink-500/20" />
       ),
     },
     {
-      icon: Users,
-      title: "Multi-Tenancy",
+      icon: Route,
+      title: "Dynamic Routing & Proxy",
       description:
-        "Organization-scoped configurations and user management with seamless tenant isolation.",
+        "Host- and path-based matching backed by a high-performance radix trie, reverse-proxying HTTP, gRPC, WebSocket, SSE, and GraphQL.",
       className: "md:col-span-1",
       header: (
         <div className="flex h-full min-h-[6rem] w-full flex-1 rounded-xl bg-gradient-to-br from-green-500/10 via-emerald-500/10 to-teal-500/10 dark:from-green-500/20 dark:via-emerald-500/20 dark:to-teal-500/20" />
       ),
     },
     {
-      icon: Code,
-      title: "Plugin Architecture",
+      icon: Gauge,
+      title: "Load Balancing & Health",
       description:
-        "12+ authentication methods via extensible plugin system. Add custom auth flows easily.",
+        "Weighted and round-robin load balancing with active health checks and circuit breaking to shed failing upstreams automatically.",
       className: "md:col-span-1",
       header: (
         <div className="flex h-full min-h-[6rem] w-full flex-1 rounded-xl bg-gradient-to-br from-orange-500/10 via-red-500/10 to-pink-500/10 dark:from-orange-500/20 dark:via-red-500/20 dark:to-pink-500/20" />
       ),
     },
     {
-      icon: Globe,
-      title: "Framework Agnostic",
+      icon: Shield,
+      title: "TLS, SNI & mTLS",
       description:
-        "Mounts on Forge framework but designed to work with any Go web framework.",
+        "Terminate TLS with SNI-based certificate selection, mutual TLS, and hot certificate reload — no restarts required.",
       className: "md:col-span-2",
       header: (
         <div className="flex h-full min-h-[6rem] w-full flex-1 rounded-xl bg-gradient-to-br from-cyan-500/10 via-blue-500/10 to-indigo-500/10 dark:from-cyan-500/20 dark:via-blue-500/20 dark:to-indigo-500/20" />
       ),
     },
     {
-      icon: Lock,
-      title: "RBAC & Policies",
+      icon: Layers,
+      title: "Middleware & Rate Limiting",
       description:
-        "Role-based access control with policy language for fine-grained permissions.",
+        "Composable middleware for rate limiting, CORS, compression, and auth — plus custom logic in embedded Rhai scripts.",
       className: "md:col-span-1",
       header: (
         <div className="flex h-full min-h-[6rem] w-full flex-1 rounded-xl bg-gradient-to-br from-violet-500/10 via-purple-500/10 to-fuchsia-500/10 dark:from-violet-500/20 dark:via-purple-500/20 dark:to-fuchsia-500/20" />
       ),
     },
     {
-      icon: Zap,
-      title: "High Performance",
+      icon: Boxes,
+      title: "Kubernetes Native",
       description:
-        "Session caching with Redis, connection pooling, and optimized database queries for lightning-fast responses.",
+        "Run as an operator with native CRDs and Gateway API support, installable straight from a Helm chart.",
       className: "md:col-span-2",
       header: (
         <div className="flex h-full min-h-[6rem] w-full flex-1 rounded-xl bg-gradient-to-br from-yellow-500/10 via-orange-500/10 to-red-500/10 dark:from-yellow-500/20 dark:via-orange-500/20 dark:to-red-500/20" />
@@ -147,11 +148,11 @@ function FeaturesSection() {
       <div className="relative mx-auto max-w-7xl px-6 lg:px-8">
         <div className="mx-auto max-w-2xl text-center">
           <h2 className="text-3xl font-bold tracking-tight text-foreground sm:text-4xl bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text">
-            Everything you need for authentication
+            Everything you need to route production traffic
           </h2>
           <p className="mt-4 text-lg text-muted-foreground">
-            From simple username/password to enterprise SSO, AuthSome provides
-            all the tools you need.
+            From service discovery to TLS termination, Octopus gives you a
+            complete, programmable edge for your services.
           </p>
         </div>
 
@@ -206,8 +207,8 @@ function QuickStartSection() {
             Get started in minutes
           </h2>
           <p className="mt-4 text-lg text-muted-foreground">
-            Add enterprise-grade authentication to your Go application with just
-            a few lines of code.
+            Run a production-ready gateway from a single config file — install
+            with Docker, Cargo, or Helm.
           </p>
         </div>
         <div className="mx-auto mt-16 max-w-4xl">
@@ -218,14 +219,25 @@ function QuickStartSection() {
                   <span className="flex h-6 w-6 items-center justify-center rounded-full bg-brand text-xs font-bold text-brand-foreground">
                     1
                   </span>
-                  Install AuthSome
+                  Install Octopus
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="rounded-lg bg-muted p-4">
-                  <code className="text-sm">
-                    go get github.com/xraph/authsome
-                  </code>
+                  <pre className="overflow-x-auto text-sm">
+                    <code>{`# Run with Docker
+docker run -p 8080:8080 \\
+  -v "$(pwd)/config.yaml:/etc/octopus/config.yaml" \\
+  ghcr.io/xraph/octopus:latest
+
+# Deploy on Kubernetes with Helm
+helm install octopus oci://ghcr.io/xraph/charts/octopus \\
+  --namespace octopus --create-namespace
+
+# Or build from source (Rust 1.75+)
+git clone https://github.com/xraph/octopus.git
+cd octopus && make release`}</code>
+                  </pre>
                 </div>
               </CardContent>
             </Card>
@@ -235,26 +247,43 @@ function QuickStartSection() {
                   <span className="flex h-6 w-6 items-center justify-center rounded-full bg-brand text-xs font-bold text-brand-foreground">
                     2
                   </span>
-                  Mount to Forge
+                  Configure &amp; run
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="rounded-lg bg-muted p-4">
-                  <code className="text-sm">
-                    auth := authsome.New(config)
-                    <br />
-                    app.Mount("/auth", auth)
-                  </code>
+                <div className="space-y-3 rounded-lg bg-muted p-4">
+                  <pre className="overflow-x-auto text-sm">
+                    <code>{`# config.yaml
+gateway:
+  listen: "0.0.0.0:8080"
+
+upstreams:
+  - name: example-service
+    instances:
+      - id: example-1
+        host: 127.0.0.1
+        port: 8081
+
+routes:
+  - path: /api
+    upstream: example-service
+    strip_prefix: /api`}</code>
+                  </pre>
+                  <pre className="overflow-x-auto text-sm text-muted-foreground">
+                    <code>{`# validate, then serve
+octopus validate -c config.yaml
+octopus serve -c config.yaml`}</code>
+                  </pre>
                 </div>
               </CardContent>
             </Card>
           </div>
           <div className="mt-8 text-center">
             <Link
-              href="/docs/go/getting-started"
+              href="/docs/first-gateway"
               className="inline-flex items-center rounded-md bg-brand px-4 py-2 text-sm font-semibold text-brand-foreground shadow-sm hover:bg-brand/90"
             >
-              View Full Tutorial
+              Build your first gateway
               <ArrowRight className="ml-2 h-4 w-4" />
             </Link>
           </div>
@@ -273,42 +302,43 @@ function NavigationSection() {
     {
       title: "Getting Started",
       description:
-        "Installation, configuration, and your first authentication flow.",
-      href: "/docs/go/getting-started",
+        "Install Octopus and stand up your first gateway in minutes.",
+      href: "/docs/installation",
       icon: "🚀",
     },
     {
       title: "Core Concepts",
       description:
-        "Understanding users, sessions, organizations, and multi-tenancy.",
-      href: "/docs/go/concepts",
+        "Routing, service discovery, load balancing, and the request lifecycle.",
+      href: "/docs/concepts",
       icon: "🧠",
     },
     {
-      title: "Plugins",
+      title: "Configuration",
       description:
-        "Explore 12+ authentication methods and how to create custom plugins.",
-      href: "/docs/go/plugins",
-      icon: "🔌",
+        "Configure upstreams, routes, TLS, middleware, and observability.",
+      href: "/docs/configuration",
+      icon: "⚙️",
     },
     {
-      title: "API Reference",
-      description: "Complete API documentation for all services and handlers.",
-      href: "/docs/go/api",
-      icon: "📚",
+      title: "Kubernetes",
+      description:
+        "Deploy with the operator, native CRDs, Gateway API, and Helm.",
+      href: "/docs/kubernetes",
+      icon: "☸️",
     },
     {
       title: "Guides",
       description:
-        "Step-by-step tutorials for common authentication scenarios.",
-      href: "/docs/go/guides",
+        "Step-by-step tutorials for common gateway scenarios.",
+      href: "/docs/guides",
       icon: "📖",
     },
     {
-      title: "Examples",
-      description: "Real-world examples and sample applications.",
-      href: "/docs/go/examples",
-      icon: "💡",
+      title: "API Reference",
+      description: "Admin API and FARP reference for automating your gateway.",
+      href: "/docs/api",
+      icon: "📚",
     },
   ];
 
@@ -320,8 +350,8 @@ function NavigationSection() {
             Explore the documentation
           </h2>
           <p className="mt-4 text-lg text-muted-foreground">
-            Everything you need to build secure, scalable authentication
-            systems.
+            Everything you need to route, secure, and scale traffic to your
+            services.
           </p>
         </div>
         <div className="mx-auto mt-16 grid max-w-2xl grid-cols-1 gap-6 sm:mt-20 lg:mx-0 lg:max-w-none lg:grid-cols-3">
@@ -363,7 +393,7 @@ function CommunitySection() {
             Join the community
           </h2>
           <p className="mt-4 text-lg text-muted-foreground">
-            AuthSome is open source and built by developers, for developers.
+            Octopus is open source and built by developers, for developers.
           </p>
         </div>
         <div className="mx-auto mt-16 grid max-w-2xl grid-cols-1 gap-8 sm:mt-20 lg:mx-0 lg:max-w-none lg:grid-cols-2">
@@ -379,7 +409,7 @@ function CommunitySection() {
                 Star the project, report issues, and contribute to the codebase.
               </CardDescription>
               <Link
-                href="https://github.com/xraph/authsome"
+                href="https://github.com/xraph/octopus"
                 className="inline-flex items-center text-sm font-semibold text-brand hover:text-brand/80"
               >
                 View on GitHub
@@ -399,10 +429,10 @@ function CommunitySection() {
                 Get help, share ideas, and connect with other developers.
               </CardDescription>
               <Link
-                href="/docs/go/guides"
+                href="/docs/guides"
                 className="inline-flex items-center text-sm font-semibold text-brand hover:text-brand/80"
               >
-                Join Discussions
+                Browse the guides
                 <ArrowRight className="ml-1 h-4 w-4" />
               </Link>
             </CardContent>

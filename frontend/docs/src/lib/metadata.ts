@@ -6,9 +6,9 @@ export function createMetadata(override: Metadata): Metadata {
     openGraph: {
       title: override.title ?? undefined,
       description: override.description ?? undefined,
-      url: 'https://fumadocs.dev',
+      url: 'https://docs.octopus.io',
       images: '/banner.png',
-      siteName: 'Authsome',
+      siteName: 'Octopus',
       ...override.openGraph,
     },
     twitter: {
@@ -23,8 +23,8 @@ export function createMetadata(override: Metadata): Metadata {
       types: {
         'application/rss+xml': [
           {
-            title: 'Authsome Blog',
-            url: 'https://authsome.dev/blog/rss.xml',
+            title: 'Octopus Blog',
+            url: 'https://docs.octopus.io/blog/rss.xml',
           },
         ],
       },
