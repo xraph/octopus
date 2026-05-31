@@ -288,9 +288,8 @@ mod tests {
         headers.insert(CONTENT_TYPE, "application/json".parse().unwrap());
         let body = Bytes::from_static(b"{\"name\":\"orders\"}");
 
-        let req =
-            build_admin_request(&Method::POST, "/admin/api/upstreams", headers, body.clone())
-                .unwrap();
+        let req = build_admin_request(&Method::POST, "/admin/api/upstreams", headers, body.clone())
+            .unwrap();
 
         assert_eq!(req.method(), Method::POST);
         assert_eq!(

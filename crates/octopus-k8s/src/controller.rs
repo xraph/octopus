@@ -17,14 +17,14 @@ use crate::gateway_api::{
 use crate::ir::{IntermediateRoute, RouteSource, RouteStore, SourceKey};
 use crate::policy::{apply_overlays, PolicyOverlay};
 use crate::refgrant::{is_permitted, RefRequest, ReferenceGrant, ReferenceGrantSpec};
+use crate::status::{build_status, ReconcileOutcome};
 use crate::tls::TlsReconciler;
 use crate::translate::{
     grpcroute_to_route, httproute_to_route, octopus_route_to_route, octopus_upstream_to_cluster,
 };
+use crate::validate::{gatewayclass_is_ours, validate_policy, validate_route, validate_upstream};
 use futures::TryStreamExt;
 use k8s_openapi::api::core::v1::{ConfigMap, Secret};
-use crate::status::{build_status, ReconcileOutcome};
-use crate::validate::{gatewayclass_is_ours, validate_policy, validate_route, validate_upstream};
 use kube::{
     api::{Api, Patch, PatchParams},
     core::{ClusterResourceScope, NamespaceResourceScope},
@@ -914,9 +914,7 @@ fn on_gateway_class(rec: &RouteReconciler, event: watcher::Event<GatewayClass>) 
                 }
             }
         }
-        watcher::Event::Delete(_)
-        | watcher::Event::Init
-        | watcher::Event::InitDone => {}
+        watcher::Event::Delete(_) | watcher::Event::Init | watcher::Event::InitDone => {}
     }
 }
 

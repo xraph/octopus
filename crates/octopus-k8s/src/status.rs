@@ -103,7 +103,10 @@ mod tests {
         assert_eq!(c.status, "True");
         assert_eq!(c.reason, REASON_ACCEPTED);
         assert_eq!(c.observed_generation, Some(3));
-        assert_eq!(c.last_transition_time.as_deref(), Some("2026-01-01T00:00:00Z"));
+        assert_eq!(
+            c.last_transition_time.as_deref(),
+            Some("2026-01-01T00:00:00Z")
+        );
     }
 
     #[test]
@@ -127,7 +130,10 @@ mod tests {
         let status = build_status(Some(1), &ReconcileOutcome::Accepted, "2026-01-01T00:00:00Z");
         let json = serde_json::to_value(&status).unwrap();
         let cond = &json["conditions"][0];
-        assert!(cond.get("type").is_some(), "condition must use the `type` key");
+        assert!(
+            cond.get("type").is_some(),
+            "condition must use the `type` key"
+        );
         assert!(cond.get("observedGeneration").is_some());
         assert!(cond.get("lastTransitionTime").is_some());
         assert!(json.get("observedGeneration").is_some());

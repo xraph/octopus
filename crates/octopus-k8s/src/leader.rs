@@ -104,7 +104,8 @@ async fn claim_lease(
         }),
     };
     let params = PatchParams::apply("octopus-operator").force();
-    api.patch(LEASE_NAME, &params, &Patch::Apply(&lease)).await?;
+    api.patch(LEASE_NAME, &params, &Patch::Apply(&lease))
+        .await?;
     Ok(())
 }
 
