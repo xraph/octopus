@@ -40,10 +40,10 @@ the [configuration implementation status](/docs/configuration).
 - [ ] **Keep secrets out of the config file.** Use `${VAR}` substitution and inject JWT secrets,
   API keys, etc. from the environment (Kubernetes Secrets, your secret manager).
 
-<Callout type="warn">
-  Known-inert: `admin.allowed_ips` is **parsed but not enforced** — only `admin.auth_provider`
-  gates the admin surface today (and static assets bypass even that). Don't rely on the IP
-  allowlist; restrict admin access at the network layer as well. See
+<Callout type="info">
+  Both `admin.auth_provider` and `admin.allowed_ips` gate the admin surface: the allowlist returns
+  `403` to clients whose IP doesn't match an IP / CIDR / range pattern (static assets still bypass
+  the auth check). Combine them with network-layer controls for defense in depth. See
   [Admin configuration](/docs/configuration/admin).
 </Callout>
 

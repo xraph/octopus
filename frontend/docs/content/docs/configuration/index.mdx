@@ -20,10 +20,10 @@ has defaults and may be omitted.
 <Callout type="warn">
   **Implementation status.** Octopus parses the entire schema documented here, but some fields are
   accepted for forward-compatibility and **not yet enforced at runtime**. The notable ones (each
-  flagged on its page): [`admin.allowed_ips`](/docs/configuration/admin) is inert; the
-  [`grpc`](/docs/configuration/grpc) block and the [`plugins`](/docs/configuration/middleware) array
-  are parsed but not consumed. The middleware wired into the request chain today are compression,
-  CORS (global + per-route), per-route rate limiting, and authentication.
+  flagged on its page): the [`grpc`](/docs/configuration/grpc) block and the
+  [`plugins`](/docs/configuration/middleware) array are parsed but not consumed. The middleware
+  wired into the request chain today are compression, CORS (global + per-route), per-route rate
+  limiting, and authentication.
 </Callout>
 
 ```yaml

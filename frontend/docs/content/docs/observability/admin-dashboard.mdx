@@ -94,12 +94,11 @@ admin:
     - 192.168.1.10
 ```
 
-<Callout type="warn">
-  **`allowed_ips` is not enforced by the runtime today.** The field is accepted
-  in configuration but the gateway does not currently filter `/admin*` requests
-  by source IP. Do not rely on it as your only protection — use `auth_provider`,
-  and restrict access at the network layer (NetworkPolicy, firewall, or by not
-  exposing the gateway's admin paths publicly).
+<Callout type="info">
+  **`allowed_ips` is enforced**: the gateway matches the client's source address
+  against each IP / CIDR / range pattern and returns `403` to `/admin*` requests
+  from non-matching clients. Combine it with `auth_provider` and network-layer
+  controls (NetworkPolicy, firewall) for defense in depth.
 </Callout>
 
 </div>

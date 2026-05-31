@@ -50,6 +50,26 @@ fn new_resolve_cache() -> moka::sync::Cache<String, ConventionTarget> {
         .build()
 }
 
+/// The peer socket address of the inbound connection, injected into request
+/// extensions by the server's accept loop.
+#[derive(Debug, Clone, Copy)]
+pub struct ClientAddr(pub std::net::SocketAddr);
+
+/// Whether a client IP may reach the admin surface. An empty allowlist permits
+/// all; otherwise the client IP must be known and match one of the patterns.
+fn admin_ip_allowed(
+    allowed: &[octopus_middleware::IpPattern],
+    client: Option<std::net::IpAddr>,
+) -> bool {
+    if allowed.is_empty() {
+        return true;
+    }
+    match client {
+        Some(ip) => allowed.iter().any(|p| p.matches(&ip)),
+        None => false,
+    }
+}
+
 /// HTTP request handler
 #[derive(Clone)]
 pub struct RequestHandler {
@@ -70,6 +90,8 @@ pub struct RequestHandler {
     auth_registry: Option<Arc<octopus_auth::AuthProviderRegistry>>,
     /// Admin auth provider name
     admin_auth_provider: Option<String>,
+    /// Admin IP allowlist (empty = all allowed); parsed IP/CIDR/range patterns.
+    admin_allowed_ips: Vec<octopus_middleware::IpPattern>,
     /// Lifecycle state backing the health probes (None = probes disabled).
     lifecycle: Option<LifecycleState>,
     /// Resolved probe endpoint paths.
@@ -120,6 +142,7 @@ impl RequestHandler {
             sse_active_count: Arc::new(AtomicUsize::new(0)),
             auth_registry: None,
             admin_auth_provider: None,
+            admin_allowed_ips: Vec::new(),
             lifecycle: None,
             probe_routes: ProbeRoutes::default(),
             enforce_sni_check: true,
@@ -169,6 +192,7 @@ impl RequestHandler {
             sse_active_count: Arc::new(AtomicUsize::new(0)),
             auth_registry: None,
             admin_auth_provider: None,
+            admin_allowed_ips: Vec::new(),
             lifecycle: None,
             probe_routes: ProbeRoutes::default(),
             enforce_sni_check: true,
@@ -222,6 +246,7 @@ impl RequestHandler {
             sse_active_count: Arc::new(AtomicUsize::new(0)),
             auth_registry: None,
             admin_auth_provider: None,
+            admin_allowed_ips: Vec::new(),
             lifecycle: None,
             probe_routes: ProbeRoutes::default(),
             enforce_sni_check: true,
@@ -256,6 +281,7 @@ impl RequestHandler {
             sse_active_count: Arc::new(AtomicUsize::new(0)),
             auth_registry: None,
             admin_auth_provider: None,
+            admin_allowed_ips: Vec::new(),
             lifecycle: None,
             probe_routes: ProbeRoutes::default(),
             enforce_sni_check: true,
@@ -272,6 +298,22 @@ impl RequestHandler {
     ) {
         self.auth_registry = Some(registry);
         self.admin_auth_provider = admin_provider;
+    }
+
+    /// Set the admin IP allowlist (empty = all allowed). Entries are parsed as
+    /// IP / CIDR / range patterns; invalid entries are skipped with a warning.
+    /// Enforced independently of admin auth.
+    pub fn set_admin_allowed_ips(&mut self, allowed_ips: &[String]) {
+        self.admin_allowed_ips = allowed_ips
+            .iter()
+            .filter_map(|s| match octopus_middleware::IpPattern::parse(s) {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    tracing::warn!(pattern = %s, error = %e, "Ignoring invalid admin allowed_ips entry");
+                    None
+                }
+            })
+            .collect();
     }
 
     /// Enable Kubernetes-style health probe endpoints (`/livez`, `/readyz`,
@@ -480,6 +522,18 @@ impl RequestHandler {
         // Handle internal API routes (built-in, not proxied)
         // Internal routes use __ prefix by default
         if path.starts_with("/__admin") || path.starts_with("/admin") {
+            // Enforce the admin IP allowlist (empty = all allowed) before auth.
+            if !self.admin_allowed_ips.is_empty() {
+                let client_ip = req.extensions().get::<ClientAddr>().map(|c| c.0.ip());
+                if !admin_ip_allowed(&self.admin_allowed_ips, client_ip) {
+                    tracing::warn!(client = ?client_ip, "Admin request rejected by allowed_ips");
+                    return Ok(Response::builder()
+                        .status(StatusCode::FORBIDDEN)
+                        .body(buffered("Forbidden"))
+                        .unwrap());
+                }
+            }
+
             // Check admin auth if configured
             if let (Some(ref registry), Some(ref provider_name)) =
                 (&self.auth_registry, &self.admin_auth_provider)
@@ -1476,6 +1530,27 @@ mod tests {
     async fn test_handler_creation() {
         let handler = create_test_handler();
         assert_eq!(handler.request_count.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn admin_allowlist_empty_allows_all() {
+        assert!(admin_ip_allowed(&[], None));
+        assert!(admin_ip_allowed(&[], Some("203.0.113.7".parse().unwrap())));
+    }
+
+    #[test]
+    fn admin_allowlist_matches_cidr_and_denies_others() {
+        let allowed = vec![octopus_middleware::IpPattern::parse("10.0.0.0/8").unwrap()];
+        assert!(admin_ip_allowed(
+            &allowed,
+            Some("10.1.2.3".parse().unwrap())
+        ));
+        assert!(!admin_ip_allowed(
+            &allowed,
+            Some("192.168.1.1".parse().unwrap())
+        ));
+        // Unknown client IP is denied when an allowlist is set.
+        assert!(!admin_ip_allowed(&allowed, None));
     }
 
     #[tokio::test]

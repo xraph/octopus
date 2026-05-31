@@ -35,6 +35,7 @@ async fn serve_io<IO>(
     handler: crate::RequestHandler,
     client_cn: Option<String>,
     sni: Option<String>,
+    peer_addr: SocketAddr,
 ) where
     IO: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
@@ -43,9 +44,12 @@ async fn serve_io<IO>(
             let handler = handler.clone();
             let cn = client_cn.clone();
             let sni = sni.clone();
+            let addr = peer_addr;
             async move {
                 req.extensions_mut().insert(octopus_tls::TlsClientCn(cn));
                 req.extensions_mut().insert(octopus_tls::TlsSniName(sni));
+                req.extensions_mut()
+                    .insert(crate::handler::ClientAddr(addr));
                 handler.handle(req).await.or_else(|e| {
                     tracing::error!("Request handler error: {}", e);
                     let status = e.to_status_code();
@@ -363,6 +367,9 @@ impl Server {
             Some(Arc::new(self.config.clone())),
         );
 
+        // Wire the admin IP allowlist (independent of admin auth).
+        handler.set_admin_allowed_ips(&self.config.admin.allowed_ips);
+
         // Wire admin auth if configured
         if let Some(ref registry) = auth_registry {
             handler.set_admin_auth(
@@ -440,12 +447,12 @@ impl Server {
                             // Spawn a task to handle this connection
                             tokio::spawn(async move {
                                 match tls_mode {
-                                    TlsMode::Plain => serve_io(stream, handler, None, None).await,
+                                    TlsMode::Plain => serve_io(stream, handler, None, None, addr).await,
                                     TlsMode::Static(acceptor) => match acceptor.accept(stream).await {
                                         Ok(tls_stream) => {
                                             let cn = octopus_tls::extract_client_cn(&tls_stream);
                                             let sni = octopus_tls::extract_server_name(&tls_stream);
-                                            serve_io(tls_stream, handler, cn, sni).await;
+                                            serve_io(tls_stream, handler, cn, sni, addr).await;
                                         }
                                         Err(e) => tracing::error!("TLS handshake failed: {}", e),
                                     },
@@ -453,7 +460,7 @@ impl Server {
                                         Ok(tls_stream) => {
                                             let cn = octopus_tls::extract_client_cn(&tls_stream);
                                             let sni = octopus_tls::extract_server_name(&tls_stream);
-                                            serve_io(tls_stream, handler, cn, sni).await;
+                                            serve_io(tls_stream, handler, cn, sni, addr).await;
                                         }
                                         Err(e) => tracing::error!("TLS handshake failed: {}", e),
                                     },

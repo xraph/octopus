@@ -14,12 +14,11 @@ FARP services. It is served on the gateway's listen port and, out of the box,
 **requires no authentication**. Anyone who can reach the port can read your
 gateway's internals. This guide puts it behind an auth provider.
 
-<Callout type="warn">
-  Always set `admin.auth_provider` in any non-local deployment, and also restrict
-  the port at the network layer (NetworkPolicy, firewall, or simply not exposing
-  the admin paths publicly). The companion `admin.allowed_ips` field is **parsed
-  but not enforced** by the runtime today — do not rely on it as your only
-  control. See [Admin configuration](/docs/configuration/admin).
+<Callout type="info">
+  Set `admin.auth_provider` in any non-local deployment, and combine it with
+  `admin.allowed_ips` — an IP / CIDR / range allowlist that returns `403` to
+  non-matching clients — plus network-layer controls (NetworkPolicy, firewall).
+  See [Admin configuration](/docs/configuration/admin).
 </Callout>
 
 <Steps>
