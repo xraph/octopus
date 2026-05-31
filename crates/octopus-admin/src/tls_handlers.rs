@@ -138,7 +138,12 @@ pub async fn api_tls_cert_detail_handler(
                 Json(serde_json::json!({ "error": "Certificate not found", "name": name })),
             )
         },
-        |cert| (StatusCode::OK, Json(serde_json::to_value(cert).unwrap_or_default())),
+        |cert| {
+            (
+                StatusCode::OK,
+                Json(serde_json::to_value(cert).unwrap_or_default()),
+            )
+        },
     )
 }
 
@@ -207,7 +212,11 @@ pub async fn api_tls_cert_upload_handler(
         );
     }
 
-    tracing::info!("Uploaded TLS certificate '{}' to {}", req.name, tls.cert_file);
+    tracing::info!(
+        "Uploaded TLS certificate '{}' to {}",
+        req.name,
+        tls.cert_file
+    );
     (
         StatusCode::OK,
         Json(serde_json::json!({

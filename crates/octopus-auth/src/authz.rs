@@ -158,7 +158,9 @@ impl AuthzEvaluator {
                 pdp.evaluate(&ctx).await
             } else {
                 warn!("authz engine is AuthZen but no PDP configured; denying");
-                Ok(AuthzDecision::Deny("AuthZEN PDP not configured".to_string()))
+                Ok(AuthzDecision::Deny(
+                    "AuthZEN PDP not configured".to_string(),
+                ))
             };
         }
 

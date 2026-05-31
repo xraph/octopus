@@ -880,7 +880,9 @@ mod tests {
         rec.upsert_httproute("r", "default", &spec);
 
         // Only the host within the listener's wildcard attaches.
-        assert!(router.match_route("api.acme.com", &Method::GET, "/").is_ok());
+        assert!(router
+            .match_route("api.acme.com", &Method::GET, "/")
+            .is_ok());
         assert!(router.match_route("evil.com", &Method::GET, "/").is_err());
     }
 
@@ -904,7 +906,10 @@ mod tests {
     fn script_ref_resolves_same_namespace() {
         let mut cms = HashMap::new();
         let mut data = BTreeMap::new();
-        data.insert("resolve.rhai".to_string(), "#{ namespace: \"x\" }".to_string());
+        data.insert(
+            "resolve.rhai".to_string(),
+            "#{ namespace: \"x\" }".to_string(),
+        );
         cms.insert("acme/scripts".to_string(), data);
 
         let conv = conv_with_ref("scripts", "resolve.rhai", None);
@@ -915,11 +920,17 @@ mod tests {
     #[test]
     fn script_ref_missing_configmap_or_key_is_none() {
         let conv = conv_with_ref("scripts", "resolve.rhai", None);
-        assert_eq!(resolve_script_ref(&conv, "acme", &HashMap::new(), &HashMap::new()), None);
+        assert_eq!(
+            resolve_script_ref(&conv, "acme", &HashMap::new(), &HashMap::new()),
+            None
+        );
 
         let mut cms = HashMap::new();
         cms.insert("acme/scripts".to_string(), BTreeMap::new()); // present, wrong key
-        assert_eq!(resolve_script_ref(&conv, "acme", &cms, &HashMap::new()), None);
+        assert_eq!(
+            resolve_script_ref(&conv, "acme", &cms, &HashMap::new()),
+            None
+        );
     }
 
     #[test]
@@ -930,7 +941,10 @@ mod tests {
         let mut data = BTreeMap::new();
         data.insert("resolve.rhai".to_string(), "from-cm".to_string());
         cms.insert("acme/scripts".to_string(), data);
-        assert_eq!(resolve_script_ref(&conv, "acme", &cms, &HashMap::new()), None);
+        assert_eq!(
+            resolve_script_ref(&conv, "acme", &cms, &HashMap::new()),
+            None
+        );
     }
 
     #[test]
@@ -942,7 +956,10 @@ mod tests {
         let conv = conv_with_ref("scripts", "k", Some("shared"));
 
         // No grant → denied.
-        assert_eq!(resolve_script_ref(&conv, "acme", &cms, &HashMap::new()), None);
+        assert_eq!(
+            resolve_script_ref(&conv, "acme", &cms, &HashMap::new()),
+            None
+        );
 
         // Grant in the target ns permitting OctopusRoute@acme → ConfigMap.
         let mut grants = HashMap::new();

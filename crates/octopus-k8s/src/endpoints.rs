@@ -53,7 +53,11 @@ fn endpoints_to_instances(
             }
             for ip in &endpoint.addresses {
                 for &port in &ports {
-                    out.push(UpstreamInstance::new(format!("{ip}:{port}"), ip.clone(), port));
+                    out.push(UpstreamInstance::new(
+                        format!("{ip}:{port}"),
+                        ip.clone(),
+                        port,
+                    ));
                 }
             }
         }
@@ -153,8 +157,7 @@ impl EndpointWatchManager {
         include_not_ready: bool,
     ) {
         let api: Api<EndpointSlice> = Api::namespaced(client, &namespace);
-        let cfg =
-            WatcherConfig::default().labels(&format!("{SERVICE_NAME_LABEL}={service}"));
+        let cfg = WatcherConfig::default().labels(&format!("{SERVICE_NAME_LABEL}={service}"));
         let mut by_name: HashMap<String, EndpointSlice> = HashMap::new();
         let mut stream = std::pin::pin!(watcher(api, cfg));
 
@@ -251,7 +254,10 @@ mod tests {
     #[test]
     fn maps_ready_endpoints_to_instances() {
         let s = slice(
-            vec![endpoint("10.0.0.1", Some(true)), endpoint("10.0.0.2", Some(false))],
+            vec![
+                endpoint("10.0.0.1", Some(true)),
+                endpoint("10.0.0.2", Some(false)),
+            ],
             Some(8080),
         );
         let got = endpoints_to_instances(&[s], 80, false);
@@ -263,7 +269,10 @@ mod tests {
     #[test]
     fn include_not_ready_keeps_all() {
         let s = slice(
-            vec![endpoint("10.0.0.1", Some(true)), endpoint("10.0.0.2", Some(false))],
+            vec![
+                endpoint("10.0.0.1", Some(true)),
+                endpoint("10.0.0.2", Some(false)),
+            ],
             Some(8080),
         );
         assert_eq!(endpoints_to_instances(&[s], 80, true).len(), 2);

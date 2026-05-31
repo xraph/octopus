@@ -125,7 +125,10 @@ pub async fn api_k8s_status_handler(State(_state): State<Arc<AppState>>) -> impl
                     "OctopusPolicy",
                     "OctopusUpstream",
                 ] {
-                    counts.insert(kind.to_string(), live::list_by_kind(&client, kind).await.len());
+                    counts.insert(
+                        kind.to_string(),
+                        live::list_by_kind(&client, kind).await.len(),
+                    );
                 }
                 (true, None)
             }

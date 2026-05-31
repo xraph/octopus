@@ -37,7 +37,10 @@ impl IntrospectionProvider {
             .get(self.config.header_name.as_str())?
             .to_str()
             .ok()?;
-        let token = raw.strip_prefix(&self.config.token_prefix).unwrap_or(raw).trim();
+        let token = raw
+            .strip_prefix(&self.config.token_prefix)
+            .unwrap_or(raw)
+            .trim();
         if token.is_empty() {
             None
         } else {
@@ -184,7 +187,10 @@ mod tests {
             "scope": "read write admin",
             "roles": ["user", "editor"],
         }));
-        assert_eq!(parse_list_field(&o, "scope", ' '), vec!["read", "write", "admin"]);
+        assert_eq!(
+            parse_list_field(&o, "scope", ' '),
+            vec!["read", "write", "admin"]
+        );
         assert_eq!(parse_list_field(&o, "roles", ','), vec!["user", "editor"]);
         assert!(parse_list_field(&o, "missing", ',').is_empty());
     }

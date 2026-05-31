@@ -76,7 +76,11 @@ impl AdminAuth {
             username: username.into(),
             password_sha256: sha256(password.as_bytes()),
             secret: secret.into(),
-            ttl_secs: if ttl_secs == 0 { DEFAULT_TTL_SECS } else { ttl_secs },
+            ttl_secs: if ttl_secs == 0 {
+                DEFAULT_TTL_SECS
+            } else {
+                ttl_secs
+            },
         }
     }
 
@@ -135,13 +139,9 @@ impl AdminAuth {
     /// Verify a session token, returning the subject (username) when valid.
     fn verify_token(&self, token: &str) -> Option<String> {
         let validation = Validation::default(); // HS256 + exp validation
-        decode::<Claims>(
-            token,
-            &DecodingKey::from_secret(&self.secret),
-            &validation,
-        )
-        .ok()
-        .map(|data| data.claims.sub)
+        decode::<Claims>(token, &DecodingKey::from_secret(&self.secret), &validation)
+            .ok()
+            .map(|data| data.claims.sub)
     }
 
     /// Build the `Set-Cookie` header value for a freshly minted token.
@@ -300,8 +300,7 @@ pub async fn require_admin_session(
     };
 
     let path = req.uri().path();
-    let needs_auth = (path.starts_with("/admin/api/")
-        && !path.starts_with("/admin/api/auth/"))
+    let needs_auth = (path.starts_with("/admin/api/") && !path.starts_with("/admin/api/auth/"))
         || path == "/admin/ws";
 
     if !needs_auth {

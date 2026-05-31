@@ -534,9 +534,15 @@ mod tests {
             BackendStrategy::EndpointSlice
         );
         spec.backend_strategy = Some("servicedns".into());
-        assert_eq!(convention_from_spec(&spec).backend, BackendStrategy::ServiceDns);
+        assert_eq!(
+            convention_from_spec(&spec).backend,
+            BackendStrategy::ServiceDns
+        );
         spec.backend_strategy = None;
-        assert_eq!(convention_from_spec(&spec).backend, BackendStrategy::ServiceDns);
+        assert_eq!(
+            convention_from_spec(&spec).backend,
+            BackendStrategy::ServiceDns
+        );
     }
 
     #[test]

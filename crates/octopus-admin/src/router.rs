@@ -19,18 +19,18 @@ use crate::api_handlers::{
     api_services_list_handler, api_system_info_handler, api_timeseries_handler,
     api_upstreams_list_handler,
 };
+use crate::auth::{api_auth_login_handler, api_auth_logout_handler, api_auth_me_handler};
 use crate::handlers::{
     analytics_handler, api_activity_handler, api_health_handler, api_stats_handler, config_handler,
     health_handler, logs_handler, overview_handler, plugins_handler, routes_handler, AppState,
 };
-use crate::octopus_ui_handlers_pure::{
-    octopus_ui_dashboard_handler, octopus_ui_health_handler, octopus_ui_plugins_handler,
-    octopus_ui_routes_handler,
-};
-use crate::auth::{api_auth_login_handler, api_auth_logout_handler, api_auth_me_handler};
 use crate::k8s_handlers::{
     api_k8s_gateways_handler, api_k8s_policies_handler, api_k8s_routes_handler,
     api_k8s_status_handler, api_k8s_upstreams_handler,
+};
+use crate::octopus_ui_handlers_pure::{
+    octopus_ui_dashboard_handler, octopus_ui_health_handler, octopus_ui_plugins_handler,
+    octopus_ui_routes_handler,
 };
 use crate::tls_handlers::{
     api_tls_cert_detail_handler, api_tls_cert_upload_handler, api_tls_certs_list_handler,
@@ -108,8 +108,14 @@ impl DashboardRouter {
             .route("/admin/api/upstreams", get(api_upstreams_list_handler))
             .route("/admin/api/upstreams", post(api_upstream_create_handler))
             .route("/admin/api/upstreams/:name", get(api_upstream_get_handler))
-            .route("/admin/api/upstreams/:name", put(api_upstream_update_handler))
-            .route("/admin/api/upstreams/:name", delete(api_upstream_delete_handler))
+            .route(
+                "/admin/api/upstreams/:name",
+                put(api_upstream_update_handler),
+            )
+            .route(
+                "/admin/api/upstreams/:name",
+                delete(api_upstream_delete_handler),
+            )
             .route("/admin/api/services", get(api_services_list_handler))
             .route("/admin/api/circuits", get(api_circuits_list_handler))
             .route("/admin/api/health/checks", get(api_health_checks_handler))
@@ -117,7 +123,10 @@ impl DashboardRouter {
             // ===== TLS / Certificates API =====
             .route("/admin/api/tls/certs", get(api_tls_certs_list_handler))
             .route("/admin/api/tls/certs", post(api_tls_cert_upload_handler))
-            .route("/admin/api/tls/certs/:name", get(api_tls_cert_detail_handler))
+            .route(
+                "/admin/api/tls/certs/:name",
+                get(api_tls_cert_detail_handler),
+            )
             .route("/admin/api/tls/reload", post(api_tls_reload_handler))
             // ===== Kubernetes CRD views API =====
             .route("/admin/api/k8s/gateways", get(api_k8s_gateways_handler))
