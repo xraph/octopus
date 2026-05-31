@@ -27,9 +27,10 @@ enum Commands {
         #[arg(short, long, default_value = "config.yaml")]
         config: Vec<PathBuf>,
 
-        /// Log level (trace, debug, info, warn, error)
-        #[arg(short, long, default_value = "info")]
-        log_level: String,
+        /// Log level (trace, debug, info, warn, error). Overrides
+        /// `observability.logging.level` from the config when set.
+        #[arg(short, long)]
+        log_level: Option<String>,
     },
 
     /// Validate configuration file(s)
@@ -59,14 +60,12 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::Serve { config, log_level } => {
-            // Initialize tracing
-            init_tracing(&log_level)?;
+            // Load configuration first so logging can honor observability.logging
+            // (level/format). The CLI --log-level still overrides the config level.
+            let config = load_config_paths(&config)?;
+            init_tracing(log_level.as_deref(), Some(&config.observability))?;
 
             tracing::info!("Starting Octopus API Gateway");
-
-            // Load configuration (supports multi-file and directory)
-            let config = load_config_paths(&config)?;
-
             tracing::info!(
                 listen = %config.gateway.listen,
                 workers = config.gateway.workers,
@@ -113,7 +112,7 @@ async fn main() -> Result<()> {
         }
 
         Commands::Gen { config } => {
-            init_tracing("info")?;
+            init_tracing(Some("info"), None)?;
 
             tracing::info!("Running code generation");
             gen::run_gen(&config).await?;
@@ -211,8 +210,26 @@ fn load_config_paths(paths: &[PathBuf]) -> octopus_core::Result<octopus_config::
     load_and_merge(all_files)
 }
 
-fn init_tracing(level: &str) -> Result<()> {
-    let filter = match level.to_lowercase().as_str() {
+/// Log output format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LogFormat {
+    Text,
+    Json,
+}
+
+/// Resolve the effective log level and output format.
+///
+/// Level precedence: explicit `--log-level` > `observability.logging.level` >
+/// `info`. `RUST_LOG` still layers on top via the env filter. The format comes
+/// from `observability.logging.format` (`json` → JSON lines, otherwise text).
+fn resolve_logging(
+    cli_level: Option<&str>,
+    obs: Option<&octopus_config::types::ObservabilityConfig>,
+) -> (tracing::Level, LogFormat) {
+    let level_str = cli_level
+        .or_else(|| obs.map(|o| o.logging.level.as_str()))
+        .unwrap_or("info");
+    let level = match level_str.to_lowercase().as_str() {
         "trace" => tracing::Level::TRACE,
         "debug" => tracing::Level::DEBUG,
         "info" => tracing::Level::INFO,
@@ -220,21 +237,82 @@ fn init_tracing(level: &str) -> Result<()> {
         "error" => tracing::Level::ERROR,
         _ => tracing::Level::INFO,
     };
+    let format = match obs.map(|o| o.logging.format.to_lowercase()).as_deref() {
+        Some("json") => LogFormat::Json,
+        _ => LogFormat::Text,
+    };
+    (level, format)
+}
 
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::fmt::layer()
-                .with_target(false)
-                .with_level(true),
-        )
-        .with(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(filter.into())
-                // Suppress mdns-sd VPN errors - these are harmless library-level logs
-                // that occur when attempting multicast on VPN tunnel interfaces (utun*)
-                .add_directive("mdns_sd=warn".parse()?), // Only show WARN and above (suppress ERROR)
-        )
-        .init();
+fn init_tracing(
+    cli_level: Option<&str>,
+    obs: Option<&octopus_config::types::ObservabilityConfig>,
+) -> Result<()> {
+    let (level, format) = resolve_logging(cli_level, obs);
+
+    let filter = tracing_subscriber::EnvFilter::from_default_env()
+        .add_directive(level.into())
+        // Suppress mdns-sd VPN errors - harmless library-level logs that occur
+        // when attempting multicast on VPN tunnel interfaces (utun*).
+        .add_directive("mdns_sd=warn".parse()?);
+
+    let registry = tracing_subscriber::registry().with(filter);
+    match format {
+        LogFormat::Json => registry
+            .with(tracing_subscriber::fmt::layer().with_target(false).json())
+            .init(),
+        LogFormat::Text => registry
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_target(false)
+                    .with_level(true),
+            )
+            .init(),
+    }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use octopus_config::types::{LoggingConfig, ObservabilityConfig};
+
+    fn obs_with(level: &str, format: &str) -> ObservabilityConfig {
+        ObservabilityConfig {
+            logging: LoggingConfig {
+                level: level.to_string(),
+                format: format.to_string(),
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn cli_level_overrides_config() {
+        let obs = obs_with("info", "text");
+        let (level, _) = resolve_logging(Some("debug"), Some(&obs));
+        assert_eq!(level, tracing::Level::DEBUG);
+    }
+
+    #[test]
+    fn config_level_used_when_no_cli() {
+        let obs = obs_with("warn", "text");
+        let (level, _) = resolve_logging(None, Some(&obs));
+        assert_eq!(level, tracing::Level::WARN);
+    }
+
+    #[test]
+    fn defaults_to_info_text() {
+        let (level, format) = resolve_logging(None, None);
+        assert_eq!(level, tracing::Level::INFO);
+        assert_eq!(format, LogFormat::Text);
+    }
+
+    #[test]
+    fn json_format_from_config() {
+        let obs = obs_with("info", "json");
+        let (_, format) = resolve_logging(None, Some(&obs));
+        assert_eq!(format, LogFormat::Json);
+    }
 }

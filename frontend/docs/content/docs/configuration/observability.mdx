@@ -13,9 +13,9 @@ section.
 
 <Callout type="warn">
   Runtime status: **tracing is not yet wired** (`tracing.*` is parsed but no exporter is started),
-  the **JSON log format is not applied** (the log level comes from `--log-level`/`RUST_LOG` and the
-  format is always text), and `metrics.endpoint` / `metrics.enabled` are **inert** — Prometheus
-  metrics are always served on the fixed `/metrics` (and `/__metrics`) path. See
+  and `metrics.endpoint` / `metrics.enabled` are **inert** — Prometheus metrics are always served on
+  the fixed `/metrics` (and `/__metrics`) path on the listen port. `logging.level` and
+  `logging.format` (`json` or `text`) **are** honored; a `--log-level` flag overrides the level. See
   [Observability](/docs/observability) for exactly what is emitted today.
 </Callout>
 
