@@ -7,7 +7,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use octopus_config::types::{CompressionConfig, CorsGlobalConfig, SecurityHeadersConfig};
+use octopus_config::types::{
+    CompressionConfig, CorsGlobalConfig, PluginConfig, SecurityHeadersConfig,
+};
 use octopus_core::middleware::Middleware;
 
 /// Build the pre-auth request middleware from configuration.
@@ -67,6 +69,44 @@ pub(crate) fn build_request_middleware(
         )));
     }
 
+    mws
+}
+
+/// Build middleware from the `plugins` config. Currently supports **script**
+/// plugins (`plugin_type: "script"`): each enabled entry's `config` is
+/// deserialized into a [`octopus_scripting::ScriptMiddlewareConfig`] (inline
+/// `code` or file `path`, `language`, `on_request`/`on_response`, `timeout_ms`)
+/// and run as a [`octopus_scripting::ScriptMiddleware`], ordered by descending
+/// `priority`. Other plugin types (`static`/`dynamic`) are not yet loaded and are
+/// skipped with a warning.
+pub(crate) fn build_plugin_middleware(plugins: &[PluginConfig]) -> Vec<Arc<dyn Middleware>> {
+    let mut enabled: Vec<&PluginConfig> = plugins.iter().filter(|p| p.enabled).collect();
+    enabled.sort_by(|a, b| b.priority.cmp(&a.priority));
+
+    let mut mws: Vec<Arc<dyn Middleware>> = Vec::new();
+    for p in enabled {
+        match p.plugin_type.as_str() {
+            "script" => {
+                let value = serde_json::Value::Object(p.config.clone().into_iter().collect());
+                match serde_json::from_value::<octopus_scripting::ScriptMiddlewareConfig>(value) {
+                    Ok(cfg) => {
+                        mws.push(Arc::new(octopus_scripting::ScriptMiddleware::new(cfg)));
+                        tracing::info!(plugin = %p.name, "Script plugin middleware loaded");
+                    }
+                    Err(e) => {
+                        tracing::warn!(plugin = %p.name, error = %e, "Invalid script plugin config; skipping");
+                    }
+                }
+            }
+            other => {
+                tracing::warn!(
+                    plugin = %p.name,
+                    plugin_type = %other,
+                    "Plugin type not yet loaded (only 'script' is wired); skipping"
+                );
+            }
+        }
+    }
     mws
 }
 
@@ -234,5 +274,34 @@ mod tests {
 
         let resp = Next::new(stack).run(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    }
+
+    fn script_plugin(name: &str, enabled: bool, priority: i32) -> PluginConfig {
+        let mut config = std::collections::HashMap::new();
+        config.insert("language".to_string(), serde_json::json!("rhai"));
+        config.insert("code".to_string(), serde_json::json!("true"));
+        config.insert("on_request".to_string(), serde_json::json!(true));
+        PluginConfig {
+            name: name.to_string(),
+            plugin_type: "script".to_string(),
+            enabled,
+            priority,
+            config,
+        }
+    }
+
+    #[test]
+    fn script_plugin_produces_middleware() {
+        let mws = build_plugin_middleware(&[script_plugin("s", true, 0)]);
+        assert_eq!(mws.len(), 1);
+        assert!(format!("{:?}", mws[0]).contains("ScriptMiddleware"));
+    }
+
+    #[test]
+    fn disabled_or_unknown_plugins_skipped() {
+        let disabled = script_plugin("d", false, 0);
+        let mut static_plugin = script_plugin("st", true, 0);
+        static_plugin.plugin_type = "static".to_string();
+        assert!(build_plugin_middleware(&[disabled, static_plugin]).is_empty());
     }
 }

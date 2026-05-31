@@ -154,18 +154,19 @@ plugins:
       some_key: some_value
 ```
 
-<Callout type="warn">
-**This array is not consumed yet.** When plugins are enabled, the server constructs an empty
-`PluginManager::new()` and carries a `TODO: Load plugins from config.plugins`. No entry in the
-`plugins:` array is registered, initialized, or invoked during request handling. The schema is
-stable, but configuring a plugin here has no runtime effect today.
+<Callout type="info">
+**Script plugins are loaded** (`plugin_type: script`): each enabled entry's `config` is deserialized
+into a [`ScriptMiddlewareConfig`](/docs/plugins/scripting) and added to the request chain.
+**`static` and `dynamic` plugins are not yet loaded** — those entries are skipped with a warning
+(there are no built-in plugins, and dynamic library loading from config is not wired). The schema is
+stable.
 </Callout>
 
 ### Priority ordering
 
-`priority` is defined as an ordering hint (higher = runs first) and is part of the stable schema.
-Because the array is not yet wired into the request path, priority has no observable effect at
-runtime today; it documents intended ordering for when plugin execution lands.
+`priority` orders the loaded plugin middleware (higher runs first). It is observable for **script**
+plugins today; for `static`/`dynamic` types it documents intended ordering for when their loading
+lands.
 
 ## How plugins integrate with request handling (the honest version)
 

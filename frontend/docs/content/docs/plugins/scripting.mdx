@@ -1,6 +1,6 @@
 ---
 title: Scripting
-description: The embedded Rhai scripting engine in Octopus — how scripts actually attach (convention host-resolution is the wired path; the script middleware exists but is not yet wired), the context API exposed to scripts, execution sandboxing, timeouts, and AST caching. Lua, JavaScript, and WebAssembly are planned.
+description: The embedded Rhai scripting engine in Octopus — how scripts attach (script plugins via config.plugins, and convention host-resolution), the context API exposed to scripts, execution sandboxing, timeouts, and AST caching. Lua, JavaScript, and WebAssembly are planned.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -12,13 +12,11 @@ Octopus embeds [Rhai](https://rhai.rs), a small Rust-native scripting language, 
 `octopus-scripting` crate. Scripts can run from inline source or from a file, with compiled scripts
 cached as ASTs for fast repeat execution.
 
-<Callout type="warn">
-**How scripting actually attaches today.** There is one place where the gateway runs your scripts on
-live traffic: **convention host-resolution** (subdomain → backend mapping). The general-purpose
-"run a script as request/response middleware" component (`ScriptMiddleware`) is implemented and
-tested, but it is **not wired into the middleware chain** — there is no `type: script` middleware in
-the gateway. The example YAML you may have seen showing a `type: script` middleware is **not
-implemented**. This page documents the real wiring and the engine API.
+<Callout type="info">
+**How scripting attaches today.** Two paths run your scripts on live traffic: (1) a **script plugin**
+in [`config.plugins`](/docs/plugins) with `plugin_type: script`, which adds a `ScriptMiddleware` to
+the request chain (see [below](#script-plugins-plugin_type-script)); and (2) **convention
+host-resolution** (subdomain → backend mapping). Lua/JavaScript/WebAssembly fall back to Rhai today.
 </Callout>
 
 ## The wired path: convention host-resolution
@@ -60,15 +58,15 @@ through the main gateway YAML's `routes:` section. See
 [Concepts: Routing](/docs/concepts/routing) and the [Kubernetes](/docs/kubernetes) docs.
 </Callout>
 
-## The `ScriptMiddleware` (implemented, not wired)
+## Script plugins (`plugin_type: script`)
 
-`octopus-scripting` also provides a `ScriptMiddleware` that implements `octopus_core::Middleware`. It
-can run a script on the request (before routing) and/or on the response (after the upstream), apply
-the script's mutations back to the HTTP request/response, and short-circuit when the request script
-returns `false`.
+A plugin entry in `config.plugins` with `plugin_type: script` adds a `ScriptMiddleware` (from
+`octopus-scripting`, implementing `octopus_core::Middleware`) to the request chain. It runs a script
+on the request (before routing) and/or on the response (after the upstream), applies the script's
+mutations back to the HTTP request/response, and short-circuits when the request script returns
+`false`. Enabled script plugins are ordered by descending `priority`.
 
-Its configuration type, `ScriptMiddlewareConfig`, is what a `type: script` middleware *would*
-deserialize into:
+The plugin's `config` is deserialized into `ScriptMiddlewareConfig`:
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -79,12 +77,21 @@ deserialize into:
 | `continue_on_error` | bool | `false` | If `true`, script errors are logged and the request continues. |
 | `timeout_ms` | u64 | `100` | Per-execution timeout in milliseconds. |
 
-<Callout type="warn">
-`ScriptMiddleware` is not constructed from configuration anywhere in the gateway and is not added to
-the middleware chain. There is no config key that turns it on. It is usable programmatically and is
-covered here so the engine semantics are documented, but you cannot enable it from a config file
-today.
-</Callout>
+Configure one as a script plugin:
+
+```yaml
+plugins:
+  - name: add-headers
+    plugin_type: script
+    enabled: true
+    priority: 50
+    config:
+      language: rhai
+      on_request: true
+      code: |
+        headers["X-Gateway"] = "Octopus";
+        true
+```
 
 When the request script returns `false`, `ScriptMiddleware` short-circuits and returns an empty
 `200 OK` response. On a script error, it returns a `500` unless `continue_on_error` is set.

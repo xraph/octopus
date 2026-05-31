@@ -275,6 +275,9 @@ impl Server {
             tracing::info!("Per-route rate limiting enabled");
         }
 
+        // Load plugin middleware (script plugins) from `config.plugins`.
+        middlewares.extend(crate::chain::build_plugin_middleware(&self.config.plugins));
+
         // Initialize auth providers from config and add auth middleware
         let mut auth_registry: Option<Arc<octopus_auth::AuthProviderRegistry>> = None;
         if !self.config.auth_providers.is_empty() || self.config.auth.global_enforce {
