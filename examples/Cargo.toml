@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 publish = false
 
+# Example binaries — never shipped as release artifacts.
+[package.metadata.dist]
+dist = false
+
 [[bin]]
 name = "quickstart"
 path = "quickstart.rs"

@@ -1,15 +1,13 @@
-name: Docker Release
+# Custom dist publish-job: build & publish the multi-arch container image.
+# Invoked by the dist-generated release workflow in the publish stage.
+name: Publish (Docker)
 
 on:
-  push:
-    tags:
-      - 'v*.*.*'
-  workflow_dispatch:
+  workflow_call:
     inputs:
-      version:
-        description: 'Image version tag to publish (e.g. 1.2.3). Leave empty to tag by commit SHA only.'
-        required: false
-        default: ''
+      plan:
+        required: true
+        type: string
 
 env:
   GHCR_IMAGE: ghcr.io/${{ github.repository }}
@@ -71,7 +69,6 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha
-            type=raw,value=${{ github.event.inputs.version }},enable=${{ github.event.inputs.version != '' }}
           labels: |
             org.opencontainers.image.title=octopus
             org.opencontainers.image.description=Octopus API Gateway

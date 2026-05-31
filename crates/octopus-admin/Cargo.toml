@@ -8,6 +8,11 @@ license.workspace = true
 repository.workspace = true
 description = "Admin dashboard for Octopus API Gateway (Askama + HTMX + Alpine.js)"
 
+# The `octopus-admin` bin is an internal/dev server; only `octopus` (octopus-cli)
+# is shipped as a release artifact.
+[package.metadata.dist]
+dist = false
+
 [features]
 default = []
 # Enable live Kubernetes CRD views (OctopusGateway/Route/Policy/Upstream).

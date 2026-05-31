@@ -1,14 +1,14 @@
-name: Helm Release
+# Custom dist publish-job: package & publish the Helm chart (OCI) and attach
+# the chart + CRDs to the GitHub release. Invoked by the dist-generated release
+# workflow in the publish stage (the release already exists by then).
+name: Publish (Helm)
 
 on:
-  push:
-    tags:
-      - 'v*.*.*'
-  workflow_dispatch:
+  workflow_call:
     inputs:
-      version:
-        description: 'Chart version to publish (e.g. 1.2.3, without a leading v).'
+      plan:
         required: true
+        type: string
 
 env:
   CHART_DIR: deploy/helm/octopus
@@ -28,14 +28,10 @@ jobs:
       - name: Install Helm
         uses: azure/setup-helm@v4
 
-      - name: Resolve chart version
+      - name: Resolve chart version from the release tag
         id: ver
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-          else
-            VERSION="${GITHUB_REF_NAME#v}"
-          fi
+          VERSION="${GITHUB_REF_NAME#v}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Publishing chart version ${VERSION}"
 
@@ -62,7 +58,6 @@ jobs:
         run: helm push "${{ steps.pkg.outputs.chart }}" "$OCI_REGISTRY"
 
       - name: Attach chart + CRDs to the GitHub release
-        if: github.event_name == 'push'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
