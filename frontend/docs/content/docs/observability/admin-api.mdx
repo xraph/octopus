@@ -18,14 +18,15 @@ route table; response shapes are taken from the admin response models.
   for how to lock it down.
 </Callout>
 
-<Callout type="warn">
-  **Write endpoints (`POST` / `PUT` / `DELETE`) cannot currently be driven
-  through the gateway listener.** The runtime bridges admin requests into the
-  internal router with an **empty body** and only the method and path. Handlers
-  that deserialize a JSON body (route create/update, config update, plugin
-  config) will not receive your payload over the gateway port. The endpoints are
-  documented here for completeness, but treat the API as effectively read-only
-  through the gateway today.
+<Callout type="info">
+  **Write endpoints accept a JSON body over the gateway listener.** Admin
+  requests are bridged into the internal router with their method, path, query,
+  headers and body intact, so handlers that deserialize a payload (route and
+  upstream create/update, TLS upload, plugin config) receive it. Two limits
+  still apply: configuration is **immutable at runtime** (`PUT
+  /admin/api/config/:key` only records the change — see below), and resources
+  owned by the Kubernetes operator or static config may be **overwritten on the
+  next reconcile**.
 </Callout>
 
 ## Metrics & analytics
@@ -95,7 +96,7 @@ route table; response shapes are taken from the admin response models.
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/admin/api/routes` | List all routes — array of `RouteInfo`. |
-| `POST` | `/admin/api/routes` | Create a route from a `RouteConfig` body (see write caveat above). |
+| `POST` | `/admin/api/routes` | Create a route from a `RouteConfig` body (see the note above). |
 | `GET` | `/admin/api/routes/:id` | A single `RouteInfo` by id, or `{ "error": "Route not found", "id": ... }`. |
 | `PUT` | `/admin/api/routes/:id` | Replace a route (remove + add) from a `RouteConfig` body. |
 | `DELETE` | `/admin/api/routes/:id` | Delete a route by id. |

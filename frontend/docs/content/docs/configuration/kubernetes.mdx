@@ -35,3 +35,23 @@ kubernetes:
   `terminate_tls` is ignored when static [`gateway.tls`](/docs/configuration/tls) is configured.
   Choose one TLS source: static gateway certificates or operator-managed Secrets.
 </Callout>
+
+## Status conditions
+
+After reconciling a resource the controller writes an `Accepted` condition to its
+`.status`, so `kubectl get -o yaml` and `kubectl wait --for=condition=Accepted` work
+against Octopus resources:
+
+- **`OctopusRoute` / `OctopusUpstream` / `OctopusPolicy`** — admitted resources get
+  `Accepted: True` (reason `Accepted`); structurally invalid ones (e.g. a route missing
+  its `path`/`upstream`, an upstream with no targets) get `Accepted: False` (reason
+  `Invalid`, with the failure in the message) and are **not** applied to the router.
+- **`GatewayClass`** — classes whose `spec.controllerName` is
+  `gateway.octopus.io/gateway-controller` are claimed with `Accepted: True`; classes owned
+  by other controllers are left untouched.
+
+Each condition carries the `observedGeneration` it was computed from. Writing status
+requires the `*/status` RBAC verbs (and `gatewayclasses/status`) in the bundled
+[Helm chart and manifests](/docs/deployment). With `leader_election` on, only the Lease
+holder reconciles and writes status; pod identity comes from the `POD_NAME` /
+`POD_NAMESPACE` downward-API env the manifests set.
