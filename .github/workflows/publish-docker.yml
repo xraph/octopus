@@ -1,5 +1,11 @@
 # Custom dist publish-job: build & publish the multi-arch container image.
 # Invoked by the dist-generated release workflow in the publish stage.
+#
+# Each architecture builds on a NATIVE runner (amd64 on ubuntu-latest, arm64 on
+# ubuntu-24.04-arm) — no QEMU emulation — and pushes by digest. A final merge
+# job assembles the per-arch digests into one multi-arch manifest and tags it on
+# GHCR (and Docker Hub when those secrets are set). This keeps the slow arm64
+# Rust compile native instead of emulated.
 name: Publish (Docker)
 
 on:
@@ -13,9 +19,17 @@ env:
   GHCR_IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
-  docker:
-    name: Build & Publish Image
-    runs-on: ubuntu-latest
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
     permissions:
       contents: read
       packages: write
@@ -23,16 +37,77 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Prepare build metadata
+      - name: Prepare
+        id: prep
+        run: |
+          platform="${{ matrix.platform }}"
+          echo "pair=${platform//\//-}" >> "$GITHUB_OUTPUT"
+          echo "build_date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.GHCR_IMAGE }}
+          tags: type=semver,pattern={{version}}
+          labels: |
+            org.opencontainers.image.title=octopus
+            org.opencontainers.image.description=Octopus API Gateway
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ steps.prep.outputs.pair }}
+          cache-to: type=gha,mode=max,scope=${{ steps.prep.outputs.pair }}
+          outputs: type=image,name=${{ env.GHCR_IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ steps.prep.outputs.build_date }}
+
+      - name: Export digest
+        run: |
+          mkdir -p "${{ runner.temp }}/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v7
+        with:
+          name: digests-${{ steps.prep.outputs.pair }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: Merge & publish manifest
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Prepare Docker Hub config
         id: prep
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
-          echo "build_date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
-          # Mirror to Docker Hub only when BOTH credentials are present —
-          # gating on the username alone would let the login step fail the job
-          # if the token were missing.
+          # Mirror to Docker Hub only when BOTH credentials are present.
           if [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_TOKEN" ]; then
             dockerhub_image="docker.io/${{ vars.DOCKERHUB_REPO || 'xraph/octopus' }}"
             echo "dockerhub_enabled=true" >> "$GITHUB_OUTPUT"
@@ -44,8 +119,12 @@ jobs:
             echo "::warning::DOCKERHUB_USERNAME/DOCKERHUB_TOKEN not both set — publishing to ghcr.io only."
           fi
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      - name: Download digests
+        uses: actions/download-artifact@v8
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -64,7 +143,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Extract metadata
+      - name: Docker metadata (tags)
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -75,23 +154,17 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha
-          labels: |
-            org.opencontainers.image.title=octopus
-            org.opencontainers.image.description=Octopus API Gateway
 
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          provenance: true
-          sbom: true
-          build-args: |
-            VERSION=${{ steps.meta.outputs.version }}
-            COMMIT=${{ github.sha }}
-            BUILD_DATE=${{ steps.prep.outputs.build_date }}
+      - name: Create and push manifest list
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          # One multi-arch manifest per tag (GHCR + Docker Hub when enabled),
+          # assembled from the per-arch digests pushed to GHCR. imagetools copies
+          # the blobs to Docker Hub as needed.
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.GHCR_IMAGE }}@sha256:%s ' *)
+
+      - name: Inspect
+        run: |
+          docker buildx imagetools inspect "${{ env.GHCR_IMAGE }}:${{ steps.meta.outputs.version }}"
