@@ -67,18 +67,21 @@ spec:
             httpGet:
               path: {{ .Values.probes.startup.path }}
               port: http
+              scheme: {{ .Values.probes.scheme | default "HTTP" }}
             periodSeconds: {{ .Values.probes.startup.periodSeconds }}
             failureThreshold: {{ .Values.probes.startup.failureThreshold }}
           livenessProbe:
             httpGet:
               path: {{ .Values.probes.liveness.path }}
               port: http
+              scheme: {{ .Values.probes.scheme | default "HTTP" }}
             periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
             failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
           readinessProbe:
             httpGet:
               path: {{ .Values.probes.readiness.path }}
               port: http
+              scheme: {{ .Values.probes.scheme | default "HTTP" }}
             periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
             failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
           {{- if .Values.preStopHook.enabled }}

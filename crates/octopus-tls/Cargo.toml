@@ -16,6 +16,10 @@ rustls-pemfile = "2.0"
 webpki-roots = "0.26"
 arc-swap.workspace = true
 
+# Self-signed default cert (SNI fallback so no-SNI handshakes — e.g. k8s health
+# probes connecting by pod IP — still complete).
+rcgen = "0.13"
+
 # Certificate parsing
 x509-parser = "0.16"
 

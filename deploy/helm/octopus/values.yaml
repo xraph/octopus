@@ -122,6 +122,10 @@ preStopHook:
 
 # ── Probes ───────────────────────────────────────────────────────────────────
 probes:
+  # HTTP by default. Set to HTTPS when config.kubernetes.terminate_tls is true
+  # (the gateway listen port then serves TLS; octopus's self-signed default cert
+  # lets the no-SNI probe handshake complete).
+  scheme: HTTP
   startup:
     path: /startupz
     periodSeconds: 2

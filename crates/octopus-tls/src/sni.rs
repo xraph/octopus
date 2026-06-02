@@ -8,7 +8,7 @@ use rustls::server::{ClientHello, ResolvesServerCert, ServerConfig};
 use rustls::sign::CertifiedKey;
 use std::collections::HashMap;
 use std::io::Cursor;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 /// Resolves a server certificate by SNI hostname, with an optional default.
 #[derive(Debug, Default)]
@@ -67,8 +67,14 @@ impl SniCertResolver {
 
     /// Consume the resolver into a rustls [`ServerConfig`] that performs SNI
     /// certificate selection, with HTTP/2 + HTTP/1.1 ALPN and no client auth.
-    pub fn into_server_config(self) -> ServerConfig {
+    pub fn into_server_config(mut self) -> ServerConfig {
         crate::ensure_crypto_provider();
+        // Ensure a fallback cert so handshakes without a matching SNI still
+        // complete — notably Kubernetes health probes, which connect by pod IP
+        // (no SNI). Real traffic always carries SNI and gets the right cert.
+        if self.default.is_none() {
+            self.default = self_signed_default();
+        }
         let mut config = ServerConfig::builder()
             .with_no_client_auth()
             .with_cert_resolver(Arc::new(self));
@@ -108,6 +114,25 @@ impl ResolvesServerCert for SniCertResolver {
     fn resolve(&self, client_hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
         self.lookup(client_hello.server_name())
     }
+}
+
+/// A process-wide self-signed certificate, generated once and reused as the SNI
+/// default. Lets TLS handshakes that carry no matching SNI complete (Kubernetes
+/// health probes connect by pod IP, so send no SNI). Returns `None` only if
+/// generation fails, leaving the resolver with no default (prior behaviour).
+fn self_signed_default() -> Option<Arc<CertifiedKey>> {
+    static DEFAULT: OnceLock<Option<Arc<CertifiedKey>>> = OnceLock::new();
+    DEFAULT
+        .get_or_init(|| {
+            let cert =
+                rcgen::generate_simple_self_signed(vec!["octopus.local".to_string()]).ok()?;
+            let cert_pem = cert.cert.pem();
+            let key_pem = cert.key_pair.serialize_pem();
+            certified_key_from_pem(cert_pem.as_bytes(), key_pem.as_bytes())
+                .ok()
+                .map(Arc::new)
+        })
+        .clone()
 }
 
 /// Build a [`CertifiedKey`] from PEM cert chain + private key bytes.
