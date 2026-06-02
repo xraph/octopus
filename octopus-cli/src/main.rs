@@ -57,6 +57,15 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // rustls 0.23 is compiled here with multiple crypto backends (aws-lc-rs from
+    // the rustls default + ring via kube's `rustls-tls`), so the process-level
+    // CryptoProvider is ambiguous. Install one explicitly before any TLS client
+    // (e.g. the Kubernetes discovery client) is constructed — otherwise rustls
+    // panics: "Could not automatically determine the process-level CryptoProvider".
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .expect("install default rustls CryptoProvider");
+
     let cli = Cli::parse();
 
     match cli.command {

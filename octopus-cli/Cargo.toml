@@ -61,6 +61,10 @@ serde_yaml.workspace = true
 regex = "1.10"
 glob = "0.3"
 
+# TLS crypto provider — installed as the process default in main() before any
+# rustls client (the Kubernetes discovery client) is built.
+rustls = { workspace = true }
+
 [features]
 # Kubernetes-first: ship the operator + K8s discovery by default.
 default = ["kubernetes"]
