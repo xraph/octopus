@@ -586,11 +586,16 @@ mod tests {
 
         let canary_config = CanaryConfig::new("v2".to_string(), 20); // 20% to canary
 
-        // Run multiple times to check distribution
+        // The split is a per-request Bernoulli(0.2) draw (gen_range(0..100) < 20),
+        // so over N trials canary_count ~ Binomial(N, 0.2). A small N with tight
+        // bounds flakes (~1% at N=100, ±2.5σ) regardless of platform. Use a large
+        // N and ~±6σ bounds so the test is reliable everywhere (flake ~1e-10)
+        // while still asserting a real ~20/80 split.
+        let trials = 1000;
         let mut canary_count = 0;
         let mut stable_count = 0;
 
-        for _ in 0..100 {
+        for _ in 0..trials {
             let selected = router.select(&instances, Some(&canary_config)).unwrap();
             if selected.id == "canary" {
                 canary_count += 1;
@@ -599,9 +604,15 @@ mod tests {
             }
         }
 
-        // Should be roughly 20/80 split (allow some variance)
-        assert!(canary_count > 10 && canary_count < 30);
-        assert!(stable_count > 70 && stable_count < 90);
+        // Expected mean 200, σ ≈ 12.6; bounds below are ~±6σ.
+        assert!(
+            (120..=280).contains(&canary_count),
+            "canary_count={canary_count} outside expected ~20% band"
+        );
+        assert!(
+            (720..=880).contains(&stable_count),
+            "stable_count={stable_count} outside expected ~80% band"
+        );
     }
 
     #[test]
