@@ -531,9 +531,12 @@ impl RouteReconciler {
 /// CRDs, driving `reconciler`. An empty `namespaces` watches all namespaces
 /// (requires cluster-scoped RBAC); otherwise watchers are spawned per namespace.
 ///
-/// When `leader_election` is set, this blocks until the replica acquires the
-/// operator [`Lease`](crate::leader) before spawning any watchers, so only one
-/// replica reconciles at a time; a background task then renews the lease.
+/// The watchers program **per-replica** state (the local in-memory router and
+/// TLS resolver), so every replica runs them and serves traffic. When
+/// `leader_election` is set, acquiring the operator [`Lease`](crate::leader)
+/// runs in the background and does **not** block startup; only the lease holder
+/// is handed the client, so only it writes `.status` back to the API server
+/// (the reconciler no-ops status writes until a client is set).
 pub async fn start(
     reconciler: Arc<RouteReconciler>,
     namespaces: Vec<String>,
@@ -541,18 +544,6 @@ pub async fn start(
     leader_election: bool,
 ) -> crate::Result<()> {
     let client = Client::try_default().await?;
-    // Hand the client to the reconciler so it can write `.status` back onto
-    // reconciled Octopus resources.
-    reconciler.set_client(client.clone());
-
-    // For HA, only the lease holder drives the watchers.
-    if leader_election {
-        let ns = crate::leader::lease_namespace();
-        let me = crate::leader::pod_identity();
-        tracing::info!(identity = %me, namespace = %ns, "leader election enabled; acquiring operator lease");
-        crate::leader::acquire_leadership(&client, &ns, &me).await;
-        tokio::spawn(crate::leader::run_leader_loop(client.clone(), ns, me));
-    }
 
     let scopes: Vec<Option<String>> = if namespaces.is_empty() {
         vec![None]
@@ -564,6 +555,9 @@ pub async fn start(
     // TlsReconciler from Gateway + Secret watches.
     let tls = tls_acceptor.map(|a| Arc::new(TlsReconciler::new(a)));
 
+    // Watchers program this replica's local router and TLS resolver, so every
+    // replica must run them — otherwise a follower would serve traffic with an
+    // empty router and no certs. These never block server startup.
     for scope in &scopes {
         spawn_watchers(client.clone(), Arc::clone(&reconciler), scope.clone());
         if let Some(ref tls) = tls {
@@ -578,6 +572,25 @@ pub async fn start(
         let rec = Arc::clone(&reconciler);
         async move { run_watcher(api, rec, "GatewayClass", on_gateway_class).await }
     });
+
+    // Writing `.status` back to resources is a cluster-singleton side effect, so
+    // for HA only the lease holder does it. Acquire leadership in the background
+    // (never blocking the data plane) and hand the client to the reconciler only
+    // once we're leader; the reconciler no-ops status writes until then.
+    if leader_election {
+        let ns = crate::leader::lease_namespace();
+        let me = crate::leader::pod_identity();
+        tracing::info!(identity = %me, namespace = %ns, "leader election enabled; acquiring operator lease in background");
+        tokio::spawn(async move {
+            crate::leader::acquire_leadership(&client, &ns, &me).await;
+            tracing::info!("operator leadership acquired; enabling status writeback");
+            reconciler.set_client(client.clone());
+            crate::leader::run_leader_loop(client, ns, me).await;
+        });
+    } else {
+        // Single-instance (no leader election): this replica writes status.
+        reconciler.set_client(client);
+    }
 
     Ok(())
 }
