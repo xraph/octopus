@@ -39,7 +39,7 @@ rules:
     resources: ["octopusgateways/status", "octopusroutes/status", "octopusupstreams/status", "octopuspolicies/status"]
     verbs: ["get", "patch", "update"]
   - apiGroups: ["gateway.networking.k8s.io"]
-    resources: ["gatewayclasses/status"]
+    resources: ["gatewayclasses/status", "gateways/status", "httproutes/status", "grpcroutes/status"]
     verbs: ["get", "patch", "update"]
   # Leader election: a single coordination Lease across operator replicas.
   - apiGroups: ["coordination.k8s.io"]

@@ -14,6 +14,10 @@ pub const CONDITION_ACCEPTED: &str = "Accepted";
 pub const REASON_ACCEPTED: &str = "Accepted";
 /// Reason used when a resource is rejected as invalid.
 pub const REASON_INVALID: &str = "Invalid";
+/// The Gateway-API condition type reporting the data plane is configured.
+pub const CONDITION_PROGRAMMED: &str = "Programmed";
+/// Reason used when a Gateway has been programmed.
+pub const REASON_PROGRAMMED: &str = "Programmed";
 
 /// A single status condition, wire-compatible with `metav1.Condition`.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -89,9 +93,53 @@ pub fn build_status(
     }
 }
 
+/// Build the `Accepted` + `Programmed` conditions a controller sets on a Gateway
+/// it owns and has configured. Unlike Octopus CRDs (which report a single
+/// `Accepted`), the Gateway API expects both so tooling and GitOps health checks
+/// (which key off `Programmed`) see the Gateway as ready.
+///
+/// `now` is the RFC3339 timestamp to stamp on the conditions (injected so the
+/// function stays pure and testable).
+pub fn build_gateway_conditions(generation: Option<i64>, now: &str) -> Vec<Condition> {
+    let condition = |type_: &str, reason: &str, message: &str| Condition {
+        type_: type_.to_string(),
+        status: "True".to_string(),
+        reason: reason.to_string(),
+        message: message.to_string(),
+        observed_generation: generation,
+        last_transition_time: Some(now.to_string()),
+    };
+    vec![
+        condition(
+            CONDITION_ACCEPTED,
+            REASON_ACCEPTED,
+            "Gateway accepted by Octopus",
+        ),
+        condition(
+            CONDITION_PROGRAMMED,
+            REASON_PROGRAMMED,
+            "Gateway programmed by Octopus",
+        ),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gateway_conditions_set_accepted_and_programmed_true() {
+        let conds = build_gateway_conditions(Some(2), "2026-01-01T00:00:00Z");
+        assert_eq!(conds.len(), 2);
+        let types: Vec<&str> = conds.iter().map(|c| c.type_.as_str()).collect();
+        assert!(types.contains(&CONDITION_ACCEPTED));
+        assert!(types.contains(&CONDITION_PROGRAMMED));
+        for c in &conds {
+            assert_eq!(c.status, "True");
+            assert_eq!(c.observed_generation, Some(2));
+            assert_eq!(c.last_transition_time.as_deref(), Some("2026-01-01T00:00:00Z"));
+        }
+    }
 
     #[test]
     fn accepted_outcome_builds_true_condition() {

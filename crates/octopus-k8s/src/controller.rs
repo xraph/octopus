@@ -17,7 +17,7 @@ use crate::gateway_api::{
 use crate::ir::{IntermediateRoute, RouteSource, RouteStore, SourceKey};
 use crate::policy::{apply_overlays, PolicyOverlay};
 use crate::refgrant::{is_permitted, RefRequest, ReferenceGrant, ReferenceGrantSpec};
-use crate::status::{build_status, ReconcileOutcome};
+use crate::status::{build_gateway_conditions, build_status, ReconcileOutcome};
 use crate::tls::TlsReconciler;
 use crate::translate::{
     grpcroute_to_route, httproute_to_route, octopus_route_to_route, octopus_upstream_to_cluster,
@@ -34,7 +34,7 @@ use kube::{
 use octopus_core::UpstreamCluster;
 use octopus_router::Router;
 use octopus_tls::SwappableTlsAcceptor;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// Reconciles routing resources into the live [`Router`].
@@ -53,6 +53,12 @@ pub struct RouteReconciler {
     route_grants: Mutex<HashMap<String, (String, ReferenceGrantSpec)>>,
     /// Parent `Gateway` specs (`ns/name` → spec) for hostname intersection.
     gateways: Mutex<HashMap<String, GatewaySpec>>,
+    /// `Gateway` metadata (`ns/name` → (generation, gatewayClassName)) for
+    /// status writeback once we know the class is ours.
+    gateway_meta: Mutex<HashMap<String, (Option<i64>, String)>>,
+    /// Names of GatewayClasses whose `controllerName` is ours — Gateways
+    /// referencing them get `Accepted`/`Programmed` status.
+    owned_gateway_classes: Mutex<HashSet<String>>,
     /// Raw HTTPRoute/GRPCRoute specs retained for re-translation when a parent
     /// Gateway's listener hostnames change.
     httproutes: Mutex<HashMap<String, HTTPRouteSpec>>,
@@ -79,6 +85,8 @@ impl RouteReconciler {
             configmaps: Mutex::new(HashMap::new()),
             route_grants: Mutex::new(HashMap::new()),
             gateways: Mutex::new(HashMap::new()),
+            gateway_meta: Mutex::new(HashMap::new()),
+            owned_gateway_classes: Mutex::new(HashSet::new()),
             httproutes: Mutex::new(HashMap::new()),
             grpcroutes: Mutex::new(HashMap::new()),
             client: OnceLock::new(),
@@ -382,20 +390,97 @@ impl RouteReconciler {
         out
     }
 
-    /// Store/replace a parent `Gateway` and re-translate dependent routes.
-    pub fn set_gateway_route(&self, name: &str, namespace: &str, spec: GatewaySpec) {
+    /// Store/replace a parent `Gateway` and re-translate dependent routes. When
+    /// the Gateway names a class we own, report `Accepted`/`Programmed` on it.
+    pub fn set_gateway_route(
+        &self,
+        name: &str,
+        namespace: &str,
+        generation: Option<i64>,
+        spec: GatewaySpec,
+    ) {
+        let key = format!("{namespace}/{name}");
+        let class = spec.gateway_class_name.clone();
         if let Ok(mut m) = self.gateways.lock() {
-            m.insert(format!("{namespace}/{name}"), spec);
+            m.insert(key.clone(), spec);
+        }
+        if let Ok(mut meta) = self.gateway_meta.lock() {
+            meta.insert(key, (generation, class.clone()));
         }
         self.reresolve_gateway_routes();
+        let owned = self
+            .owned_gateway_classes
+            .lock()
+            .map(|o| o.contains(&class))
+            .unwrap_or(false);
+        if owned {
+            self.write_gateway_status(name, namespace, generation);
+        }
     }
 
     /// Drop a parent `Gateway` and re-translate dependent routes.
     pub fn remove_gateway_route(&self, name: &str, namespace: &str) {
+        let key = format!("{namespace}/{name}");
         if let Ok(mut m) = self.gateways.lock() {
-            m.remove(&format!("{namespace}/{name}"));
+            m.remove(&key);
+        }
+        if let Ok(mut meta) = self.gateway_meta.lock() {
+            meta.remove(&key);
         }
         self.reresolve_gateway_routes();
+    }
+
+    /// Mark a GatewayClass as ours and program `Accepted`/`Programmed` status on
+    /// any Gateways already referencing it (handles the class being claimed after
+    /// its Gateways were first seen).
+    pub fn claim_gateway_class(&self, class: &str) {
+        if let Ok(mut owned) = self.owned_gateway_classes.lock() {
+            if !owned.insert(class.to_string()) {
+                return; // already claimed; nothing new to status
+            }
+        }
+        let targets: Vec<(String, Option<i64>)> = match self.gateway_meta.lock() {
+            Ok(meta) => meta
+                .iter()
+                .filter(|(_, (_, cls))| cls == class)
+                .map(|(k, (gen, _))| (k.clone(), *gen))
+                .collect(),
+            Err(_) => return,
+        };
+        for (key, generation) in targets {
+            if let Some((ns, name)) = key.split_once('/') {
+                self.write_gateway_status(name, ns, generation);
+            }
+        }
+    }
+
+    /// Forget a GatewayClass we no longer own.
+    pub fn unclaim_gateway_class(&self, class: &str) {
+        if let Ok(mut owned) = self.owned_gateway_classes.lock() {
+            owned.remove(class);
+        }
+    }
+
+    /// Patch a `Gateway`'s `.status` with `Accepted`/`Programmed` conditions. A
+    /// no-op until a client is set (only the leader writes status), mirroring
+    /// [`Self::write_status`].
+    fn write_gateway_status(&self, name: &str, namespace: &str, generation: Option<i64>) {
+        let Some(client) = self.client.get().cloned() else {
+            return;
+        };
+        let now = k8s_openapi::chrono::Utc::now().to_rfc3339();
+        let conditions = build_gateway_conditions(generation, &now);
+        let (name, namespace) = (name.to_string(), namespace.to_string());
+        tokio::spawn(async move {
+            let api: Api<Gateway> = Api::namespaced(client, &namespace);
+            let patch = serde_json::json!({ "status": { "conditions": conditions } });
+            if let Err(e) = api
+                .patch_status(&name, &PatchParams::default(), &Patch::Merge(&patch))
+                .await
+            {
+                tracing::warn!(name = %name, namespace = %namespace, error = %e, "gateway status writeback failed");
+            }
+        });
     }
 
     /// Re-translate every retained Gateway-API route (after a Gateway change),
@@ -807,7 +892,7 @@ fn on_gateway_route(rec: &RouteReconciler, event: watcher::Event<Gateway>) {
     match event {
         watcher::Event::Apply(o) | watcher::Event::InitApply(o) => {
             if let Some((name, ns)) = ident(&o) {
-                rec.set_gateway_route(&name, &ns, o.spec.clone());
+                rec.set_gateway_route(&name, &ns, o.metadata.generation, o.spec.clone());
             }
         }
         watcher::Event::Delete(o) => {
@@ -924,10 +1009,17 @@ fn on_gateway_class(rec: &RouteReconciler, event: watcher::Event<GatewayClass>) 
                         o.metadata.generation,
                         &ReconcileOutcome::Accepted,
                     );
+                    // Claiming the class also programs status on its Gateways.
+                    rec.claim_gateway_class(&name);
                 }
             }
         }
-        watcher::Event::Delete(_) | watcher::Event::Init | watcher::Event::InitDone => {}
+        watcher::Event::Delete(o) => {
+            if let Some(name) = o.metadata.name {
+                rec.unclaim_gateway_class(&name);
+            }
+        }
+        watcher::Event::Init | watcher::Event::InitDone => {}
     }
 }
 
@@ -1016,6 +1108,7 @@ mod tests {
         rec.set_gateway_route(
             "gw",
             "infra",
+            Some(1),
             GatewaySpec {
                 gateway_class_name: "octopus".into(),
                 listeners: vec![GatewayListener {
