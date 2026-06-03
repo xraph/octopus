@@ -285,11 +285,16 @@ async fn test_canary_deployment_10_percent() {
     };
     let router = Router::new(config);
 
+    // The split is a per-request Bernoulli(0.1) draw (gen_range(0..100) < 10),
+    // so over N trials canary_count ~ Binomial(N, 0.1). At N=100 the band [5,20]
+    // is only ~1.7σ below the mean and flakes ~2.4% of runs on every platform.
+    // Use a large N and ~±6σ bounds so the test is reliable (flake ~1e-9) while
+    // still asserting a real ~10/90 split.
+    let trials = 1000;
     let mut canary_count = 0;
     let mut stable_count = 0;
 
-    // Make many selections
-    for _ in 0..100 {
+    for _ in 0..trials {
         let selected = router.select(&all_upstreams, Some(&canary_config)).unwrap();
         if selected.metadata.get("version") == Some(&"v2".to_string()) {
             canary_count += 1;
@@ -298,14 +303,14 @@ async fn test_canary_deployment_10_percent() {
         }
     }
 
-    // Approximately 10% should go to canary (allow some variance)
+    // Expected mean 100, σ ≈ 9.5; bounds below are ~±6σ.
     assert!(
-        (5..=20).contains(&canary_count),
-        "Canary should get ~10% of traffic, got {canary_count}/100"
+        (40..=160).contains(&canary_count),
+        "Canary should get ~10% of traffic, got {canary_count}/1000"
     );
     assert!(
-        stable_count >= 80,
-        "Stable should get ~90% of traffic, got {stable_count}/100"
+        stable_count >= 840,
+        "Stable should get ~90% of traffic, got {stable_count}/1000"
     );
 }
 
@@ -341,11 +346,14 @@ async fn test_canary_deployment_50_percent() {
     };
     let router = Router::new(config);
 
+    // Per-request Bernoulli(0.5) draw, so canary_count ~ Binomial(N, 0.5).
+    // N=100 with the band [35,65] is only ~3σ and flakes; use a large N and
+    // ~±6σ bounds for reliability (flake ~1e-9) while asserting a real ~50/50.
+    let trials = 1000;
     let mut canary_count = 0;
     let mut stable_count = 0;
 
-    // Make many selections
-    for _ in 0..100 {
+    for _ in 0..trials {
         let selected = router.select(&all_upstreams, Some(&canary_config)).unwrap();
         if selected.metadata.get("version") == Some(&"v2".to_string()) {
             canary_count += 1;
@@ -354,14 +362,14 @@ async fn test_canary_deployment_50_percent() {
         }
     }
 
-    // Approximately 50% to each (allow variance)
+    // Expected mean 500, σ ≈ 15.8; bounds below are ~±6σ.
     assert!(
-        (35..=65).contains(&canary_count),
-        "Canary should get ~50% of traffic, got {canary_count}/100"
+        (400..=600).contains(&canary_count),
+        "Canary should get ~50% of traffic, got {canary_count}/1000"
     );
     assert!(
-        (35..=65).contains(&stable_count),
-        "Stable should get ~50% of traffic, got {stable_count}/100"
+        (400..=600).contains(&stable_count),
+        "Stable should get ~50% of traffic, got {stable_count}/1000"
     );
 }
 
@@ -392,18 +400,21 @@ async fn test_request_shadowing_percentage() {
     // Verify configuration
     assert_eq!(shadow_config.traffic_percentage, 25);
 
-    // With 25%, approximately 1 in 4 requests should be shadowed
+    // should_shadow() is a per-call Bernoulli(0.25) draw, so shadowed_count ~
+    // Binomial(N, 0.25). N=100 with the band [15,40] is only ~2.3σ below the
+    // mean and flakes ~1% of runs; use a large N and ~±6σ bounds for reliability.
+    let trials = 1000;
     let mut shadowed_count = 0;
-    for _ in 0..100 {
+    for _ in 0..trials {
         if shadow_config.should_shadow() {
             shadowed_count += 1;
         }
     }
 
-    // Allow variance, expect roughly 25%
+    // Expected mean 250, σ ≈ 13.7; bounds below are ~±6σ.
     assert!(
-        (15..=40).contains(&shadowed_count),
-        "Should shadow ~25% of requests, got {shadowed_count}/100"
+        (160..=340).contains(&shadowed_count),
+        "Should shadow ~25% of requests, got {shadowed_count}/1000"
     );
 }
 

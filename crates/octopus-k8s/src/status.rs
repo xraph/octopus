@@ -137,7 +137,10 @@ mod tests {
         for c in &conds {
             assert_eq!(c.status, "True");
             assert_eq!(c.observed_generation, Some(2));
-            assert_eq!(c.last_transition_time.as_deref(), Some("2026-01-01T00:00:00Z"));
+            assert_eq!(
+                c.last_transition_time.as_deref(),
+                Some("2026-01-01T00:00:00Z")
+            );
         }
     }
 
