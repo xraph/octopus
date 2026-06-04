@@ -65,9 +65,83 @@ pub struct OctopusGatewaySpec {
     /// The GatewayClass this gateway serves.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gateway_class_name: Option<String>,
-    /// Default auth provider applied to attached routes.
+    /// Default auth provider applied to attached routes. Superseded by
+    /// `defaultPolicy.authProvider`; retained for backward compatibility.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_auth_provider: Option<String>,
+    /// Hostnames this virtual gateway owns (Gateway API syntax: exact
+    /// `api.example.com` or wildcard `*.example.com`). A route whose host falls
+    /// within this set attaches to this gateway and inherits its `defaultPolicy`.
+    /// Empty means match any host (the implicit `default` gateway).
+    #[serde(default)]
+    pub hostnames: Vec<String>,
+    /// Defaults inherited by every route attached to this gateway. An explicit
+    /// value on a route always wins over the gateway default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_policy: Option<GatewayDefaultPolicy>,
+    /// Isolation tier: `shared` (runs in the edge process) or `dedicated`
+    /// (rendered to its own, directly-reachable Octopus deployment).
+    #[serde(default)]
+    pub isolation: GatewayIsolation,
+    /// When `true`, this gateway is the FARP federation surface: services
+    /// discovered via FARP are served under this gateway's hostnames and inherit
+    /// its `defaultPolicy` (auth/rate-limit/timeout). One source of truth instead
+    /// of also configuring `farp.gateway`.
+    #[serde(default)]
+    pub farp_binding: bool,
+}
+
+/// Policy defaults a virtual gateway pushes onto its child routes.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GatewayDefaultPolicy {
+    /// Default auth provider for routes that don't specify one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_provider: Option<String>,
+    /// Default per-request timeout (seconds) for routes without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_seconds: Option<u64>,
+    /// Default rate limit for routes without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limit: Option<RateLimitSpec>,
+    /// Default CORS policy. Also answers preflight (`OPTIONS`) for the gateway's
+    /// hostnames even when no specific route matches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cors: Option<GatewayCorsSpec>,
+}
+
+/// CORS policy for a virtual gateway (mirrors a route-level CORS override).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GatewayCorsSpec {
+    /// Allowed origins (e.g. `https://app.example.com`, or `*`).
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
+    /// Allowed HTTP methods.
+    #[serde(default)]
+    pub allowed_methods: Vec<String>,
+    /// Allowed request headers.
+    #[serde(default)]
+    pub allowed_headers: Vec<String>,
+    /// Whether credentials (cookies, auth headers) are allowed.
+    #[serde(default)]
+    pub allow_credentials: bool,
+    /// Preflight cache max-age in seconds.
+    #[serde(default)]
+    pub max_age: u64,
+}
+
+/// Isolation tier for a virtual gateway.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GatewayIsolation {
+    /// Runs as an in-process partition of the edge Octopus (single hop, shared
+    /// process). The default.
+    #[default]
+    Shared,
+    /// Rendered to its own Octopus deployment, reached directly (own
+    /// LoadBalancer/DNS or L4 SNI) — never proxied through the edge.
+    Dedicated,
 }
 
 /// A full-fidelity Octopus route.
@@ -167,6 +241,35 @@ pub struct ConventionSpec {
     /// balances across pod IPs directly.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backend_strategy: Option<String>,
+    /// Path-split rules: after the host resolves to `{namespace, service}`, the
+    /// first rule whose `pathPrefix` matches the request path overrides the
+    /// service/port and may rewrite the path. This lets one wildcard tenant route
+    /// send `<tenant>.<base>/api/*` to the tenant API and `<tenant>.<base>/*` to
+    /// the tenant frontend — collapsing the per-tenant gateway hop. Evaluated in
+    /// order; `/` matches everything, so place it last.
+    #[serde(default)]
+    pub route_rules: Vec<ConventionRouteRuleSpec>,
+}
+
+/// A path-prefix rule refining a convention-derived target (CRD form of
+/// [`octopus_router::ConventionRouteRule`]).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ConventionRouteRuleSpec {
+    /// Path prefix that triggers this rule (e.g. `/api`).
+    pub path_prefix: String,
+    /// Strip `pathPrefix` before forwarding.
+    #[serde(default)]
+    pub strip_prefix: bool,
+    /// Override the derived Service name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_override: Option<String>,
+    /// Override the upstream port.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port_override: Option<u16>,
+    /// Prefix to prepend after stripping.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub add_prefix: Option<String>,
 }
 
 /// Reference to a key in a ConfigMap holding a Rhai host-resolution script.

@@ -57,6 +57,7 @@
 pub mod apikey_provider;
 pub mod authz;
 pub mod authzen;
+pub mod convention_provider;
 pub mod forward_provider;
 pub mod introspection_provider;
 pub mod jwt_provider;
@@ -87,6 +88,7 @@ pub use token::{ApiKey, ApiKeyStore};
 
 // Re-exports: providers
 pub use apikey_provider::ApiKeyProvider;
+pub use convention_provider::ConventionAuthProvider;
 pub use forward_provider::ForwardAuthProvider;
 pub use introspection_provider::IntrospectionProvider;
 pub use jwt_provider::JwtProvider;

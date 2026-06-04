@@ -28,13 +28,19 @@ pub mod load_balancer;
 pub mod matcher;
 pub mod route;
 pub mod trie;
+pub mod virtual_gateway;
 
-pub use convention::{BackendStrategy, Convention, ConventionTarget, LabelRole};
+pub use convention::{
+    BackendStrategy, Convention, ConventionRouteRule, ConventionTarget, LabelRole, PathRewrite,
+};
 pub use host::HostMatch;
 pub use load_balancer::{new_load_balancer, LoadBalancer};
 pub use matcher::{Match, PathMatcher};
 pub use route::{Route, RouteBuilder, RouteCorsOverride};
 pub use trie::RouteTrie;
+pub use virtual_gateway::{
+    gateway_scoped_upstream, GatewayEntry, GatewayPolicy, VirtualGatewayIndex,
+};
 
 use dashmap::DashMap;
 use http::Method;

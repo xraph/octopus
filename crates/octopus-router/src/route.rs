@@ -5,6 +5,7 @@ use crate::host::HostMatch;
 use http::Method;
 use octopus_core::{Error, Result};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Route definition
@@ -62,6 +63,11 @@ pub struct Route {
     /// subdomain routing). When set, the handler derives `{namespace, service}`
     /// from the host instead of using `upstream_name`.
     pub convention: Option<Convention>,
+
+    /// Virtual gateway this route belongs to. `None` means the implicit
+    /// `default` gateway (legacy host-agnostic behavior). Routes inherit their
+    /// gateway's [`GatewayPolicy`](crate::virtual_gateway::GatewayPolicy) defaults.
+    pub gateway_id: Option<Arc<str>>,
 }
 
 /// Per-route CORS override configuration
@@ -106,6 +112,7 @@ pub struct RouteBuilder {
     rate_limit: Option<(u32, Duration)>,
     cors: Option<RouteCorsOverride>,
     convention: Option<Convention>,
+    gateway_id: Option<Arc<str>>,
 }
 
 impl RouteBuilder {
@@ -216,6 +223,12 @@ impl RouteBuilder {
         self
     }
 
+    /// Attach this route to a virtual gateway by id (`None` = implicit `default`).
+    pub fn gateway_id(mut self, id: Option<&str>) -> Self {
+        self.gateway_id = id.map(Arc::from);
+        self
+    }
+
     /// Build the route
     pub fn build(self) -> Result<Route> {
         let method = self
@@ -253,6 +266,7 @@ impl RouteBuilder {
             rate_limit: self.rate_limit,
             cors: self.cors,
             convention: self.convention,
+            gateway_id: self.gateway_id,
         })
     }
 }
@@ -281,6 +295,7 @@ mod tests {
             port: 8080,
             script: None,
             backend: crate::BackendStrategy::default(),
+            route_rules: Vec::new(),
         };
         let route = RouteBuilder::new()
             .method(Method::GET)
@@ -301,6 +316,29 @@ mod tests {
             .build()
             .unwrap();
         assert_eq!(route.convention, None);
+    }
+
+    #[test]
+    fn route_defaults_to_no_gateway() {
+        let route = RouteBuilder::new()
+            .method(Method::GET)
+            .path("/x")
+            .upstream_name("u")
+            .build()
+            .unwrap();
+        assert!(route.gateway_id.is_none());
+    }
+
+    #[test]
+    fn route_builder_sets_gateway_id() {
+        let route = RouteBuilder::new()
+            .method(Method::GET)
+            .path("/x")
+            .upstream_name("u")
+            .gateway_id(Some("platform-api"))
+            .build()
+            .unwrap();
+        assert_eq!(route.gateway_id.as_deref(), Some("platform-api"));
     }
 
     #[test]

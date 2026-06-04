@@ -55,6 +55,7 @@
 pub mod adapter;
 
 pub mod api;
+pub mod binding;
 pub mod client;
 pub mod discovery;
 pub mod federation;
@@ -71,6 +72,7 @@ pub mod validation;
 pub use adapter::{EventType, ManifestEvent, RegistryAdapter, SchemaManifestAdapter};
 
 pub use api::{FarpApiHandler, RegistrationRequest, RegistrationResponse};
+pub use binding::{apply_gateway_binding, new_binding_cell, BindingCell, GatewayBinding};
 pub use client::{FarpClient, FarpClientConfig};
 pub use discovery::DiscoveryWatcher;
 pub use federation::{FederatedSchema, SchemaFederation};

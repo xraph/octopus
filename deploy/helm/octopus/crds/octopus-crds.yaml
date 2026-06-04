@@ -24,12 +24,95 @@ spec:
             description: 'Gateway-level configuration: a logical Octopus gateway instance.'
             properties:
               defaultAuthProvider:
-                description: Default auth provider applied to attached routes.
+                description: Default auth provider applied to attached routes. Superseded by `defaultPolicy.authProvider`; retained for backward compatibility.
                 nullable: true
                 type: string
+              defaultPolicy:
+                description: Defaults inherited by every route attached to this gateway. An explicit value on a route always wins over the gateway default.
+                nullable: true
+                properties:
+                  authProvider:
+                    description: Default auth provider for routes that don't specify one.
+                    nullable: true
+                    type: string
+                  cors:
+                    description: Default CORS policy. Also answers preflight (`OPTIONS`) for the gateway's hostnames even when no specific route matches.
+                    nullable: true
+                    properties:
+                      allowCredentials:
+                        default: false
+                        description: Whether credentials (cookies, auth headers) are allowed.
+                        type: boolean
+                      allowedHeaders:
+                        default: []
+                        description: Allowed request headers.
+                        items:
+                          type: string
+                        type: array
+                      allowedMethods:
+                        default: []
+                        description: Allowed HTTP methods.
+                        items:
+                          type: string
+                        type: array
+                      allowedOrigins:
+                        default: []
+                        description: Allowed origins (e.g. `https://app.example.com`, or `*`).
+                        items:
+                          type: string
+                        type: array
+                      maxAge:
+                        default: 0
+                        description: Preflight cache max-age in seconds.
+                        format: uint64
+                        minimum: 0.0
+                        type: integer
+                    type: object
+                  rateLimit:
+                    description: Default rate limit for routes without one.
+                    nullable: true
+                    properties:
+                      requests:
+                        description: Requests allowed per window.
+                        format: uint32
+                        minimum: 0.0
+                        type: integer
+                      windowSeconds:
+                        description: Window length in seconds.
+                        format: uint64
+                        minimum: 0.0
+                        type: integer
+                    required:
+                    - requests
+                    - windowSeconds
+                    type: object
+                  timeoutSeconds:
+                    description: Default per-request timeout (seconds) for routes without one.
+                    format: uint64
+                    minimum: 0.0
+                    nullable: true
+                    type: integer
+                type: object
+              farpBinding:
+                default: false
+                description: 'When `true`, this gateway is the FARP federation surface: services discovered via FARP are served under this gateway''s hostnames and inherit its `defaultPolicy` (auth/rate-limit/timeout). One source of truth instead of also configuring `farp.gateway`.'
+                type: boolean
               gatewayClassName:
                 description: The GatewayClass this gateway serves.
                 nullable: true
+                type: string
+              hostnames:
+                default: []
+                description: 'Hostnames this virtual gateway owns (Gateway API syntax: exact `api.example.com` or wildcard `*.example.com`). A route whose host falls within this set attaches to this gateway and inherits its `defaultPolicy`. Empty means match any host (the implicit `default` gateway).'
+                items:
+                  type: string
+                type: array
+              isolation:
+                default: shared
+                description: 'Isolation tier: `shared` (runs in the edge process) or `dedicated` (rendered to its own, directly-reachable Octopus deployment).'
+                enum:
+                - shared
+                - dedicated
                 type: string
               listen:
                 description: Listen address, e.g. `0.0.0.0:8080`.
@@ -151,6 +234,37 @@ spec:
                     minimum: 0.0
                     nullable: true
                     type: integer
+                  routeRules:
+                    default: []
+                    description: 'Path-split rules: after the host resolves to `{namespace, service}`, the first rule whose `pathPrefix` matches the request path overrides the service/port and may rewrite the path. This lets one wildcard tenant route send `<tenant>.<base>/api/*` to the tenant API and `<tenant>.<base>/*` to the tenant frontend — collapsing the per-tenant gateway hop. Evaluated in order; `/` matches everything, so place it last.'
+                    items:
+                      description: A path-prefix rule refining a convention-derived target (CRD form of [`octopus_router::ConventionRouteRule`]).
+                      properties:
+                        addPrefix:
+                          description: Prefix to prepend after stripping.
+                          nullable: true
+                          type: string
+                        pathPrefix:
+                          description: Path prefix that triggers this rule (e.g. `/api`).
+                          type: string
+                        portOverride:
+                          description: Override the upstream port.
+                          format: uint16
+                          minimum: 0.0
+                          nullable: true
+                          type: integer
+                        serviceOverride:
+                          description: Override the derived Service name.
+                          nullable: true
+                          type: string
+                        stripPrefix:
+                          default: false
+                          description: Strip `pathPrefix` before forwarding.
+                          type: boolean
+                      required:
+                      - pathPrefix
+                      type: object
+                    type: array
                   script:
                     description: Optional inline Rhai script mapping `host` → `#{namespace, service[, port]}`, overriding the label `layout` when it returns a mapping (otherwise the layout is used). Receives the request `host` as a string variable.
                     nullable: true

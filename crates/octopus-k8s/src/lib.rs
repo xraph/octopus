@@ -21,6 +21,7 @@ pub mod apply;
 pub mod controller;
 pub mod crd;
 pub mod crds;
+pub mod dedicated;
 pub mod endpoints;
 pub mod error;
 pub mod gateway_api;

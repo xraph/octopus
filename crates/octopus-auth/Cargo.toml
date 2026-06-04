@@ -11,6 +11,8 @@ description = "Authentication and authorization for Octopus API Gateway"
 [dependencies]
 octopus-core = { path = "../octopus-core" }
 octopus-config = { path = "../octopus-config" }
+octopus-router = { path = "../octopus-router" }
+octopus-scripting = { path = "../octopus-scripting" }
 
 # Async
 tokio.workspace = true
@@ -45,6 +47,7 @@ rhai.workspace = true
 # Utilities
 bytes.workspace = true
 dashmap.workspace = true
+moka.workspace = true
 uuid.workspace = true
 base64 = "0.22"
 url = "2"

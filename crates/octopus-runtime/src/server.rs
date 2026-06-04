@@ -111,6 +111,35 @@ fn spawn_cert_reload(
     });
 }
 
+/// Build a label-resolution [`Convention`](octopus_router::Convention) for a
+/// convention auth provider. Only the resolved namespace matters for auth, so
+/// port/script/route-rules get inert defaults.
+fn convention_for_auth(
+    cfg: &octopus_config::types::ConventionAuthProviderConfig,
+) -> octopus_router::Convention {
+    let roles = cfg
+        .layout
+        .iter()
+        .map(|r| match r.as_str() {
+            "service" => octopus_router::LabelRole::Service,
+            "namespace" | "tenant" => octopus_router::LabelRole::Namespace,
+            _ => octopus_router::LabelRole::Ignore,
+        })
+        .collect();
+    octopus_router::Convention {
+        base_suffix: format!(".{}", cfg.base_domain.trim_matches('.')),
+        roles,
+        default_service: None,
+        port: 0,
+        script: None,
+        backend: octopus_router::BackendStrategy::default(),
+        route_rules: Vec::new(),
+    }
+}
+
+/// Shared, lock-free handle to the operator's virtual gateway index.
+type GatewayIndexHandle = std::sync::Arc<arc_swap::ArcSwap<octopus_router::VirtualGatewayIndex>>;
+
 /// HTTP server
 pub struct Server {
     config: Config,
@@ -130,6 +159,9 @@ pub struct Server {
     /// Operator-managed (hot-swappable) TLS acceptor, when the gateway listener
     /// terminates TLS from Gateway listener Secrets.
     operator_tls: Option<octopus_tls::SwappableTlsAcceptor>,
+    /// Shared virtual gateway index from the operator, handed to the request
+    /// handler so it can resolve a request's gateway by host. `None` without k8s.
+    gateway_index: Option<GatewayIndexHandle>,
 }
 
 impl std::fmt::Debug for Server {
@@ -343,6 +375,34 @@ impl Server {
                             }
                         }
                     }
+                    octopus_config::types::AuthProviderConfig::ConventionAuth(cfg) => {
+                        let convention = convention_for_auth(cfg);
+                        let base = octopus_config::types::IntrospectionProviderConfig {
+                            endpoint: String::new(), // substituted per namespace
+                            header_name: cfg.header_name.clone(),
+                            token_prefix: cfg.token_prefix.clone(),
+                            client_id: cfg.client_id.clone(),
+                            client_secret: cfg.client_secret.clone(),
+                            subject_field: cfg.subject_field.clone(),
+                            roles_field: cfg.roles_field.clone(),
+                            scope_field: cfg.scope_field.clone(),
+                            timeout: cfg.timeout,
+                        };
+                        match octopus_auth::ConventionAuthProvider::new(
+                            name,
+                            convention,
+                            &cfg.endpoint_template,
+                            base,
+                        ) {
+                            Ok(p) => {
+                                registry.register(name, Arc::new(p));
+                                tracing::info!(name = %name, base_domain = %cfg.base_domain, "Convention auth provider registered");
+                            }
+                            Err(e) => {
+                                tracing::error!(name = %name, error = %e, "Failed to create convention auth provider");
+                            }
+                        }
+                    }
                 }
             }
 
@@ -428,6 +488,12 @@ impl Server {
 
         // Anti host-spoofing (Host == TLS SNI), gated by config.
         handler.set_enforce_sni_check(self.config.gateway.enforce_sni_check);
+
+        // Share the operator's virtual gateway index so the handler can resolve a
+        // request's gateway by host (e.g. gateway-level CORS preflight).
+        if let Some(ref gateway_index) = self.gateway_index {
+            handler.set_gateway_index(Arc::clone(gateway_index));
+        }
 
         // Wire health probes (/livez, /readyz, /startupz).
         {
@@ -862,23 +928,44 @@ impl ServerBuilder {
             ));
             let federation = Arc::new(octopus_farp::SchemaFederation::new());
 
-            // Initialize discovery watcher if discovery is configured
+            // Optional virtual-gateway binding: scope all FARP routes under one
+            // hostname (e.g. api.twinos.cloud) and attach them for policy.
+            let farp_binding = config.farp.gateway.as_ref().map(|g| {
+                octopus_farp::GatewayBinding::new(&g.hostname)
+                    .with_gateway_id(g.gateway_id.clone())
+                    .with_default_auth(g.default_auth_provider.clone())
+                    .with_rate_limit(
+                        g.default_rate_limit_per_minute
+                            .map(|rpm| (rpm, std::time::Duration::from_secs(60))),
+                    )
+                    .with_timeout(g.default_timeout)
+            });
+
+            // Build the handler first so its (hot-swappable) binding cell can be
+            // shared with the discovery watcher — a CRD-driven binding update via
+            // the controller then reaches both the push and discovery paths.
+            let mut handler = FarpApiHandler::with_federation(Arc::clone(&registry), Arc::clone(&federation))
+                .with_router(Arc::clone(&router));
+            if let Some(binding) = farp_binding {
+                handler = handler.with_binding(binding);
+            }
+            let binding_cell = handler.binding_handle();
+
+            // Initialize discovery watcher if discovery is configured.
             if let Some(ref discovery_config) = config.farp.discovery {
                 Self::initialize_farp_discovery(
-                    Arc::clone(&registry),
-                    Arc::clone(&federation),
+                    registry,
+                    federation,
                     Arc::clone(&router),
                     discovery_config,
                     config.farp.watch_interval,
                     lifecycle.discovery_synced_flag(),
+                    binding_cell,
                 )
                 .await;
             }
 
-            Some(Arc::new(
-                FarpApiHandler::with_federation(registry, federation)
-                    .with_router(Arc::clone(&router)),
-            ))
+            Some(Arc::new(handler))
         } else {
             if !config.farp.enabled {
                 tracing::info!("FARP disabled in configuration");
@@ -919,13 +1006,16 @@ impl ServerBuilder {
 
         // Start the Kubernetes operator (Gateway API + Octopus CRDs) if enabled.
         #[cfg(feature = "kubernetes")]
-        let operator_tls = if config.kubernetes.enabled {
-            Self::initialize_k8s_operator(&config, Arc::clone(&router)).await
+        let (operator_tls, gateway_index) = if config.kubernetes.enabled {
+            Self::initialize_k8s_operator(&config, Arc::clone(&router), farp_handler.clone()).await
         } else {
-            None
+            (None, None)
         };
         #[cfg(not(feature = "kubernetes"))]
-        let operator_tls: Option<octopus_tls::SwappableTlsAcceptor> = None;
+        let (operator_tls, gateway_index): (
+            Option<octopus_tls::SwappableTlsAcceptor>,
+            Option<GatewayIndexHandle>,
+        ) = (None, None);
 
         // Configuration is fully loaded and applied.
         lifecycle.mark_config_loaded();
@@ -944,6 +1034,7 @@ impl ServerBuilder {
             config_paths: self.config_paths,
             lifecycle,
             operator_tls,
+            gateway_index,
         })
     }
 
@@ -955,6 +1046,7 @@ impl ServerBuilder {
         discovery_config: &octopus_config::types::FarpDiscoveryConfig,
         watch_interval: std::time::Duration,
         discovery_synced: Arc<AtomicBool>,
+        binding_cell: octopus_farp::BindingCell,
     ) {
         use octopus_config::types::DiscoveryBackendConfig;
 
@@ -970,7 +1062,8 @@ impl ServerBuilder {
             federation,
         )
         .with_router(router)
-        .with_readiness_flag(Arc::clone(&discovery_synced));
+        .with_readiness_flag(Arc::clone(&discovery_synced))
+        .with_binding_cell(binding_cell);
 
         let mut enabled_backends = 0;
 
@@ -1201,7 +1294,8 @@ impl ServerBuilder {
     async fn initialize_k8s_operator(
         config: &Config,
         router: Arc<octopus_router::Router>,
-    ) -> Option<octopus_tls::SwappableTlsAcceptor> {
+        farp_handler: Option<Arc<FarpApiHandler>>,
+    ) -> (Option<octopus_tls::SwappableTlsAcceptor>, Option<GatewayIndexHandle>) {
         use octopus_k8s::controller::RouteReconciler;
 
         tracing::info!(
@@ -1214,6 +1308,14 @@ impl ServerBuilder {
         octopus_tls::ensure_crypto_provider();
 
         let reconciler = Arc::new(RouteReconciler::new(router));
+        // When this instance is a dedicated child, serve only its gateway's routes.
+        if let Some(gateway) = config.kubernetes.serve_only_gateway.clone() {
+            reconciler.set_serve_only_gateway(gateway);
+        }
+        // Let `OctopusGateway{farp_binding: true}` drive the FARP federation binding.
+        if let Some(farp) = farp_handler {
+            reconciler.set_farp_handler(farp);
+        }
         // Seed static config routes so they survive merges with reconciled sources.
         let (routes, upstreams) = Self::config_to_ir(config);
         reconciler.seed_static(routes, upstreams);
@@ -1228,18 +1330,30 @@ impl ServerBuilder {
             None
         };
 
+        // Shared handle to the gateway index for the data-plane handler (grab it
+        // before `reconciler` is moved into the operator task).
+        let gateway_index = reconciler.gateway_index_handle();
+
+        // A dedicated child never renders further dedicated children (no recursion).
+        let dedicated_image = if config.kubernetes.serve_only_gateway.is_some() {
+            None
+        } else {
+            config.kubernetes.dedicated_gateway_image.clone()
+        };
+
         if let Err(e) = octopus_k8s::controller::start(
             reconciler,
             config.kubernetes.watch_namespaces.clone(),
             tls_acceptor.clone(),
             config.kubernetes.leader_election,
+            dedicated_image,
         )
         .await
         {
             tracing::error!(error = %e, "Failed to start Kubernetes operator");
         }
 
-        tls_acceptor
+        (tls_acceptor, Some(gateway_index))
     }
 }
 

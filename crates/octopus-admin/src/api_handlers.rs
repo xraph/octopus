@@ -914,6 +914,7 @@ pub async fn api_auth_providers_handler(State(state): State<Arc<AppState>>) -> i
                     octopus_config::types::AuthProviderConfig::ForwardAuth(_) => "forward_auth",
                     octopus_config::types::AuthProviderConfig::Mtls(_) => "mtls",
                     octopus_config::types::AuthProviderConfig::Introspection(_) => "introspection",
+                    octopus_config::types::AuthProviderConfig::ConventionAuth(_) => "convention",
                 };
                 serde_json::json!({
                     "name": name,
