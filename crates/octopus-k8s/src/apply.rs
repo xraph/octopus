@@ -99,7 +99,7 @@ fn build_route(route: &IntermediateRoute, policy: Option<&GatewayPolicy>) -> Res
         .path(&route.path)
         .method(route.method.clone())
         .host(route.host.clone())
-        .upstream_name(&gateway_scoped_upstream(
+        .upstream_name(gateway_scoped_upstream(
             route.gateway_id.as_deref(),
             &route.upstream,
         ))
