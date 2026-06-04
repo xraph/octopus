@@ -107,6 +107,9 @@ pub struct IntermediateRoute {
     /// Convention for deriving the upstream from the request host. When set, the
     /// route is host-wildcarded and its upstream is resolved per request.
     pub convention: Option<Convention>,
+    /// Virtual gateway this route attaches to (`None` = implicit `default`).
+    /// Routes inherit their gateway's policy defaults during apply.
+    pub gateway_id: Option<String>,
 }
 
 impl IntermediateRoute {
@@ -135,6 +138,7 @@ impl IntermediateRoute {
             timeout: None,
             rate_limit: None,
             convention: None,
+            gateway_id: None,
         }
     }
 
@@ -147,6 +151,12 @@ impl IntermediateRoute {
     /// Scope this route to a host.
     pub fn with_host(mut self, host: HostMatch) -> Self {
         self.host = host;
+        self
+    }
+
+    /// Attach this route to a virtual gateway by id.
+    pub fn with_gateway(mut self, id: impl Into<String>) -> Self {
+        self.gateway_id = Some(id.into());
         self
     }
 }
@@ -285,10 +295,23 @@ mod tests {
         IntermediateRoute::new(method, path, upstream, source)
     }
 
+    #[test]
+    fn route_defaults_to_no_gateway() {
+        let r = IntermediateRoute::new(Method::GET, "/x", "up", RouteSource::OctopusRoute);
+        assert!(r.gateway_id.is_none());
+    }
+
+    #[test]
+    fn with_gateway_sets_id() {
+        let r = IntermediateRoute::new(Method::GET, "/x", "up", RouteSource::OctopusRoute)
+            .with_gateway("platform-api");
+        assert_eq!(r.gateway_id.as_deref(), Some("platform-api"));
+    }
+
     fn find<'a>(t: &'a RoutingTable, method: &Method, path: &str) -> Option<&'a IntermediateRoute> {
         t.routes
             .iter()
-            .find(|r| &r.method == method && r.path == path)
+            .find(|r| r.method == *method && r.path == path)
     }
 
     #[test]

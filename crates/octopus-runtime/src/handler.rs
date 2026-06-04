@@ -14,7 +14,11 @@ use octopus_metrics::{ActivityLog, MetricsCollector, RequestOutcome};
 use octopus_plugin_runtime::PluginManager;
 use octopus_protocols::ProtocolHandler;
 use octopus_proxy::HttpProxy;
-use octopus_router::{BackendStrategy, Convention, ConventionTarget, Route, Router};
+use arc_swap::ArcSwap;
+use octopus_router::{
+    gateway_scoped_upstream, BackendStrategy, Convention, ConventionTarget, PathRewrite, Route,
+    Router, VirtualGatewayIndex,
+};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -104,6 +108,10 @@ pub struct RequestHandler {
     /// Keeps EndpointSlice-backed convention upstreams' pod instances live
     /// (`None` = no Kubernetes watcher; convention falls back to Service DNS).
     backend_watcher: Option<Arc<dyn octopus_core::BackendWatcher>>,
+    /// Shared virtual gateway index (lock-free `load`), used to resolve a request's
+    /// gateway by host — e.g. to answer gateway-level CORS preflight when no route
+    /// matches. Empty unless wired from the k8s operator via [`Self::set_gateway_index`].
+    gateway_index: Arc<ArcSwap<VirtualGatewayIndex>>,
 }
 
 impl std::fmt::Debug for RequestHandler {
@@ -147,6 +155,7 @@ impl RequestHandler {
             probe_routes: ProbeRoutes::default(),
             enforce_sni_check: true,
             resolve_cache: new_resolve_cache(),
+            gateway_index: Arc::new(ArcSwap::from_pointee(VirtualGatewayIndex::default())),
             backend_watcher: None,
         }
     }
@@ -197,6 +206,7 @@ impl RequestHandler {
             probe_routes: ProbeRoutes::default(),
             enforce_sni_check: true,
             resolve_cache: new_resolve_cache(),
+            gateway_index: Arc::new(ArcSwap::from_pointee(VirtualGatewayIndex::default())),
             backend_watcher: None,
         }
     }
@@ -251,6 +261,7 @@ impl RequestHandler {
             probe_routes: ProbeRoutes::default(),
             enforce_sni_check: true,
             resolve_cache: new_resolve_cache(),
+            gateway_index: Arc::new(ArcSwap::from_pointee(VirtualGatewayIndex::default())),
             backend_watcher: None,
         }
     }
@@ -286,6 +297,7 @@ impl RequestHandler {
             probe_routes: ProbeRoutes::default(),
             enforce_sni_check: true,
             resolve_cache: new_resolve_cache(),
+            gateway_index: Arc::new(ArcSwap::from_pointee(VirtualGatewayIndex::default())),
             backend_watcher: None,
         }
     }
@@ -378,6 +390,12 @@ impl RequestHandler {
         self.backend_watcher = Some(watcher);
     }
 
+    /// Wire the shared virtual gateway index (from the k8s operator) so the handler
+    /// can resolve a request's gateway by host for gateway-level behavior.
+    pub fn set_gateway_index(&mut self, index: Arc<ArcSwap<VirtualGatewayIndex>>) {
+        self.gateway_index = index;
+    }
+
     /// Whether to reject this request because its `Host`/`:authority` disagrees
     /// with the negotiated TLS SNI. Always `false` when the check is disabled or
     /// no SNI was negotiated.
@@ -397,26 +415,28 @@ impl RequestHandler {
         format!("{}.{}.svc", target.service, target.namespace)
     }
 
-    /// Build the Service-DNS upstream (key + single-instance cluster) for a
-    /// convention target.
-    fn convention_upstream(target: &ConventionTarget) -> (String, UpstreamCluster) {
-        let key = Self::convention_key(target);
-        let mut cluster = UpstreamCluster::new(key.clone());
+    /// Build the Service-DNS upstream cluster for a convention target, registered
+    /// under `key` (which may be gateway-scoped) but pointing at the real Service
+    /// DNS address (`{svc}.{ns}.svc`).
+    fn convention_upstream(key: &str, target: &ConventionTarget) -> UpstreamCluster {
+        let dns = Self::convention_key(target);
+        let mut cluster = UpstreamCluster::new(key.to_string());
         cluster.add_instance(UpstreamInstance::new(
-            format!("{key}:{}", target.port),
-            key.clone(),
+            format!("{dns}:{}", target.port),
+            dns,
             target.port,
         ));
-        (key, cluster)
+        cluster
     }
 
-    /// Idempotently register the Service-DNS upstream for a convention target,
-    /// returning its cluster key.
-    fn register_convention_upstream(&self, target: ConventionTarget) -> String {
-        let key = Self::convention_key(&target);
+    /// Idempotently register the Service-DNS upstream for a convention target
+    /// under cluster name `key`, returning that key.
+    fn register_convention_upstream(&self, key: &str, target: &ConventionTarget) -> String {
+        let owned = target.clone();
+        let key_owned = key.to_string();
         self.router
-            .ensure_upstream(&key, move || Self::convention_upstream(&target).1);
-        key
+            .ensure_upstream(key, move || Self::convention_upstream(&key_owned, &owned));
+        key.to_string()
     }
 
     /// Resolve the upstream cluster name for a matched route and request host.
@@ -426,14 +446,27 @@ impl RequestHandler {
     /// returning `()`), then falling back to the label `layout` — and a
     /// Service-DNS upstream is lazily registered. Other routes use their declared
     /// upstream name unchanged.
-    async fn resolve_upstream(&self, route: &Route, host: &str) -> Result<String> {
+    /// Resolve the upstream cluster name and any path rewrite for a matched route.
+    ///
+    /// For convention routes the `{namespace, service}` target is derived from the
+    /// host (cached), then the path-split
+    /// [`route_rules`](octopus_router::Convention::route_rules) select a rule that
+    /// may override the derived service/port (e.g. `/api/*` → the tenant API) and
+    /// yield a [`PathRewrite`] the caller applies before proxying. Non-convention
+    /// routes pass through their declared upstream with no rewrite.
+    async fn resolve_upstream_with_path(
+        &self,
+        route: &Route,
+        host: &str,
+        path: &str,
+    ) -> Result<(String, Option<PathRewrite>)> {
         let Some(conv) = &route.convention else {
-            return Ok(route.upstream_name.clone());
+            return Ok((route.upstream_name.clone(), None));
         };
 
-        // Cache the (expensive) derivation per host; always run the cheap
-        // registration/keep-alive step below so cached hits stay live.
-        let target = match self.resolve_cache.get(host) {
+        // Cache the (expensive) host derivation; the cheap path-rule application
+        // and registration/keep-alive run per request so cached hits stay live.
+        let base = match self.resolve_cache.get(host) {
             Some(t) => t,
             None => {
                 let t = self.derive_target(conv, host).await?;
@@ -442,17 +475,57 @@ impl RequestHandler {
             }
         };
 
+        let (target, rewrite) = conv.apply_route_rules(base, path);
+
+        // Per-gateway upstream isolation (W4): scope the derived upstream key by
+        // the route's gateway so two gateways resolving the same Service get
+        // independent load-balancer / circuit-breaker state.
+        let key = gateway_scoped_upstream(route.gateway_id.as_deref(), &Self::convention_key(&target));
+
         // EndpointSlice backend: delegate to the watcher, which keeps the
         // cluster's pod instances live. Falls back to Service DNS when no
         // watcher is installed (e.g. running without the Kubernetes operator).
         if matches!(conv.backend, BackendStrategy::EndpointSlice) {
             if let Some(watcher) = &self.backend_watcher {
-                let key = Self::convention_key(&target);
                 watcher.ensure(&target.namespace, &target.service, target.port, &key);
-                return Ok(key);
+                return Ok((key, rewrite));
             }
         }
-        Ok(self.register_convention_upstream(target))
+        Ok((self.register_convention_upstream(&key, &target), rewrite))
+    }
+
+    /// Rate-limit bucket key for a route, namespaced by its virtual gateway so two
+    /// gateways with the same path get independent buckets (per-gateway isolation).
+    /// Ungated routes (`gateway_id == None`) keep the bare path for compatibility.
+    fn gateway_scoped_rate_limit_key(gateway_id: Option<&str>, path: &str) -> String {
+        match gateway_id {
+            Some(gateway) => format!("{gateway}:{path}"),
+            None => path.to_string(),
+        }
+    }
+
+    /// Apply a convention path-split [`PathRewrite`] to `path` (strip then add).
+    fn apply_convention_rewrite(path: String, rewrite: &Option<PathRewrite>) -> String {
+        let Some(rw) = rewrite else { return path };
+        let mut out = path;
+        if let Some(strip) = &rw.strip {
+            if let Some(stripped) = out.strip_prefix(strip.as_str()) {
+                out = stripped.to_string();
+            }
+        }
+        if let Some(add) = &rw.add {
+            out = format!("{add}{out}");
+        }
+        out
+    }
+
+    /// Test helper: resolve only the upstream key (path-less), kept so existing
+    /// convention tests read clearly. Production code uses
+    /// [`resolve_upstream_with_path`](Self::resolve_upstream_with_path).
+    #[cfg(test)]
+    async fn resolve_upstream(&self, route: &Route, host: &str) -> Result<String> {
+        let (key, _rewrite) = self.resolve_upstream_with_path(route, host, "/").await?;
+        Ok(key)
     }
 
     /// Derive the convention target for a host: optional Rhai script first
@@ -787,6 +860,13 @@ impl RequestHandler {
                     metadata: route.metadata.clone(),
                 });
 
+            // Expose the matched route's virtual gateway for gateway-aware
+            // middleware/plugins (per-request gateway context).
+            req.extensions_mut()
+                .insert(octopus_middleware::ResolvedGateway {
+                    gateway_id: route.gateway_id.as_deref().map(str::to_string),
+                });
+
             // Inject per-route CORS override if configured
             if let Some(ref cors_override) = route.cors {
                 req.extensions_mut()
@@ -804,9 +884,30 @@ impl RequestHandler {
             if let Some((requests_per_window, window_size)) = route.rate_limit {
                 req.extensions_mut()
                     .insert(octopus_middleware::MatchedRouteRateLimit {
-                        key: route.path.clone(),
+                        key: Self::gateway_scoped_rate_limit_key(
+                            route.gateway_id.as_deref(),
+                            &route.path,
+                        ),
                         requests_per_window,
                         window_size,
+                    });
+            }
+        } else if let Some(gw) = self.gateway_index.load().resolve(&host) {
+            // No specific route matched, but the host belongs to a virtual gateway:
+            // expose it and apply its CORS so the CORS middleware can answer a
+            // preflight (`OPTIONS`) for the gateway's domain.
+            req.extensions_mut()
+                .insert(octopus_middleware::ResolvedGateway {
+                    gateway_id: Some(gw.id.to_string()),
+                });
+            if let Some(cors) = &gw.policy.cors {
+                req.extensions_mut()
+                    .insert(octopus_middleware::MatchedRouteCors {
+                        allowed_origins: cors.allowed_origins.clone(),
+                        allowed_methods: cors.allowed_methods.clone(),
+                        allowed_headers: cors.allowed_headers.clone(),
+                        allow_credentials: cors.allow_credentials,
+                        max_age: cors.max_age,
                     });
             }
         }
@@ -872,7 +973,9 @@ impl RequestHandler {
         })?;
 
         // Select upstream instance (convention routes derive it from the host)
-        let upstream_key = self.resolve_upstream(&route, &host).await?;
+        let (upstream_key, conv_rewrite) = self
+            .resolve_upstream_with_path(&route, &host, &path)
+            .await?;
         let instance = self.router.select_instance(&upstream_key).map_err(|e| {
             tracing::error!(upstream = %upstream_key, error = %e, "No upstream for WebSocket");
             Error::NoHealthyUpstream
@@ -889,6 +992,8 @@ impl RequestHandler {
         if let Some(ref prefix) = route.add_prefix {
             upstream_path = format!("{prefix}{upstream_path}");
         }
+        // Convention path-split rewrite (e.g. strip `/api` for the tenant API).
+        upstream_path = Self::apply_convention_rewrite(upstream_path, &conv_rewrite);
         let upstream_ws_url = upstream_base
             .replace("http://", "ws://")
             .replace("https://", "wss://");
@@ -1020,7 +1125,9 @@ impl RequestHandler {
         })?;
 
         // Select upstream instance (convention routes derive it from the host)
-        let upstream_key = self.resolve_upstream(&route, &host).await?;
+        let (upstream_key, conv_rewrite) = self
+            .resolve_upstream_with_path(&route, &host, &path)
+            .await?;
         let instance = self.router.select_instance(&upstream_key).map_err(|e| {
             tracing::error!(upstream = %upstream_key, error = %e, "No upstream for SSE");
             Error::NoHealthyUpstream
@@ -1036,6 +1143,8 @@ impl RequestHandler {
         if let Some(ref prefix) = route.add_prefix {
             upstream_path = format!("{prefix}{upstream_path}");
         }
+        // Convention path-split rewrite (e.g. strip `/api` for the tenant API).
+        upstream_path = Self::apply_convention_rewrite(upstream_path, &conv_rewrite);
         let mut upstream_url = format!("{}{}", instance.base_url(), upstream_path);
         if let Some(ref qs) = query {
             upstream_url = format!("{upstream_url}?{qs}");
@@ -1222,7 +1331,9 @@ impl RequestHandler {
             Error::RouteNotFound(format!("No route for gRPC service: {service}"))
         })?;
 
-        let upstream_key = self.resolve_upstream(&route, &host).await?;
+        let (upstream_key, conv_rewrite) = self
+            .resolve_upstream_with_path(&route, &host, &path)
+            .await?;
         let instance = self.router.select_instance(&upstream_key).map_err(|e| {
             error!(upstream = %upstream_key, error = %e, "No upstream for gRPC");
             Error::NoHealthyUpstream
@@ -1239,6 +1350,8 @@ impl RequestHandler {
         if let Some(ref prefix) = route.add_prefix {
             upstream_path = format!("{prefix}{upstream_path}");
         }
+        // Convention path-split rewrite (e.g. strip `/api` for the tenant API).
+        upstream_path = Self::apply_convention_rewrite(upstream_path, &conv_rewrite);
 
         // Parse deadline from grpc-timeout header
         let deadline = req
@@ -1382,7 +1495,9 @@ impl RequestHandler {
         );
 
         // Get upstream instance (convention routes derive it from the host)
-        let upstream_key = self.resolve_upstream(&route, &host).await?;
+        let (upstream_key, conv_rewrite) = self
+            .resolve_upstream_with_path(&route, &host, &path)
+            .await?;
         let instance = match self.router.select_instance(&upstream_key) {
             Ok(instance) => instance,
             Err(e) => {
@@ -1429,6 +1544,8 @@ impl RequestHandler {
         if let Some(ref prefix) = route.add_prefix {
             upstream_path = format!("{prefix}{upstream_path}");
         }
+        // Convention path-split rewrite (e.g. strip `/api` for the tenant API).
+        upstream_path = Self::apply_convention_rewrite(upstream_path, &conv_rewrite);
         if upstream_path != path {
             // Rebuild the URI with the rewritten path
             let mut parts = req.uri().clone().into_parts();
@@ -1600,18 +1717,38 @@ mod tests {
     }
 
     #[test]
+    fn rate_limit_key_is_namespaced_by_gateway() {
+        // Two gateways sharing a path get independent buckets; ungated routes
+        // keep the bare path (backward compatible).
+        assert_eq!(
+            RequestHandler::gateway_scoped_rate_limit_key(Some("platform-api"), "/api/users"),
+            "platform-api:/api/users"
+        );
+        assert_eq!(
+            RequestHandler::gateway_scoped_rate_limit_key(None, "/api/users"),
+            "/api/users"
+        );
+    }
+
+    #[test]
     fn convention_upstream_builds_service_dns_cluster() {
         let target = ConventionTarget {
             namespace: "acme".into(),
             service: "orders".into(),
             port: 8080,
         };
-        let (key, cluster) = RequestHandler::convention_upstream(&target);
-        assert_eq!(key, "orders.acme.svc", "Service-DNS upstream key");
+        // Ungated: registered under the bare Service-DNS key.
+        let cluster = RequestHandler::convention_upstream("orders.acme.svc", &target);
         assert_eq!(cluster.name, "orders.acme.svc");
         assert_eq!(cluster.instances.len(), 1);
         assert_eq!(cluster.instances[0].address, "orders.acme.svc");
         assert_eq!(cluster.instances[0].port, 8080);
+
+        // Gateway-scoped: cluster registered under the scoped key, but the
+        // instance still targets the real Service DNS address.
+        let scoped = RequestHandler::convention_upstream("platform-api:orders.acme.svc", &target);
+        assert_eq!(scoped.name, "platform-api:orders.acme.svc");
+        assert_eq!(scoped.instances[0].address, "orders.acme.svc");
     }
 
     #[tokio::test]
@@ -1645,6 +1782,7 @@ mod tests {
             port: 8080,
             script: None,
             backend: octopus_router::BackendStrategy::default(),
+            route_rules: Vec::new(),
         };
         let route = octopus_router::RouteBuilder::new()
             .method(http::Method::GET)
@@ -1672,6 +1810,78 @@ mod tests {
             .is_err());
     }
 
+    #[tokio::test]
+    async fn resolve_upstream_with_path_splits_api_and_frontend() {
+        use octopus_router::ConventionRouteRule;
+        let handler = create_test_handler();
+        let conv = octopus_router::Convention {
+            base_suffix: ".twinos.cloud".into(),
+            roles: vec![octopus_router::LabelRole::Namespace],
+            default_service: Some("studio".into()),
+            port: 3000,
+            script: None,
+            backend: octopus_router::BackendStrategy::default(),
+            route_rules: vec![
+                ConventionRouteRule {
+                    path_prefix: "/api".into(),
+                    strip_prefix: true,
+                    service_override: Some("api".into()),
+                    port_override: Some(7900),
+                    add_prefix: None,
+                },
+                ConventionRouteRule {
+                    path_prefix: "/".into(),
+                    strip_prefix: false,
+                    service_override: Some("studio".into()),
+                    port_override: Some(3000),
+                    add_prefix: None,
+                },
+            ],
+        };
+        let route = octopus_router::RouteBuilder::new()
+            .method(http::Method::GET)
+            .path("/*rest")
+            .upstream_name("placeholder")
+            .host(octopus_router::HostMatch::Wildcard(".twinos.cloud".into()))
+            .gateway_id(Some("tenants")) // W4: convention upstream gets gateway-scoped
+            .convention(Some(conv))
+            .build()
+            .unwrap();
+
+        // `/api/*` → the tenant API service on :7900, with `/api` stripped. The
+        // upstream key is gateway-scoped ("tenants:...").
+        let (key, rewrite) = handler
+            .resolve_upstream_with_path(&route, "customer-a.twinos.cloud", "/api/orders")
+            .await
+            .unwrap();
+        assert_eq!(key, "tenants:api.customer-a.svc");
+        assert_eq!(
+            rewrite,
+            Some(PathRewrite {
+                strip: Some("/api".into()),
+                add: None
+            })
+        );
+        assert!(handler
+            .router
+            .get_upstream("tenants:api.customer-a.svc")
+            .is_some());
+
+        // Everything else → the tenant frontend on :3000, no rewrite.
+        let (key2, rewrite2) = handler
+            .resolve_upstream_with_path(&route, "customer-a.twinos.cloud", "/dashboard")
+            .await
+            .unwrap();
+        assert_eq!(key2, "tenants:studio.customer-a.svc");
+        assert_eq!(rewrite2, None);
+
+        // The actual proxied path has `/api` stripped.
+        assert_eq!(
+            RequestHandler::apply_convention_rewrite("/api/orders".to_string(), &rewrite),
+            "/orders"
+        );
+    }
+
     fn convention_route_with_script(script: &str) -> octopus_router::Route {
         let conv = octopus_router::Convention {
             base_suffix: ".platform.com".into(),
@@ -1683,6 +1893,7 @@ mod tests {
             port: 8080,
             script: Some(script.into()),
             backend: octopus_router::BackendStrategy::default(),
+            route_rules: Vec::new(),
         };
         octopus_router::RouteBuilder::new()
             .method(http::Method::GET)
@@ -1741,6 +1952,7 @@ mod tests {
             port: 8080,
             script: None,
             backend: BackendStrategy::EndpointSlice,
+            route_rules: Vec::new(),
         };
         let route = octopus_router::RouteBuilder::new()
             .method(http::Method::GET)

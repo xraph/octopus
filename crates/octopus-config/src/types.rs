@@ -82,6 +82,19 @@ pub struct KubernetesConfig {
     /// ignored when static `gateway.tls` is configured. When enabled the listen
     /// port serves HTTPS (SNI), not plain HTTP.
     pub terminate_tls: bool,
+
+    /// Container image used to render `Dedicated` virtual-gateway deployments.
+    /// When unset, `OctopusGateway`s with `isolation: dedicated` are NOT rendered
+    /// into their own workloads (they fall back to shared-edge behavior).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dedicated_gateway_image: Option<String>,
+
+    /// Marks this instance as the dedicated child for the named gateway: it serves
+    /// ONLY that gateway's routes. Set automatically in rendered `Dedicated`
+    /// children; leave unset for the edge. When set, this instance does NOT render
+    /// further dedicated children.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub serve_only_gateway: Option<String>,
 }
 
 impl Default for KubernetesConfig {
@@ -92,6 +105,8 @@ impl Default for KubernetesConfig {
             watch_namespaces: Vec::new(),
             leader_election: true,
             terminate_tls: false,
+            dedicated_gateway_image: None,
+            serve_only_gateway: None,
         }
     }
 }
@@ -348,6 +363,12 @@ pub struct FarpConfig {
     /// Discovery backend configuration
     #[serde(skip_serializing_if = "Option::is_none")]
     pub discovery: Option<FarpDiscoveryConfig>,
+
+    /// Bind all FARP-discovered routes to a virtual gateway: scope them to a
+    /// hostname (e.g. `api.twinos.cloud`) with service-scoped prefixes and attach
+    /// them for policy inheritance. When unset, FARP routes are host-agnostic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway: Option<FarpGatewayConfig>,
 }
 
 impl Default for FarpConfig {
@@ -357,8 +378,29 @@ impl Default for FarpConfig {
             watch_interval: Duration::from_secs(5),
             schema_cache_ttl: Duration::from_secs(300), // 5 minutes
             discovery: None,
+            gateway: None,
         }
     }
+}
+
+/// Binds FARP-discovered routes to a virtual gateway.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FarpGatewayConfig {
+    /// Hostname all FARP routes are scoped to (Gateway API syntax: exact
+    /// `api.twinos.cloud` or wildcard `*.twinos.cloud`).
+    pub hostname: String,
+    /// Virtual gateway id attached to each FARP route (attribution / policy).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway_id: Option<String>,
+    /// Default auth provider applied to FARP routes that don't set their own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_auth_provider: Option<String>,
+    /// Rate-limit cap (requests per minute) applied to FARP routes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_rate_limit_per_minute: Option<u32>,
+    /// Per-request timeout applied to FARP routes.
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "humantime_serde")]
+    pub default_timeout: Option<Duration>,
 }
 
 /// FARP discovery backend configuration
@@ -798,6 +840,10 @@ pub enum AuthProviderConfig {
     Mtls(MtlsProviderConfig),
     /// RFC 7662 OAuth2 token introspection (e.g. an authsome identity service)
     Introspection(IntrospectionProviderConfig),
+    /// Per-tenant token introspection where the endpoint is derived from the
+    /// request host's convention-resolved namespace (collapses the per-tenant
+    /// gateway's auth into the edge).
+    ConventionAuth(ConventionAuthProviderConfig),
 }
 
 /// JWT provider configuration
@@ -947,6 +993,47 @@ fn default_subject_field() -> String {
 
 fn default_scope_field() -> String {
     "scope".to_string()
+}
+
+/// Convention auth provider configuration.
+///
+/// Derives the introspection endpoint per request from the request host's
+/// convention-resolved namespace, so one provider serves every tenant. See
+/// `octopus_auth::ConventionAuthProvider`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ConventionAuthProviderConfig {
+    /// Base domain, e.g. `twinos.cloud` (matches `*.twinos.cloud`).
+    pub base_domain: String,
+    /// Label layout left-to-right: `service`, `namespace` (alias `tenant`), or
+    /// `ignore`. E.g. `["namespace"]` maps `acme.twinos.cloud` → namespace `acme`.
+    pub layout: Vec<String>,
+    /// Introspection endpoint template; `{namespace}` is replaced with the
+    /// resolved namespace, e.g. `http://authsome.{namespace}.svc/v1/introspect`.
+    pub endpoint_template: String,
+    /// Header to extract the incoming token from.
+    #[serde(default = "default_auth_header")]
+    pub header_name: String,
+    /// Token prefix to strip before introspection (e.g. "Bearer ").
+    #[serde(default = "default_token_prefix")]
+    pub token_prefix: String,
+    /// Optional client id for HTTP Basic auth to the introspection endpoint.
+    #[serde(default)]
+    pub client_id: Option<String>,
+    /// Optional client secret for HTTP Basic auth to the introspection endpoint.
+    #[serde(default)]
+    pub client_secret: Option<String>,
+    /// Response JSON field used as the principal id (default "sub").
+    #[serde(default = "default_subject_field")]
+    pub subject_field: String,
+    /// Response JSON field carrying roles (array or comma-delimited). Optional.
+    #[serde(default)]
+    pub roles_field: Option<String>,
+    /// Response JSON field carrying scopes (space-delimited per RFC 7662).
+    #[serde(default = "default_scope_field")]
+    pub scope_field: String,
+    /// Introspection request timeout.
+    #[serde(default = "default_forward_auth_timeout", with = "humantime_serde")]
+    pub timeout: Duration,
 }
 
 /// mTLS provider configuration

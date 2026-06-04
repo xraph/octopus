@@ -61,6 +61,15 @@ pub struct MatchedRouteCors {
     pub max_age: u64,
 }
 
+/// The virtual gateway a matched route belongs to (stored in request extensions
+/// by the handler). `None` is the implicit `default` gateway. Lets gateway-aware
+/// middleware and plugins read the per-request gateway context.
+#[derive(Debug, Clone)]
+pub struct ResolvedGateway {
+    /// Virtual gateway id, or `None` for the implicit default gateway.
+    pub gateway_id: Option<String>,
+}
+
 /// Auth gateway middleware
 pub struct AuthGatewayMiddleware {
     registry: Arc<AuthProviderRegistry>,

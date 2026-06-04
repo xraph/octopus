@@ -45,6 +45,10 @@ pub struct DiscoveryWatcher {
     /// Readiness flag flipped to `true` after the first full discovery sync,
     /// so the gateway's `/readyz` probe can wait for discovery to converge.
     readiness_flag: Option<Arc<AtomicBool>>,
+    /// Hot-swappable virtual-gateway binding (shared cell): scope discovered
+    /// routes to a hostname and attach them. Shared with the push handler so a
+    /// CRD-driven binding update reaches both.
+    binding: crate::binding::BindingCell,
 }
 
 impl std::fmt::Debug for DiscoveryWatcher {
@@ -90,6 +94,7 @@ impl DiscoveryWatcher {
             router: None,
             routes_checksums: Arc::new(dashmap::DashMap::new()),
             readiness_flag: None,
+            binding: crate::binding::new_binding_cell(),
         }
     }
 
@@ -112,6 +117,7 @@ impl DiscoveryWatcher {
             router: None,
             routes_checksums: Arc::new(dashmap::DashMap::new()),
             readiness_flag: None,
+            binding: crate::binding::new_binding_cell(),
         }
     }
 
@@ -119,6 +125,22 @@ impl DiscoveryWatcher {
     #[must_use]
     pub fn with_router(mut self, router: Arc<Router>) -> Self {
         self.router = Some(router);
+        self
+    }
+
+    /// Bind discovered routes to a virtual gateway (scope to its hostname and
+    /// attach for policy inheritance).
+    #[must_use]
+    pub fn with_binding(self, binding: crate::binding::GatewayBinding) -> Self {
+        self.binding.store(Arc::new(Some(binding)));
+        self
+    }
+
+    /// Share an existing binding cell (e.g. the push handler's) so a CRD-driven
+    /// binding update reaches the discovery path too.
+    #[must_use]
+    pub fn with_binding_cell(mut self, cell: crate::binding::BindingCell) -> Self {
+        self.binding = cell;
         self
     }
 
@@ -590,6 +612,12 @@ impl DiscoveryWatcher {
                             .require_scopes(&auth.require_scopes);
                     }
 
+                    let binding = self.binding.load();
+                    let builder = crate::binding::apply_gateway_binding(
+                        builder,
+                        (**binding).as_ref(),
+                        auth_config.is_some(),
+                    );
                     let route = builder.build();
                     if let Ok(route) = route {
                         if let Err(e) = router.add_route(route) {
@@ -680,6 +708,12 @@ impl DiscoveryWatcher {
                         .require_scopes(&auth.require_scopes);
                 }
 
+                let binding = self.binding.load();
+                let builder = crate::binding::apply_gateway_binding(
+                    builder,
+                    (**binding).as_ref(),
+                    manifest_auth_config.is_some(),
+                );
                 let route = builder.build()?;
 
                 // Register the route

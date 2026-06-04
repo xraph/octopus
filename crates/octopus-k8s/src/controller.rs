@@ -7,9 +7,10 @@
 
 use crate::apply::apply_to_router;
 use crate::crds::{
-    ConventionSpec, OctopusPolicy, OctopusPolicySpec, OctopusRoute, OctopusRouteSpec,
-    OctopusUpstream, OctopusUpstreamSpec,
+    ConventionSpec, GatewayIsolation, OctopusGateway, OctopusGatewaySpec, OctopusPolicy,
+    OctopusPolicySpec, OctopusRoute, OctopusRouteSpec, OctopusUpstream, OctopusUpstreamSpec,
 };
+use crate::dedicated::DedicatedGatewayReconciler;
 use crate::gateway_api::{
     GRPCRoute, GRPCRouteSpec, Gateway, GatewayClass, GatewaySpec, HTTPRoute, HTTPRouteSpec,
     ParentRef,
@@ -20,7 +21,8 @@ use crate::refgrant::{is_permitted, RefRequest, ReferenceGrant, ReferenceGrantSp
 use crate::status::{build_gateway_conditions, build_status, ReconcileOutcome};
 use crate::tls::TlsReconciler;
 use crate::translate::{
-    grpcroute_to_route, httproute_to_route, octopus_route_to_route, octopus_upstream_to_cluster,
+    grpcroute_to_route, httproute_to_route, octopus_gateway_to_entry, octopus_route_to_route,
+    octopus_upstream_to_cluster,
 };
 use crate::validate::{gatewayclass_is_ours, validate_policy, validate_route, validate_upstream};
 use futures::TryStreamExt;
@@ -31,8 +33,10 @@ use kube::{
     runtime::{watcher, watcher::Config as WatcherConfig},
     Client,
 };
+use arc_swap::ArcSwap;
 use octopus_core::UpstreamCluster;
-use octopus_router::Router;
+use octopus_farp::FarpApiHandler;
+use octopus_router::{Router, VirtualGatewayIndex};
 use octopus_tls::SwappableTlsAcceptor;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -63,6 +67,25 @@ pub struct RouteReconciler {
     /// Gateway's listener hostnames change.
     httproutes: Mutex<HashMap<String, HTTPRouteSpec>>,
     grpcroutes: Mutex<HashMap<String, GRPCRouteSpec>>,
+    /// Raw `OctopusGateway` specs (`ns/name` → spec), retained so the virtual
+    /// gateway index can be rebuilt whenever any gateway changes.
+    octopus_gateways: Mutex<HashMap<String, OctopusGatewaySpec>>,
+    /// Virtual gateway index: routes attach to a gateway by host and inherit its
+    /// policy defaults during apply. Rebuilt from `octopus_gateways` on change.
+    /// Behind `ArcSwap` so the data-plane handler can share it and read it
+    /// lock-free on the request hot path (see [`Self::gateway_index_handle`]).
+    gateway_index: Arc<ArcSwap<VirtualGatewayIndex>>,
+    /// Renders `Dedicated` gateways into their own workloads. Set only on the
+    /// replica that owns writes (the leader); `None` elsewhere / in unit tests,
+    /// where dedicated reconciliation is skipped.
+    dedicated_reconciler: OnceLock<Arc<DedicatedGatewayReconciler>>,
+    /// When set, this instance IS the dedicated child for that gateway: it serves
+    /// ONLY that gateway's routes (treated as local). When unset, this is the edge
+    /// and `Dedicated` gateways are excluded (served directly by their children).
+    serve_only_gateway: OnceLock<String>,
+    /// FARP handler, so a gateway with `farp_binding: true` can drive the FARP
+    /// federation binding from its CRD. `None` when FARP is disabled.
+    farp_handler: OnceLock<Arc<FarpApiHandler>>,
     /// Kubernetes client, set once at startup. Enables `.status` writeback;
     /// when absent (e.g. in unit tests) status patches are silently skipped.
     client: OnceLock<Client>,
@@ -89,7 +112,51 @@ impl RouteReconciler {
             owned_gateway_classes: Mutex::new(HashSet::new()),
             httproutes: Mutex::new(HashMap::new()),
             grpcroutes: Mutex::new(HashMap::new()),
+            octopus_gateways: Mutex::new(HashMap::new()),
+            gateway_index: Arc::new(ArcSwap::from_pointee(VirtualGatewayIndex::default())),
+            dedicated_reconciler: OnceLock::new(),
+            serve_only_gateway: OnceLock::new(),
+            farp_handler: OnceLock::new(),
             client: OnceLock::new(),
+        }
+    }
+
+    /// Provide the reconciler that renders `Dedicated` gateway workloads. Called
+    /// once on the write-owning replica; subsequent calls are ignored.
+    pub fn set_dedicated_reconciler(&self, reconciler: Arc<DedicatedGatewayReconciler>) {
+        let _ = self.dedicated_reconciler.set(reconciler);
+    }
+
+    /// Mark this instance as the dedicated child for `gateway`: it will serve only
+    /// that gateway's routes. Called once at startup; subsequent calls are ignored.
+    pub fn set_serve_only_gateway(&self, gateway: String) {
+        let _ = self.serve_only_gateway.set(gateway);
+    }
+
+    /// Provide the FARP handler so an `OctopusGateway` with `farp_binding: true`
+    /// can drive the FARP federation binding. Called once at startup.
+    pub fn set_farp_handler(&self, handler: Arc<FarpApiHandler>) {
+        let _ = self.farp_handler.set(handler);
+    }
+
+    /// Drive the FARP federation binding from an `OctopusGateway`: when
+    /// `farp_binding` is set, discovered services are served under this gateway's
+    /// first hostname and inherit its policy. No-op without a FARP handler.
+    fn reconcile_farp_binding(&self, name: &str, spec: &OctopusGatewaySpec) {
+        let Some(farp) = self.farp_handler.get() else {
+            return;
+        };
+        if spec.farp_binding {
+            if let Some(binding) = gateway_binding_from_spec(name, spec) {
+                farp.set_binding(Some(binding));
+            }
+        }
+    }
+
+    /// Clear the FARP binding when a `farp_binding` gateway is removed.
+    fn clear_farp_binding(&self) {
+        if let Some(farp) = self.farp_handler.get() {
+            farp.set_binding(None);
         }
     }
 
@@ -591,6 +658,118 @@ impl RouteReconciler {
         self.reapply();
     }
 
+    /// Upsert an `OctopusGateway` (virtual gateway), rebuild the index, re-apply.
+    pub fn upsert_virtual_gateway(&self, name: &str, namespace: &str, spec: &OctopusGatewaySpec) {
+        if let Ok(mut gws) = self.octopus_gateways.lock() {
+            gws.insert(format!("{namespace}/{name}"), spec.clone());
+        }
+        self.rebuild_gateway_index();
+        self.reapply();
+    }
+
+    /// Remove an `OctopusGateway`, rebuild the index, re-apply.
+    pub fn remove_virtual_gateway(&self, name: &str, namespace: &str) {
+        if let Ok(mut gws) = self.octopus_gateways.lock() {
+            gws.remove(&format!("{namespace}/{name}"));
+        }
+        self.rebuild_gateway_index();
+        self.reapply();
+    }
+
+    /// Rebuild the virtual gateway index from all stored `OctopusGateway` specs.
+    /// The gateway's metadata `name` is its id (and the routes' `gateway_id`).
+    fn rebuild_gateway_index(&self) {
+        // Edge (serve_only unset): only `Shared` gateways are served here;
+        // `Dedicated` ones are reached directly via their own child. Child
+        // (serve_only = x): only gateway `x`, served locally regardless of tier.
+        let serve_only = self.serve_only_gateway.get().map(String::as_str);
+        let entries = match self.octopus_gateways.lock() {
+            Ok(gws) => gws
+                .iter()
+                .filter(|(key, spec)| {
+                    let name = key.split_once('/').map(|(_, n)| n).unwrap_or(key.as_str());
+                    match serve_only {
+                        Some(only) => name == only,
+                        None => spec.isolation == GatewayIsolation::Shared,
+                    }
+                })
+                .map(|(key, spec)| {
+                    let name = key.split_once('/').map(|(_, n)| n).unwrap_or(key.as_str());
+                    octopus_gateway_to_entry(name, spec)
+                })
+                .collect(),
+            Err(_) => {
+                tracing::error!("octopus_gateways lock poisoned; keeping previous gateway index");
+                return;
+            }
+        };
+        self.gateway_index
+            .store(Arc::new(VirtualGatewayIndex::new(entries)));
+    }
+
+    /// A shared handle to the live virtual gateway index, for the data-plane
+    /// handler to resolve a request's gateway by host (lock-free `load`).
+    pub fn gateway_index_handle(&self) -> Arc<ArcSwap<VirtualGatewayIndex>> {
+        Arc::clone(&self.gateway_index)
+    }
+
+    /// Reconcile a gateway's dedicated workload from its isolation tier:
+    /// `Dedicated` → apply the child workload; `Shared` → ensure no stale child
+    /// remains (e.g. after a downgrade). No-op unless a dedicated reconciler is
+    /// set (write-owning replica only). Runs on a spawned task to stay sync.
+    fn reconcile_dedicated(&self, name: &str, namespace: &str, spec: &OctopusGatewaySpec) {
+        let Some(reconciler) = self.dedicated_reconciler.get().cloned() else {
+            return;
+        };
+        let (name, namespace) = (name.to_string(), namespace.to_string());
+        match spec.isolation {
+            GatewayIsolation::Dedicated => {
+                let spec = spec.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = reconciler.reconcile(&name, &namespace, &spec).await {
+                        tracing::warn!(gateway = %name, error = %e, "failed to reconcile dedicated gateway");
+                    }
+                });
+            }
+            GatewayIsolation::Shared => {
+                tokio::spawn(async move {
+                    let _ = reconciler.delete(&name, &namespace).await;
+                });
+            }
+        }
+    }
+
+    /// Delete a gateway's dedicated workload (on `OctopusGateway` delete). No-op
+    /// unless a dedicated reconciler is set.
+    fn delete_dedicated(&self, name: &str, namespace: &str) {
+        let Some(reconciler) = self.dedicated_reconciler.get().cloned() else {
+            return;
+        };
+        let (name, namespace) = (name.to_string(), namespace.to_string());
+        tokio::spawn(async move {
+            let _ = reconciler.delete(&name, &namespace).await;
+        });
+    }
+
+    /// Index of `Dedicated` gateways' domains, used by the edge to drop routes
+    /// whose host a dedicated child serves directly. `None` when none exist.
+    fn dedicated_host_index(&self) -> Option<Arc<VirtualGatewayIndex>> {
+        let gws = self.octopus_gateways.lock().ok()?;
+        let entries: Vec<_> = gws
+            .iter()
+            .filter(|(_, spec)| spec.isolation == GatewayIsolation::Dedicated)
+            .map(|(key, spec)| {
+                let name = key.split_once('/').map(|(_, n)| n).unwrap_or(key.as_str());
+                octopus_gateway_to_entry(name, spec)
+            })
+            .collect();
+        if entries.is_empty() {
+            None
+        } else {
+            Some(Arc::new(VirtualGatewayIndex::new(entries)))
+        }
+    }
+
     /// Merge all sources, apply policy overlays, and program the live router.
     fn reapply(&self) {
         let mut table = match self.store.lock() {
@@ -606,7 +785,31 @@ impl RouteReconciler {
             apply_overlays(&mut table.routes, &overlays);
         }
 
-        if let Err(e) = apply_to_router(&self.router, &table) {
+        let gateways = self.gateway_index.load_full();
+
+        // Host-based auto-attachment: a route with no explicit gateway attaches
+        // to the virtual gateway that owns its host scope, so it inherits that
+        // gateway's policy defaults during apply.
+        if !gateways.is_empty() {
+            for route in &mut table.routes {
+                if route.gateway_id.is_none() {
+                    if let Some(gw) = gateways.attach(&route.host) {
+                        route.gateway_id = Some(gw.id.to_string());
+                    }
+                }
+            }
+        }
+
+        // Gateway-scoped serving (single-hop invariant): a dedicated child serves
+        // ONLY its gateway's-host routes; the edge drops routes whose host belongs
+        // to a `Dedicated` gateway (those are served directly by the child).
+        if self.serve_only_gateway.get().is_some() {
+            table.routes.retain(|r| gateways.attach(&r.host).is_some());
+        } else if let Some(dedicated) = self.dedicated_host_index() {
+            table.routes.retain(|r| dedicated.attach(&r.host).is_none());
+        }
+
+        if let Err(e) = apply_to_router(&self.router, &table, &gateways) {
             tracing::error!(error = %e, "Failed to apply routing table to router");
         }
     }
@@ -627,6 +830,7 @@ pub async fn start(
     namespaces: Vec<String>,
     tls_acceptor: Option<SwappableTlsAcceptor>,
     leader_election: bool,
+    dedicated_image: Option<String>,
 ) -> crate::Result<()> {
     let client = Client::try_default().await?;
 
@@ -670,10 +874,23 @@ pub async fn start(
             crate::leader::acquire_leadership(&client, &ns, &me).await;
             tracing::info!("operator leadership acquired; enabling status writeback");
             reconciler.set_client(client.clone());
+            if let Some(image) = dedicated_image {
+                reconciler.set_dedicated_reconciler(Arc::new(DedicatedGatewayReconciler::new(
+                    client.clone(),
+                    image,
+                )));
+            }
             crate::leader::run_leader_loop(client, ns, me).await;
         });
     } else {
-        // Single-instance (no leader election): this replica writes status.
+        // Single-instance (no leader election): this replica writes status and
+        // renders dedicated gateway workloads.
+        if let Some(image) = dedicated_image {
+            reconciler.set_dedicated_reconciler(Arc::new(DedicatedGatewayReconciler::new(
+                client.clone(),
+                image,
+            )));
+        }
         reconciler.set_client(client);
     }
 
@@ -757,6 +974,13 @@ fn spawn_watchers(client: Client, reconciler: Arc<RouteReconciler>, namespace: O
     });
     tokio::spawn({
         let (api, rec) = (
+            api::<OctopusGateway>(&client, &namespace),
+            Arc::clone(&reconciler),
+        );
+        async move { run_watcher(api, rec, "OctopusGateway", on_octopus_gateway).await }
+    });
+    tokio::spawn({
+        let (api, rec) = (
             api::<ConfigMap>(&client, &namespace),
             Arc::clone(&reconciler),
         );
@@ -796,6 +1020,34 @@ async fn run_watcher<K, C>(
         }
     }
     tracing::warn!(resource = label, "watcher stream ended");
+}
+
+/// Build a FARP [`GatewayBinding`](octopus_farp::GatewayBinding) from an
+/// `OctopusGateway` spec: its first hostname + id + inherited auth/rate-limit/timeout.
+/// `None` when the gateway declares no hostname.
+fn gateway_binding_from_spec(
+    name: &str,
+    spec: &OctopusGatewaySpec,
+) -> Option<octopus_farp::GatewayBinding> {
+    let host = spec.hostnames.first()?;
+    let dp = spec.default_policy.as_ref();
+    Some(
+        octopus_farp::GatewayBinding::new(host)
+            .with_gateway_id(Some(name.to_string()))
+            .with_default_auth(
+                dp.and_then(|p| p.auth_provider.clone())
+                    .or_else(|| spec.default_auth_provider.clone()),
+            )
+            .with_rate_limit(dp.and_then(|p| {
+                p.rate_limit
+                    .as_ref()
+                    .map(|rl| (rl.requests, std::time::Duration::from_secs(rl.window_seconds)))
+            }))
+            .with_timeout(
+                dp.and_then(|p| p.timeout_seconds)
+                    .map(std::time::Duration::from_secs),
+            ),
+    )
 }
 
 /// Extract `(name, namespace)` from a namespaced resource.
@@ -1089,6 +1341,34 @@ fn on_octopus_policy(rec: &RouteReconciler, event: watcher::Event<OctopusPolicy>
     }
 }
 
+fn on_octopus_gateway(rec: &RouteReconciler, event: watcher::Event<OctopusGateway>) {
+    match event {
+        watcher::Event::Apply(o) | watcher::Event::InitApply(o) => {
+            if let Some((name, ns)) = ident(&o) {
+                rec.upsert_virtual_gateway(&name, &ns, &o.spec);
+                rec.reconcile_dedicated(&name, &ns, &o.spec);
+                rec.reconcile_farp_binding(&name, &o.spec);
+                rec.write_status::<OctopusGateway>(
+                    &name,
+                    &ns,
+                    o.metadata.generation,
+                    &ReconcileOutcome::Accepted,
+                );
+            }
+        }
+        watcher::Event::Delete(o) => {
+            if let Some((name, ns)) = ident(&o) {
+                rec.remove_virtual_gateway(&name, &ns);
+                rec.delete_dedicated(&name, &ns);
+                if o.spec.farp_binding {
+                    rec.clear_farp_binding();
+                }
+            }
+        }
+        watcher::Event::Init | watcher::Event::InitDone => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1138,6 +1418,170 @@ mod tests {
         assert!(router.match_route("evil.com", &Method::GET, "/").is_err());
     }
 
+    #[test]
+    fn virtual_gateway_policy_inherited_by_host_scoped_route() {
+        use crate::crds::GatewayDefaultPolicy;
+        let router = Arc::new(Router::new());
+        let rec = RouteReconciler::new(Arc::clone(&router));
+
+        // A virtual gateway owning api.acme.com with a default auth provider.
+        rec.upsert_virtual_gateway(
+            "platform-api",
+            "octopus-system",
+            &OctopusGatewaySpec {
+                listen: "0.0.0.0:8080".into(),
+                gateway_class_name: None,
+                default_auth_provider: None,
+                hostnames: vec!["api.acme.com".into()],
+                default_policy: Some(GatewayDefaultPolicy {
+                    auth_provider: Some("jwt".into()),
+                    timeout_seconds: None,
+                    rate_limit: None,
+                    cors: None,
+                }),
+                isolation: Default::default(),
+                farp_binding: false,
+            },
+        );
+
+        // A standard Gateway + HTTPRoute scoped to api.acme.com (no auth of its own).
+        rec.set_gateway_route(
+            "gw",
+            "infra",
+            Some(1),
+            GatewaySpec {
+                gateway_class_name: "octopus".into(),
+                listeners: vec![GatewayListener {
+                    name: "https".into(),
+                    hostname: Some("*.acme.com".into()),
+                    port: 443,
+                    protocol: "HTTPS".into(),
+                    tls: None,
+                }],
+            },
+        );
+        let mut spec = httproute_spec("/users", "svc", 80);
+        spec.parent_refs = vec![ParentRef {
+            name: "gw".into(),
+            namespace: Some("infra".into()),
+            section_name: None,
+        }];
+        spec.hostnames = vec!["api.acme.com".into()];
+        rec.upsert_httproute("r", "default", &spec);
+
+        // The route auto-attached to the gateway and inherited its auth provider.
+        let m = router
+            .match_route("api.acme.com", &Method::GET, "/users")
+            .unwrap();
+        assert_eq!(m.route.gateway_id.as_deref(), Some("platform-api"));
+        assert_eq!(m.route.auth_provider.as_deref(), Some("jwt"));
+    }
+
+    #[test]
+    fn farp_binding_gateway_drives_farp_handler() {
+        let router = Arc::new(Router::new());
+        let rec = RouteReconciler::new(Arc::clone(&router));
+        let farp = Arc::new(octopus_farp::FarpApiHandler::new(Arc::new(
+            octopus_farp::SchemaRegistry::with_cache_ttl(std::time::Duration::from_secs(300)),
+        )));
+        rec.set_farp_handler(Arc::clone(&farp));
+
+        let mut spec = gw_spec(&["api.acme.com"], GatewayIsolation::Shared);
+        spec.farp_binding = true;
+        spec.default_auth_provider = Some("jwt".into());
+        rec.reconcile_farp_binding("platform-api", &spec);
+
+        let cell = farp.binding_handle();
+        let guard = cell.load();
+        let binding = (**guard).as_ref().expect("FARP binding set from the CRD");
+        assert_eq!(
+            binding.host,
+            octopus_router::HostMatch::Exact("api.acme.com".into())
+        );
+        assert_eq!(binding.gateway_id.as_deref(), Some("platform-api"));
+        assert_eq!(binding.default_auth_provider.as_deref(), Some("jwt"));
+    }
+
+    fn gw_spec(hostnames: &[&str], isolation: GatewayIsolation) -> OctopusGatewaySpec {
+        OctopusGatewaySpec {
+            listen: "0.0.0.0:8080".into(),
+            gateway_class_name: None,
+            default_auth_provider: None,
+            hostnames: hostnames.iter().map(ToString::to_string).collect(),
+            default_policy: None,
+            isolation,
+            farp_binding: false,
+        }
+    }
+
+    fn host_route(host: &str) -> IntermediateRoute {
+        IntermediateRoute::new(Method::GET, "/x", "up", RouteSource::Static)
+            .with_host(octopus_router::HostMatch::Exact(host.into()))
+    }
+
+    #[test]
+    fn edge_excludes_dedicated_gateways_and_drops_their_routes() {
+        let router = Arc::new(Router::new());
+        let rec = RouteReconciler::new(Arc::clone(&router)); // no serve_only → edge
+        rec.upsert_virtual_gateway("big", "ns", &gw_spec(&["big.acme.com"], GatewayIsolation::Dedicated));
+        rec.upsert_virtual_gateway(
+            "platform-api",
+            "ns",
+            &gw_spec(&["api.acme.com"], GatewayIsolation::Shared),
+        );
+        rec.seed_static(
+            vec![host_route("api.acme.com"), host_route("big.acme.com")],
+            vec![],
+        );
+
+        assert!(
+            router.match_route("api.acme.com", &Method::GET, "/x").is_ok(),
+            "edge serves a Shared gateway's host"
+        );
+        assert!(
+            router.match_route("big.acme.com", &Method::GET, "/x").is_err(),
+            "edge does NOT serve a Dedicated gateway's host (the child does, directly)"
+        );
+    }
+
+    #[test]
+    fn child_serves_only_its_gateway_routes_with_policy() {
+        use crate::crds::GatewayDefaultPolicy;
+        let router = Arc::new(Router::new());
+        let rec = RouteReconciler::new(Arc::clone(&router));
+        rec.set_serve_only_gateway("big".to_string()); // this instance IS gateway "big"
+
+        let mut big = gw_spec(&["big.acme.com"], GatewayIsolation::Dedicated);
+        big.default_policy = Some(GatewayDefaultPolicy {
+            auth_provider: Some("jwt".into()),
+            timeout_seconds: None,
+            rate_limit: None,
+            cors: None,
+        });
+        rec.upsert_virtual_gateway("big", "ns", &big);
+        rec.upsert_virtual_gateway(
+            "platform-api",
+            "ns",
+            &gw_spec(&["api.acme.com"], GatewayIsolation::Shared),
+        );
+        rec.seed_static(
+            vec![host_route("api.acme.com"), host_route("big.acme.com")],
+            vec![],
+        );
+
+        // The child serves ONLY its own gateway's host...
+        assert!(
+            router.match_route("api.acme.com", &Method::GET, "/x").is_err(),
+            "child does not serve other gateways' hosts"
+        );
+        let m = router
+            .match_route("big.acme.com", &Method::GET, "/x")
+            .expect("child serves its own gateway's host");
+        // ...and that route attaches to "big" and inherits its policy (treated local).
+        assert_eq!(m.route.gateway_id.as_deref(), Some("big"));
+        assert_eq!(m.route.auth_provider.as_deref(), Some("jwt"));
+    }
+
     fn conv_with_ref(name: &str, key: &str, namespace: Option<&str>) -> ConventionSpec {
         ConventionSpec {
             base_domain: "platform.com".into(),
@@ -1151,6 +1595,7 @@ mod tests {
                 namespace: namespace.map(Into::into),
             }),
             backend_strategy: None,
+            route_rules: vec![],
         }
     }
 

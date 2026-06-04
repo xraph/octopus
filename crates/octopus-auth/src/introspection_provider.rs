@@ -30,6 +30,22 @@ impl IntrospectionProvider {
         })
     }
 
+    /// Create from config reusing an existing `reqwest::Client`. Used by
+    /// [`ConventionAuthProvider`](crate::convention_provider::ConventionAuthProvider)
+    /// so its per-namespace providers share one connection pool rather than each
+    /// building their own.
+    pub fn with_client(
+        name: &str,
+        config: &IntrospectionProviderConfig,
+        client: reqwest::Client,
+    ) -> Self {
+        Self {
+            name: name.to_string(),
+            config: config.clone(),
+            client,
+        }
+    }
+
     /// Extract and de-prefix the token from the configured header.
     fn extract_token(&self, req: &AuthRequest<'_>) -> Option<String> {
         let raw = req

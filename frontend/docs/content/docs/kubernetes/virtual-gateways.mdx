@@ -1,0 +1,154 @@
+---
+title: Virtual Gateways
+description: Group endpoints under domains with a "gateway-in-a-gateway" — one OctopusGateway per logical surface (api.*, app.*, per-tenant), with inherited policy, convention path-split, per-gateway isolation, and a tiered shared/dedicated deployment model that always stays a single hop.
+---
+
+import { Card, Cards } from 'fumadocs-ui/components/card';
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# Virtual Gateways
+
+A **virtual gateway** is a *gateway-in-a-gateway*: a named scope that binds a set of domains, groups
+the routes and upstreams under them, and pushes inherited policy defaults (auth, CORS, rate-limit,
+timeout) down to its child routes. It lets you organise one Octopus into clean logical surfaces —
+for example:
+
+- `api.example.com` — all platform APIs (one federated surface, FARP-bound)
+- `app.example.com` — all frontend apps
+- `*.example.com` — per-customer subdomains, where `customer-a.example.com/api` serves that
+  customer's API and `customer-a.example.com/` serves its frontend
+
+Virtual gateways are just the [`OctopusGateway`](/docs/kubernetes/octopus-crds#octopusgateway) CRD —
+no new resource kind. Routes attach to a gateway **by host** (a route whose host falls within the
+gateway's `hostnames` attaches automatically), so adopting them is additive: with no `OctopusGateway`
+declared, everything behaves exactly as before.
+
+<Callout type="info">
+  **Single-hop invariant.** Every tier is one HTTP proxy hop. A `shared` gateway is an in-process
+  partition of the edge Octopus; a `dedicated` gateway is reached *directly* (its own LoadBalancer /
+  DNS) — never proxied *through* the edge. There is no gateway-in-front-of-gateway.
+</Callout>
+
+## Defining a gateway
+
+```yaml
+apiVersion: gateway.octopus.io/v1alpha1
+kind: OctopusGateway
+metadata:
+  name: platform-api
+  namespace: octopus-system
+spec:
+  hostnames: ["api.example.com"]   # exact host or wildcard (*.example.com)
+  isolation: shared
+  defaultPolicy:
+    authProvider: jwt              # inherited by routes that don't set their own
+    timeoutSeconds: 30
+    rateLimit: { requests: 1000, windowSeconds: 60 }
+    cors:
+      allowedOrigins: ["https://app.example.com"]
+      allowedMethods: ["GET", "POST"]
+      allowCredentials: true
+      maxAge: 600
+```
+
+Any `HTTPRoute` / `OctopusRoute` whose host is `api.example.com` now attaches to `platform-api` and
+inherits its `defaultPolicy`. Exact hostnames win over wildcards, so `api.example.com` (this gateway)
+and `*.example.com` (a tenant gateway) coexist cleanly.
+
+### Policy inheritance
+
+`defaultPolicy` fills any field a route leaves unset; an explicit value on the route always wins.
+Inherited today: `authProvider`, `timeoutSeconds`, `rateLimit`, and `cors`.
+
+- **CORS preflight** — a virtual gateway's `cors` also answers `OPTIONS` preflight for its hostnames
+  even when no specific route matches, so a gateway's whole domain has consistent CORS.
+- **Per-gateway rate limits** — rate-limit buckets are namespaced by gateway, so two gateways that
+  share a path get independent buckets.
+
+## Convention path-split (per-tenant `/api` vs `/`)
+
+A wildcard gateway combined with [convention routing](/docs/kubernetes/octopus-crds#convention-subdomain-routing)
+collapses a per-tenant proxy hop into the edge. The convention derives the tenant namespace from the
+host; `routeRules` then split by path prefix:
+
+```yaml
+apiVersion: gateway.octopus.io/v1alpha1
+kind: OctopusGateway
+metadata: { name: tenants, namespace: octopus-system }
+spec:
+  hostnames: ["*.example.com"]
+  defaultPolicy:
+    authProvider: tenant-convention-auth
+---
+apiVersion: gateway.octopus.io/v1alpha1
+kind: OctopusRoute
+metadata: { name: tenant-wildcard, namespace: octopus-system }
+spec:
+  path: "/*"
+  upstream: "__convention__"
+  convention:
+    baseDomain: example.com
+    layout: ["namespace"]          # customer-a.example.com → namespace "customer-a"
+    routeRules:
+      - pathPrefix: "/api"          # /api/* → the tenant API service, /api stripped
+        stripPrefix: true
+        serviceOverride: api
+        portOverride: 7900
+      - pathPrefix: "/"             # everything else → the tenant frontend
+        serviceOverride: studio
+        portOverride: 3000
+```
+
+Now `customer-a.example.com/api/orders` goes straight to `api.customer-a.svc:7900` (with `/api`
+stripped) and `customer-a.example.com/dashboard` goes to `studio.customer-a.svc:3000` — one hop, no
+per-tenant gateway pod.
+
+### Convention-aware auth
+
+The `tenant-convention-auth` provider above validates each tenant's token against an endpoint derived
+from the resolved namespace (e.g. `http://authsome.{namespace}.svc/v1/introspect`), so the edge does
+per-tenant token validation without a per-tenant gateway. Configure it as a `convention_auth` provider.
+
+## Isolation tiers
+
+<Cards>
+  <Card title="shared (default)" description="An in-process partition of the edge Octopus: own route partition, upstream namespacing (isolated load-balancer / circuit-breaker / pool state), and rate-limit buckets. One process, one hop." />
+  <Card title="dedicated" description="Rendered to its own Octopus Deployment + Service, reached directly (LoadBalancer / DNS), serving only its own gateway's routes. Strong blast-radius isolation — still one hop." />
+</Cards>
+
+Promote a gateway with `isolation: dedicated`. The operator (on the leader replica) renders an
+`octopus-vgw-<name>` `Deployment` + `ConfigMap` + `LoadBalancer` `Service`; the child runs the same
+Octopus binary scoped to that gateway (`kubernetes.serveOnlyGateway`) and serves its hostnames
+directly. The edge stops serving a dedicated gateway's hosts (the child does). Deleting or downgrading
+the gateway cleans the child up.
+
+<Callout type="warn">
+  Dedicated rendering requires `kubernetes.dedicatedGatewayImage` (the Octopus image to run) and RBAC
+  to create Deployments/Services/ConfigMaps — both are in the Helm chart. When the image is unset,
+  `dedicated` gateways fall back to shared-edge behavior.
+</Callout>
+
+## FARP federation surface
+
+Set `farpBinding: true` on a gateway to make it the [FARP](/docs/farp) federation surface: every
+discovered service is served under that gateway's hostnames (with service-scoped prefixes) and
+inherits its policy — a single source of truth instead of also configuring `farp.gateway`.
+
+```yaml
+spec:
+  hostnames: ["api.example.com"]
+  farpBinding: true
+  defaultPolicy: { authProvider: jwt }
+```
+
+## How it works
+
+- One global route trie with a `gateway_id` dimension — exact and wildcard gateways coexist and the
+  most specific host wins. No per-gateway router; the lock-free read path is untouched.
+- Routes attach to a gateway by host at reconcile time and inherit its policy when applied.
+- Upstreams are namespaced `{gateway}:{name}` so per-gateway routes get isolated backend state.
+
+<Cards>
+  <Card title="Octopus CRDs" description="OctopusGateway / OctopusRoute / OctopusUpstream / OctopusPolicy spec reference." href="/docs/kubernetes/octopus-crds" />
+  <Card title="FARP" description="Service discovery and schema federation that a gateway can bind." href="/docs/farp" />
+</Cards>

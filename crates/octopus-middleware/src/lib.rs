@@ -46,7 +46,7 @@ pub use audit_logger::{
     AuditEvent, AuditEventType, AuditHandler, AuditLogger, AuditLoggerConfig, AuditOutput,
 };
 pub use auth_gateway::{
-    AuthGatewayMiddleware, AuthRateLimitKey, MatchedRouteAuth, MatchedRouteCors,
+    AuthGatewayMiddleware, AuthRateLimitKey, MatchedRouteAuth, MatchedRouteCors, ResolvedGateway,
 };
 pub use body_transform::{BodyRule, BodyTransform, BodyTransformConfig};
 pub use bot_detection::{BotDetection, BotDetectionConfig, BotMode};

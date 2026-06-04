@@ -1,12 +1,15 @@
 //! Translate Gateway API resources into the intermediate routing representation.
 
-use crate::crds::{ConventionSpec, OctopusRouteSpec, OctopusUpstreamSpec};
+use crate::crds::{ConventionSpec, OctopusGatewaySpec, OctopusRouteSpec, OctopusUpstreamSpec};
 use crate::gateway_api::{GRPCRouteSpec, GrpcMethodMatch, HTTPRouteSpec, HttpBackendRef};
 use crate::ir::{IntermediateRoute, RateLimit, RouteSource};
 use http::Method;
 use octopus_core::types::LoadBalanceStrategy;
 use octopus_core::{UpstreamCluster, UpstreamInstance};
-use octopus_router::{BackendStrategy, Convention, HostMatch, LabelRole};
+use octopus_router::{
+    BackendStrategy, Convention, ConventionRouteRule, GatewayEntry, GatewayPolicy, HostMatch,
+    LabelRole, RouteCorsOverride,
+};
 use std::time::Duration;
 
 /// Wildcard parameter name used to emulate Gateway API `PathPrefix` semantics
@@ -131,6 +134,19 @@ fn convention_from_spec(spec: &ConventionSpec) -> Convention {
         port: spec.port.unwrap_or(80),
         script: spec.script.clone(),
         backend,
+        route_rules: spec.route_rules.iter().map(convention_route_rule).collect(),
+    }
+}
+
+/// Translate a CRD [`ConventionRouteRuleSpec`] into the router's
+/// [`ConventionRouteRule`].
+fn convention_route_rule(spec: &crate::crds::ConventionRouteRuleSpec) -> ConventionRouteRule {
+    ConventionRouteRule {
+        path_prefix: spec.path_prefix.clone(),
+        strip_prefix: spec.strip_prefix,
+        service_override: spec.service_override.clone(),
+        port_override: spec.port_override,
+        add_prefix: spec.add_prefix.clone(),
     }
 }
 
@@ -308,6 +324,45 @@ pub fn octopus_upstream_to_cluster(
         cluster.add_instance(instance);
     }
     cluster
+}
+
+/// Translate an `OctopusGateway` into a [`GatewayEntry`] for the virtual-gateway
+/// index: its `hostnames` become the domain set (empty → match-any) and its
+/// `defaultPolicy` becomes the inherited [`GatewayPolicy`].
+pub fn octopus_gateway_to_entry(name: &str, spec: &OctopusGatewaySpec) -> GatewayEntry {
+    let domains = if spec.hostnames.is_empty() {
+        vec![HostMatch::Any]
+    } else {
+        spec.hostnames.iter().map(|h| HostMatch::parse(h)).collect()
+    };
+
+    let dp = spec.default_policy.as_ref();
+    let policy = GatewayPolicy {
+        // defaultPolicy.authProvider supersedes the legacy default_auth_provider.
+        auth_provider: dp
+            .and_then(|p| p.auth_provider.clone())
+            .or_else(|| spec.default_auth_provider.clone()),
+        base_path_prefix: None,
+        cors: dp.and_then(|p| p.cors.as_ref()).map(|c| RouteCorsOverride {
+            allowed_origins: c.allowed_origins.clone(),
+            allowed_methods: c.allowed_methods.clone(),
+            allowed_headers: c.allowed_headers.clone(),
+            allow_credentials: c.allow_credentials,
+            max_age: c.max_age,
+        }),
+        rate_limit: dp.and_then(|p| {
+            p.rate_limit
+                .as_ref()
+                .map(|rl| (rl.requests, Duration::from_secs(rl.window_seconds)))
+        }),
+        timeout: dp.and_then(|p| p.timeout_seconds).map(Duration::from_secs),
+    };
+
+    GatewayEntry {
+        id: name.into(),
+        domains,
+        policy,
+    }
 }
 
 /// Translate a `GRPCRoute` into intermediate routes + upstream clusters. gRPC
@@ -497,6 +552,7 @@ mod tests {
                 script: None,
                 script_ref: None,
                 backend_strategy: None,
+                route_rules: vec![],
             }),
             ..Default::default()
         };
@@ -528,6 +584,7 @@ mod tests {
             script: None,
             script_ref: None,
             backend_strategy: Some("EndpointSlice".into()),
+            route_rules: vec![],
         };
         assert_eq!(
             convention_from_spec(&spec).backend,
@@ -766,6 +823,127 @@ mod tests {
             .unwrap();
         assert_eq!(i1.weight, 3);
         assert_eq!(i2.weight, 1, "missing weight defaults to 1");
+    }
+
+    #[test]
+    fn octopus_gateway_maps_hostnames_and_policy() {
+        use crate::crds::{GatewayDefaultPolicy, GatewayIsolation, RateLimitSpec};
+        let spec = OctopusGatewaySpec {
+            listen: "0.0.0.0:8080".into(),
+            gateway_class_name: None,
+            default_auth_provider: None,
+            hostnames: vec!["api.twinos.cloud".into()],
+            default_policy: Some(GatewayDefaultPolicy {
+                auth_provider: Some("jwt".into()),
+                timeout_seconds: Some(5),
+                rate_limit: Some(RateLimitSpec {
+                    requests: 100,
+                    window_seconds: 60,
+                }),
+                cors: None,
+            }),
+            isolation: GatewayIsolation::Shared,
+            farp_binding: false,
+        };
+
+        let entry = octopus_gateway_to_entry("platform-api", &spec);
+        assert_eq!(&*entry.id, "platform-api");
+        assert_eq!(entry.domains, vec![HostMatch::Exact("api.twinos.cloud".into())]);
+        assert_eq!(entry.policy.auth_provider.as_deref(), Some("jwt"));
+        assert_eq!(entry.policy.timeout, Some(Duration::from_secs(5)));
+        assert_eq!(entry.policy.rate_limit, Some((100, Duration::from_secs(60))));
+    }
+
+    #[test]
+    fn octopus_gateway_maps_cors_policy() {
+        use crate::crds::{GatewayCorsSpec, GatewayDefaultPolicy};
+        let spec = OctopusGatewaySpec {
+            listen: "0.0.0.0:8080".into(),
+            gateway_class_name: None,
+            default_auth_provider: None,
+            hostnames: vec!["api.twinos.cloud".into()],
+            default_policy: Some(GatewayDefaultPolicy {
+                auth_provider: None,
+                timeout_seconds: None,
+                rate_limit: None,
+                cors: Some(GatewayCorsSpec {
+                    allowed_origins: vec!["https://app.twinos.cloud".into()],
+                    allowed_methods: vec!["GET".into(), "POST".into()],
+                    allowed_headers: vec!["authorization".into()],
+                    allow_credentials: true,
+                    max_age: 600,
+                }),
+            }),
+            isolation: Default::default(),
+            farp_binding: false,
+        };
+        let entry = octopus_gateway_to_entry("platform-api", &spec);
+        let cors = entry.policy.cors.expect("cors mapped onto gateway policy");
+        assert_eq!(cors.allowed_origins, vec!["https://app.twinos.cloud"]);
+        assert_eq!(cors.allowed_methods, vec!["GET", "POST"]);
+        assert!(cors.allow_credentials);
+        assert_eq!(cors.max_age, 600);
+    }
+
+    #[test]
+    fn octopus_gateway_empty_hostnames_match_any() {
+        let spec = OctopusGatewaySpec {
+            listen: "0.0.0.0:8080".into(),
+            gateway_class_name: None,
+            default_auth_provider: None,
+            hostnames: vec![],
+            default_policy: None,
+            isolation: Default::default(),
+            farp_binding: false,
+        };
+        let entry = octopus_gateway_to_entry("default", &spec);
+        assert_eq!(entry.domains, vec![HostMatch::Any]);
+        assert!(entry.policy.auth_provider.is_none());
+    }
+
+    #[test]
+    fn convention_route_rules_are_mapped_and_resolve() {
+        use crate::crds::ConventionRouteRuleSpec;
+        let spec = ConventionSpec {
+            base_domain: "twinos.cloud".into(),
+            layout: vec!["namespace".into()],
+            default_service: Some("studio".into()),
+            port: Some(3000),
+            script: None,
+            script_ref: None,
+            backend_strategy: None,
+            route_rules: vec![ConventionRouteRuleSpec {
+                path_prefix: "/api".into(),
+                strip_prefix: true,
+                service_override: Some("api".into()),
+                port_override: Some(7900),
+                add_prefix: None,
+            }],
+        };
+        let conv = convention_from_spec(&spec);
+        assert_eq!(conv.route_rules.len(), 1);
+        let (target, rewrite) = conv
+            .resolve_with_path("customer-a.twinos.cloud", "/api/orders")
+            .unwrap();
+        assert_eq!(target.namespace, "customer-a");
+        assert_eq!(target.service, "api");
+        assert_eq!(target.port, 7900);
+        assert_eq!(rewrite.unwrap().strip.as_deref(), Some("/api"));
+    }
+
+    #[test]
+    fn octopus_gateway_legacy_default_auth_used_when_no_policy() {
+        let spec = OctopusGatewaySpec {
+            listen: "0.0.0.0:8080".into(),
+            gateway_class_name: None,
+            default_auth_provider: Some("legacy".into()),
+            hostnames: vec!["api.twinos.cloud".into()],
+            default_policy: None,
+            isolation: Default::default(),
+            farp_binding: false,
+        };
+        let entry = octopus_gateway_to_entry("platform-api", &spec);
+        assert_eq!(entry.policy.auth_provider.as_deref(), Some("legacy"));
     }
 
     fn grpc_spec(matches: Vec<crate::gateway_api::GrpcRouteMatch>) -> GRPCRouteSpec {

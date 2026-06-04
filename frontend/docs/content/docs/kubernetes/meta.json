@@ -10,6 +10,7 @@
     "operator",
     "gateway-api",
     "octopus-crds",
+    "virtual-gateways",
     "tls-cert-manager",
     "helm-chart"
   ]

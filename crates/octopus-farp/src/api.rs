@@ -28,6 +28,10 @@ pub struct FarpApiHandler {
     farp_client: Arc<FarpClient>,
     /// Optional router for supplementing the federated spec with registered routes
     router: Option<Arc<Router>>,
+    /// Hot-swappable virtual-gateway binding: scope all FARP routes to a hostname
+    /// (e.g. `api.twinos.cloud`) and attach them to that gateway. Shared cell so
+    /// the k8s controller can update it from the `OctopusGateway` CRD at runtime.
+    binding: crate::binding::BindingCell,
 }
 
 /// Registration request
@@ -163,6 +167,7 @@ impl FarpApiHandler {
             validator: Arc::new(ManifestValidator::default()),
             farp_client: Arc::new(FarpClient::default()),
             router: None,
+            binding: crate::binding::new_binding_cell(),
         }
     }
 
@@ -179,6 +184,7 @@ impl FarpApiHandler {
             validator: Arc::new(ManifestValidator::default()),
             farp_client: Arc::new(FarpClient::default()),
             router: None,
+            binding: crate::binding::new_binding_cell(),
         }
     }
 
@@ -187,6 +193,27 @@ impl FarpApiHandler {
     pub fn with_router(mut self, router: Arc<Router>) -> Self {
         self.router = Some(router);
         self
+    }
+
+    /// Bind all FARP-discovered routes to a virtual gateway (scope them to its
+    /// hostname and attach them for policy inheritance).
+    #[must_use]
+    pub fn with_binding(self, binding: crate::binding::GatewayBinding) -> Self {
+        self.binding.store(Arc::new(Some(binding)));
+        self
+    }
+
+    /// Update (or clear) the gateway binding at runtime — used by the k8s
+    /// controller to drive the binding from the `OctopusGateway` CRD.
+    pub fn set_binding(&self, binding: Option<crate::binding::GatewayBinding>) {
+        self.binding.store(Arc::new(binding));
+    }
+
+    /// A clone of the shared binding cell, so the discovery watcher can observe
+    /// the same (possibly CRD-updated) binding the push handler uses.
+    #[must_use]
+    pub fn binding_handle(&self) -> crate::binding::BindingCell {
+        Arc::clone(&self.binding)
     }
 
     /// Get a reference to the schema registry
@@ -430,13 +457,18 @@ impl FarpApiHandler {
                                 _ => continue,
                             };
                             let prefixed_path = format!("/{service_name_lower}{}", route_desc.path);
-                            let route = octopus_router::RouteBuilder::new()
+                            let builder = octopus_router::RouteBuilder::new()
                                 .path(&prefixed_path)
                                 .method(method)
                                 .upstream_name(&service_name)
-                                .priority(100)
-                                .build();
-                            if let Ok(route) = route {
+                                .priority(100);
+                            let binding = self.binding.load();
+                            let builder = crate::binding::apply_gateway_binding(
+                                builder,
+                                (**binding).as_ref(),
+                                false,
+                            );
+                            if let Ok(route) = builder.build() {
                                 let _ = router.add_route(route);
                             }
                         }
@@ -478,13 +510,18 @@ impl FarpApiHandler {
                                                         };
                                                     let prefixed_path =
                                                         format!("/{service_name_lower}{path}");
-                                                    let route = octopus_router::RouteBuilder::new()
+                                                    let builder = octopus_router::RouteBuilder::new()
                                                         .path(&prefixed_path)
                                                         .method(method)
                                                         .upstream_name(&service_name)
-                                                        .priority(100)
-                                                        .build();
-                                                    if let Ok(route) = route {
+                                                        .priority(100);
+                                                    let binding = self.binding.load();
+                                                    let builder = crate::binding::apply_gateway_binding(
+                                                        builder,
+                                                        (**binding).as_ref(),
+                                                        false,
+                                                    );
+                                                    if let Ok(route) = builder.build() {
                                                         let _ = router.add_route(route);
                                                     }
                                                 }

@@ -12,6 +12,7 @@ description = "Kubernetes operator: Gateway API + Octopus CRDs for the Octopus A
 octopus-core = { path = "../octopus-core" }
 octopus-router = { path = "../octopus-router" }
 octopus-tls = { path = "../octopus-tls" }
+octopus-farp = { path = "../octopus-farp" }
 
 # Kubernetes
 kube = { workspace = true }
@@ -33,6 +34,7 @@ futures.workspace = true
 
 # Data structures
 dashmap.workspace = true
+arc-swap.workspace = true
 
 # Error handling
 thiserror.workspace = true

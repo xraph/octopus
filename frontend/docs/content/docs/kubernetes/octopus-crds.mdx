@@ -22,22 +22,41 @@ with `octopus crd | kubectl apply -f -` or the vendored bundle — see
 
 ## OctopusGateway
 
+`OctopusGateway` is a **virtual gateway**: a named scope that binds a set of hostnames, groups the
+routes under them, and pushes inherited policy defaults down to its child routes. See
+[Virtual gateways](/docs/kubernetes/virtual-gateways) for the full model (convention path-split,
+isolation tiers, FARP binding).
+
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `listen` | string | (required) | Listen address, e.g. `0.0.0.0:8080`. |
 | `gatewayClassName` | string | _(unset)_ | The GatewayClass this gateway serves. |
-| `defaultAuthProvider` | string | _(unset)_ | Default auth provider applied to attached routes. |
+| `defaultAuthProvider` | string | _(unset)_ | Default auth provider (superseded by `defaultPolicy.authProvider`). |
+| `hostnames` | string[] | `[]` | Hostnames this gateway owns (exact `api.x.com` or wildcard `*.x.com`). A route whose host falls in this set attaches here and inherits `defaultPolicy`. Empty = match any host. |
+| `defaultPolicy` | object | _(unset)_ | Defaults inherited by attached routes: `authProvider`, `timeoutSeconds`, `rateLimit`, `cors`. An explicit value on a route always wins. |
+| `isolation` | enum | `shared` | `shared` (in-process partition of the edge) or `dedicated` (its own directly-reachable Octopus deployment). |
+| `farpBinding` | bool | `false` | When `true`, FARP-discovered services are served under this gateway's hostnames and inherit its policy. |
 
 ```yaml
 apiVersion: gateway.octopus.io/v1alpha1
 kind: OctopusGateway
 metadata:
-  name: edge
-  namespace: default
+  name: platform-api
+  namespace: octopus-system
 spec:
   listen: "0.0.0.0:8080"
   gatewayClassName: octopus
-  defaultAuthProvider: jwt
+  hostnames: ["api.twinos.cloud"]
+  isolation: shared
+  farpBinding: true
+  defaultPolicy:
+    authProvider: jwt
+    timeoutSeconds: 30
+    cors:
+      allowedOrigins: ["https://app.twinos.cloud"]
+      allowedMethods: ["GET", "POST"]
+      allowCredentials: true
+      maxAge: 600
 ```
 
 ## OctopusRoute
