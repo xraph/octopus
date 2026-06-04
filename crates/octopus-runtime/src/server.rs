@@ -944,8 +944,9 @@ impl ServerBuilder {
             // Build the handler first so its (hot-swappable) binding cell can be
             // shared with the discovery watcher — a CRD-driven binding update via
             // the controller then reaches both the push and discovery paths.
-            let mut handler = FarpApiHandler::with_federation(Arc::clone(&registry), Arc::clone(&federation))
-                .with_router(Arc::clone(&router));
+            let mut handler =
+                FarpApiHandler::with_federation(Arc::clone(&registry), Arc::clone(&federation))
+                    .with_router(Arc::clone(&router));
             if let Some(binding) = farp_binding {
                 handler = handler.with_binding(binding);
             }
@@ -1295,7 +1296,10 @@ impl ServerBuilder {
         config: &Config,
         router: Arc<octopus_router::Router>,
         farp_handler: Option<Arc<FarpApiHandler>>,
-    ) -> (Option<octopus_tls::SwappableTlsAcceptor>, Option<GatewayIndexHandle>) {
+    ) -> (
+        Option<octopus_tls::SwappableTlsAcceptor>,
+        Option<GatewayIndexHandle>,
+    ) {
         use octopus_k8s::controller::RouteReconciler;
 
         tracing::info!(

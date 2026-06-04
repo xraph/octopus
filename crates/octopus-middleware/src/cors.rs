@@ -280,7 +280,10 @@ mod tests {
             ..Default::default()
         };
         // Any tenant subdomain matches.
-        assert!(Cors::is_origin_allowed(&config, "https://acme.twinos.cloud"));
+        assert!(Cors::is_origin_allowed(
+            &config,
+            "https://acme.twinos.cloud"
+        ));
         assert!(Cors::is_origin_allowed(
             &config,
             "https://acme.api.twinos.cloud"
@@ -288,9 +291,15 @@ mod tests {
         // Spoofed / non-matching origins are rejected.
         assert!(!Cors::is_origin_allowed(&config, "https://evil.com"));
         assert!(!Cors::is_origin_allowed(&config, "https://twinos.cloud")); // apex needs its own entry
-        assert!(!Cors::is_origin_allowed(&config, "http://acme.twinos.cloud")); // scheme mismatch
-        assert!(!Cors::is_origin_allowed(&config, "https://acmetwinos.cloud")); // missing separator
-        // The specific origin is reflected (required with credentials).
+        assert!(!Cors::is_origin_allowed(
+            &config,
+            "http://acme.twinos.cloud"
+        )); // scheme mismatch
+        assert!(!Cors::is_origin_allowed(
+            &config,
+            "https://acmetwinos.cloud"
+        )); // missing separator
+            // The specific origin is reflected (required with credentials).
         assert_eq!(
             Cors::get_allow_origin(&config, Some("https://acme.twinos.cloud")),
             Some("https://acme.twinos.cloud".to_string())

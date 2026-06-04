@@ -139,8 +139,7 @@ mod tests {
 
     #[test]
     fn binding_does_not_override_existing_auth() {
-        let binding = GatewayBinding::new("api.twinos.cloud")
-            .with_default_auth(Some("jwt".into()));
+        let binding = GatewayBinding::new("api.twinos.cloud").with_default_auth(Some("jwt".into()));
         // route_has_auth = true → the route's own auth provider must be preserved.
         let route = apply_gateway_binding(
             base_builder().auth_provider(Some("service-specific")),

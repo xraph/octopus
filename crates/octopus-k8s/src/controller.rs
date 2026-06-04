@@ -25,6 +25,7 @@ use crate::translate::{
     octopus_upstream_to_cluster,
 };
 use crate::validate::{gatewayclass_is_ours, validate_policy, validate_route, validate_upstream};
+use arc_swap::ArcSwap;
 use futures::TryStreamExt;
 use k8s_openapi::api::core::v1::{ConfigMap, Secret};
 use kube::{
@@ -33,7 +34,6 @@ use kube::{
     runtime::{watcher, watcher::Config as WatcherConfig},
     Client,
 };
-use arc_swap::ArcSwap;
 use octopus_core::UpstreamCluster;
 use octopus_farp::FarpApiHandler;
 use octopus_router::{Router, VirtualGatewayIndex};
@@ -1039,9 +1039,12 @@ fn gateway_binding_from_spec(
                     .or_else(|| spec.default_auth_provider.clone()),
             )
             .with_rate_limit(dp.and_then(|p| {
-                p.rate_limit
-                    .as_ref()
-                    .map(|rl| (rl.requests, std::time::Duration::from_secs(rl.window_seconds)))
+                p.rate_limit.as_ref().map(|rl| {
+                    (
+                        rl.requests,
+                        std::time::Duration::from_secs(rl.window_seconds),
+                    )
+                })
             }))
             .with_timeout(
                 dp.and_then(|p| p.timeout_seconds)
@@ -1523,7 +1526,11 @@ mod tests {
     fn edge_excludes_dedicated_gateways_and_drops_their_routes() {
         let router = Arc::new(Router::new());
         let rec = RouteReconciler::new(Arc::clone(&router)); // no serve_only → edge
-        rec.upsert_virtual_gateway("big", "ns", &gw_spec(&["big.acme.com"], GatewayIsolation::Dedicated));
+        rec.upsert_virtual_gateway(
+            "big",
+            "ns",
+            &gw_spec(&["big.acme.com"], GatewayIsolation::Dedicated),
+        );
         rec.upsert_virtual_gateway(
             "platform-api",
             "ns",
@@ -1535,11 +1542,15 @@ mod tests {
         );
 
         assert!(
-            router.match_route("api.acme.com", &Method::GET, "/x").is_ok(),
+            router
+                .match_route("api.acme.com", &Method::GET, "/x")
+                .is_ok(),
             "edge serves a Shared gateway's host"
         );
         assert!(
-            router.match_route("big.acme.com", &Method::GET, "/x").is_err(),
+            router
+                .match_route("big.acme.com", &Method::GET, "/x")
+                .is_err(),
             "edge does NOT serve a Dedicated gateway's host (the child does, directly)"
         );
     }
@@ -1571,7 +1582,9 @@ mod tests {
 
         // The child serves ONLY its own gateway's host...
         assert!(
-            router.match_route("api.acme.com", &Method::GET, "/x").is_err(),
+            router
+                .match_route("api.acme.com", &Method::GET, "/x")
+                .is_err(),
             "child does not serve other gateways' hosts"
         );
         let m = router

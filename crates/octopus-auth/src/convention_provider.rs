@@ -258,7 +258,10 @@ mod tests {
         // No authority in the URI (origin-form) → host comes from the Host header.
         let p = provider();
         let mut headers = http::HeaderMap::new();
-        headers.insert(http::header::HOST, "customer-a.twinos.cloud".parse().unwrap());
+        headers.insert(
+            http::header::HOST,
+            "customer-a.twinos.cloud".parse().unwrap(),
+        );
         let method = http::Method::GET;
         let uri: http::Uri = "/api/orders".parse().unwrap();
         let req = AuthRequest {
@@ -284,7 +287,9 @@ mod tests {
         convention.script = Some(r#"#{ namespace: "scripted-ns", service: "api" }"#.into());
         let p = provider_with(convention);
         assert_eq!(
-            p.resolve_namespace("customer-a.twinos.cloud").await.as_deref(),
+            p.resolve_namespace("customer-a.twinos.cloud")
+                .await
+                .as_deref(),
             Some("scripted-ns")
         );
     }
@@ -296,7 +301,9 @@ mod tests {
         convention.script = Some("()".into());
         let p = provider_with(convention);
         assert_eq!(
-            p.resolve_namespace("customer-a.twinos.cloud").await.as_deref(),
+            p.resolve_namespace("customer-a.twinos.cloud")
+                .await
+                .as_deref(),
             Some("customer-a")
         );
     }

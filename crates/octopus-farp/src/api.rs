@@ -510,17 +510,19 @@ impl FarpApiHandler {
                                                         };
                                                     let prefixed_path =
                                                         format!("/{service_name_lower}{path}");
-                                                    let builder = octopus_router::RouteBuilder::new()
-                                                        .path(&prefixed_path)
-                                                        .method(method)
-                                                        .upstream_name(&service_name)
-                                                        .priority(100);
+                                                    let builder =
+                                                        octopus_router::RouteBuilder::new()
+                                                            .path(&prefixed_path)
+                                                            .method(method)
+                                                            .upstream_name(&service_name)
+                                                            .priority(100);
                                                     let binding = self.binding.load();
-                                                    let builder = crate::binding::apply_gateway_binding(
-                                                        builder,
-                                                        (**binding).as_ref(),
-                                                        false,
-                                                    );
+                                                    let builder =
+                                                        crate::binding::apply_gateway_binding(
+                                                            builder,
+                                                            (**binding).as_ref(),
+                                                            false,
+                                                        );
                                                     if let Ok(route) = builder.build() {
                                                         let _ = router.add_route(route);
                                                     }

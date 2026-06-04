@@ -399,7 +399,11 @@ pub struct FarpGatewayConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_rate_limit_per_minute: Option<u32>,
     /// Per-request timeout applied to FARP routes.
-    #[serde(default, skip_serializing_if = "Option::is_none", with = "humantime_serde")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "humantime_serde"
+    )]
     pub default_timeout: Option<Duration>,
 }
 

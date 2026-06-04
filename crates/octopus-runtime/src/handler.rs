@@ -3,6 +3,7 @@
 use crate::admin::AdminHandler;
 use crate::lifecycle::LifecycleState;
 use crate::probes::{self, ProbeRoutes};
+use arc_swap::ArcSwap;
 use bytes::Bytes;
 use http::{Request, Response, StatusCode};
 use http_body_util::{BodyExt, Either, Full};
@@ -14,7 +15,6 @@ use octopus_metrics::{ActivityLog, MetricsCollector, RequestOutcome};
 use octopus_plugin_runtime::PluginManager;
 use octopus_protocols::ProtocolHandler;
 use octopus_proxy::HttpProxy;
-use arc_swap::ArcSwap;
 use octopus_router::{
     gateway_scoped_upstream, BackendStrategy, Convention, ConventionTarget, PathRewrite, Route,
     Router, VirtualGatewayIndex,
@@ -480,7 +480,8 @@ impl RequestHandler {
         // Per-gateway upstream isolation (W4): scope the derived upstream key by
         // the route's gateway so two gateways resolving the same Service get
         // independent load-balancer / circuit-breaker state.
-        let key = gateway_scoped_upstream(route.gateway_id.as_deref(), &Self::convention_key(&target));
+        let key =
+            gateway_scoped_upstream(route.gateway_id.as_deref(), &Self::convention_key(&target));
 
         // EndpointSlice backend: delegate to the watcher, which keeps the
         // cluster's pod instances live. Falls back to Service DNS when no

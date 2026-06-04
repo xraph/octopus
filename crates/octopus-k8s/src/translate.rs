@@ -848,10 +848,16 @@ mod tests {
 
         let entry = octopus_gateway_to_entry("platform-api", &spec);
         assert_eq!(&*entry.id, "platform-api");
-        assert_eq!(entry.domains, vec![HostMatch::Exact("api.twinos.cloud".into())]);
+        assert_eq!(
+            entry.domains,
+            vec![HostMatch::Exact("api.twinos.cloud".into())]
+        );
         assert_eq!(entry.policy.auth_provider.as_deref(), Some("jwt"));
         assert_eq!(entry.policy.timeout, Some(Duration::from_secs(5)));
-        assert_eq!(entry.policy.rate_limit, Some((100, Duration::from_secs(60))));
+        assert_eq!(
+            entry.policy.rate_limit,
+            Some((100, Duration::from_secs(60)))
+        );
     }
 
     #[test]

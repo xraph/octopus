@@ -88,9 +88,7 @@ fn build_route(route: &IntermediateRoute, policy: Option<&GatewayPolicy>) -> Res
         .auth_provider
         .clone()
         .or_else(|| policy.and_then(|p| p.auth_provider.clone()));
-    let timeout = route
-        .timeout
-        .or_else(|| policy.and_then(|p| p.timeout));
+    let timeout = route.timeout.or_else(|| policy.and_then(|p| p.timeout));
     let rate_limit = route
         .rate_limit
         .as_ref()
@@ -351,7 +349,12 @@ mod tests {
         let mut route = IntermediateRoute::new(Method::GET, "/x", "up", RouteSource::OctopusRoute);
         route.strip_prefix = Some("/x".into());
         route.priority = 7;
-        apply_to_router(&router, &table(vec![route], "up"), &VirtualGatewayIndex::default()).unwrap();
+        apply_to_router(
+            &router,
+            &table(vec![route], "up"),
+            &VirtualGatewayIndex::default(),
+        )
+        .unwrap();
 
         let m = router
             .match_route("example.com", &Method::GET, "/x")

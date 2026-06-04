@@ -34,10 +34,7 @@ pub fn child_name(gateway: &str) -> String {
 /// Deployment selector and pod labels).
 fn child_labels(gateway: &str) -> BTreeMap<String, String> {
     BTreeMap::from([
-        (
-            "app.kubernetes.io/name".to_string(),
-            child_name(gateway),
-        ),
+        ("app.kubernetes.io/name".to_string(), child_name(gateway)),
         (
             "app.kubernetes.io/managed-by".to_string(),
             "octopus-operator".to_string(),
@@ -287,7 +284,11 @@ mod tests {
 
     #[test]
     fn configmap_carries_generated_octopus_yaml() {
-        let cm = render_configmap("big", "octopus-system", &spec(&["big.twinos.cloud"], "0.0.0.0:8080"));
+        let cm = render_configmap(
+            "big",
+            "octopus-system",
+            &spec(&["big.twinos.cloud"], "0.0.0.0:8080"),
+        );
         assert_eq!(cm.metadata.name.as_deref(), Some("octopus-vgw-big"));
         let yaml = cm.data.unwrap().remove(CONFIG_FILE).unwrap();
         assert!(yaml.contains("0.0.0.0:8080"), "listen address present");
@@ -301,7 +302,12 @@ mod tests {
 
     #[test]
     fn deployment_runs_octopus_image_with_config_mount() {
-        let dep = render_deployment("big", "ns", "ghcr.io/xraph/octopus:1.2.3", &spec(&[], "0.0.0.0:443"));
+        let dep = render_deployment(
+            "big",
+            "ns",
+            "ghcr.io/xraph/octopus:1.2.3",
+            &spec(&[], "0.0.0.0:443"),
+        );
         let dspec = dep.spec.unwrap();
         // selector matches pod template labels (else the Deployment is invalid)
         assert_eq!(
@@ -309,10 +315,16 @@ mod tests {
             dspec.template.metadata.unwrap().labels
         );
         let container = &dspec.template.spec.unwrap().containers[0];
-        assert_eq!(container.image.as_deref(), Some("ghcr.io/xraph/octopus:1.2.3"));
+        assert_eq!(
+            container.image.as_deref(),
+            Some("ghcr.io/xraph/octopus:1.2.3")
+        );
         assert_eq!(
             container.args.as_ref().unwrap(),
-            &vec!["--config".to_string(), "/etc/octopus/octopus.yaml".to_string()]
+            &vec![
+                "--config".to_string(),
+                "/etc/octopus/octopus.yaml".to_string()
+            ]
         );
         assert_eq!(container.ports.as_ref().unwrap()[0].container_port, 443);
     }
@@ -325,7 +337,10 @@ mod tests {
         assert_eq!(sspec.ports.unwrap()[0].port, 8080);
         // selector targets the child pods
         assert_eq!(
-            sspec.selector.unwrap().get("gateway.octopus.io/dedicated-for"),
+            sspec
+                .selector
+                .unwrap()
+                .get("gateway.octopus.io/dedicated-for"),
             Some(&"big".to_string())
         );
     }

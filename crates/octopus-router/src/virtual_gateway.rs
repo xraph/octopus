@@ -193,8 +193,14 @@ mod tests {
     #[test]
     fn exact_gateway_wins_over_wildcard_for_its_host() {
         let idx = twinos_index();
-        assert_eq!(&*idx.resolve("api.twinos.cloud").unwrap().id, "platform-api");
-        assert_eq!(&*idx.resolve("app.twinos.cloud").unwrap().id, "platform-apps");
+        assert_eq!(
+            &*idx.resolve("api.twinos.cloud").unwrap().id,
+            "platform-api"
+        );
+        assert_eq!(
+            &*idx.resolve("app.twinos.cloud").unwrap().id,
+            "platform-apps"
+        );
     }
 
     #[test]
@@ -216,7 +222,10 @@ mod tests {
             entry("platform-api", vec![HostMatch::parse("api.twinos.cloud")]),
             entry("default", vec![HostMatch::Any]),
         ]);
-        assert_eq!(&*idx.resolve("api.twinos.cloud").unwrap().id, "platform-api");
+        assert_eq!(
+            &*idx.resolve("api.twinos.cloud").unwrap().id,
+            "platform-api"
+        );
         // unrelated host falls through to the Any gateway
         assert_eq!(&*idx.resolve("random.example.org").unwrap().id, "default");
     }
