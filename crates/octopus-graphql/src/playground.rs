@@ -2,12 +2,15 @@
 
 /// Build a standalone GraphiQL IDE page whose fetcher posts to `endpoint`.
 ///
-/// Loads GraphiQL from a CDN (no build step). The endpoint is injected as a
-/// JSON-encoded string so it is safe inside the inline script.
+/// Loads GraphiQL from a CDN (no build step). The endpoint is JSON-encoded
+/// and HTML-escaped so it cannot break out of the inline script.
 #[must_use]
 pub fn graphiql_html(endpoint: &str) -> String {
     let endpoint_json = serde_json::to_string(endpoint)
-        .unwrap_or_else(|_| "\"/graphql\"".to_string());
+        .unwrap_or_else(|_| "\"/graphql\"".to_string())
+        .replace('<', "\\u003c")
+        .replace('>', "\\u003e")
+        .replace('/', "\\u002f");
     format!(
         r#"<!DOCTYPE html>
 <html lang="en">
@@ -42,8 +45,17 @@ mod tests {
     #[test]
     fn html_targets_the_configured_endpoint() {
         let html = graphiql_html("/api/graphql");
-        assert!(html.contains("/api/graphql"));
+        // slashes are unicode-escaped in the injected JSON; check the escaped form
+        assert!(html.contains("\\u002fapi\\u002fgraphql"));
         assert!(html.to_lowercase().contains("graphiql"));
         assert!(html.contains("<!DOCTYPE html>"));
+    }
+
+    #[test]
+    fn hostile_endpoint_is_escaped_in_injection() {
+        let html = graphiql_html("/a\"</script><b>");
+        // the raw hostile sequence must not appear; it is unicode-escaped
+        assert!(!html.contains("/a\"</script><b>"));
+        assert!(html.contains("\\u003c"));
     }
 }
