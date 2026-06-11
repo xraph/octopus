@@ -8,7 +8,7 @@ use octopus_config::{Config, ConfigWatcher};
 use octopus_core::{Error, Result};
 use octopus_farp::FarpApiHandler;
 use octopus_plugin_runtime::PluginManager;
-use octopus_protocols::{GraphQLHandler, GrpcHandler, ProtocolHandler};
+use octopus_protocols::{GrpcHandler, ProtocolHandler};
 use octopus_proxy::{HttpClient, HttpProxy, ProxyConfig};
 use octopus_router::Router;
 use std::net::SocketAddr;
@@ -440,6 +440,18 @@ impl Server {
             );
 
             auth_registry = Some(registry);
+        }
+
+        // GraphQL-aware layer runs last (after auth/rate-limit), then delegates
+        // to the proxy for valid operations.
+        if self.config.graphql.enabled {
+            middlewares.push(Arc::new(octopus_graphql::GraphQlMiddleware::from_config(
+                &self.config.graphql,
+            )) as Arc<dyn octopus_core::middleware::Middleware>);
+            tracing::info!(
+                endpoint = %self.config.graphql.endpoint,
+                "GraphQL gateway layer enabled"
+            );
         }
 
         let middleware_chain: Arc<[Arc<dyn octopus_core::middleware::Middleware>]> =
@@ -988,10 +1000,7 @@ impl ServerBuilder {
             tracing::info!("Initializing protocol handlers");
             // Note: WebSocket is handled via HTTP upgrade in handler.rs,
             // not through the ProtocolHandler trait (which requires Full<Bytes>)
-            vec![
-                Arc::new(GrpcHandler::new()),
-                Arc::new(GraphQLHandler::new("/graphql")),
-            ]
+            vec![Arc::new(GrpcHandler::new())]
         } else {
             Vec::new()
         };

@@ -27,6 +27,7 @@ octopus-plugin-runtime = { path = "../octopus-plugin-runtime" }
 octopus-middleware = { path = "../octopus-middleware", features = ["distributed"] }
 octopus-state = { path = "../octopus-state" }
 octopus-auth = { path = "../octopus-auth" }
+octopus-graphql = { path = "../octopus-graphql" }
 
 # Async
 tokio.workspace = true
