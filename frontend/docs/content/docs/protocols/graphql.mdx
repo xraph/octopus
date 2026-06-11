@@ -1,79 +1,107 @@
 ---
 title: GraphQL
-description: What the built-in GraphQL handler does today — and how to proxy GraphQL in the meantime.
+description: Run a GraphQL endpoint through the gateway with parsing, depth/complexity limits, introspection control, and a built-in GraphiQL IDE.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
 # GraphQL
 
-<Callout type="warn">
-  The built-in GraphQL handler is a **stub**. It is registered on `/graphql` but does not
-  proxy to a GraphQL upstream, does not federate, and does not stitch schemas. Do not
-  rely on it for real GraphQL traffic.
+The gateway ships a **GraphQL-aware layer** that fronts a GraphQL upstream. When enabled it
+parses each incoming operation, enforces depth/complexity/introspection policy, serves a real
+GraphiQL IDE, and proxies valid queries to your GraphQL backend through the normal routing,
+auth, rate-limit, and load-balancing pipeline.
+
+<Callout type="info">
+  This is **single-graph** support: the gateway puts a policy and IDE layer in front of one
+  GraphQL upstream per endpoint. Multi-subgraph **federation** (schema composition, query
+  planning, cross-subgraph entity resolution) is on the roadmap, not yet available.
 </Callout>
 
-## What the built-in handler actually does
+## How it works
 
-When protocol handlers are enabled, a `GraphQLHandler` is registered for the `/graphql`
-path. For a request to that path it will:
+The GraphQL layer runs as a middleware *inside* the request pipeline — after authentication
+and rate limiting, before the proxy. For a request to the configured endpoint it will:
 
-- Serve a minimal **placeholder HTML page** for browser requests (a `GET` whose `Accept`
-  contains `text/html`) — not a real GraphiQL/Playground IDE, just a static stub page.
-- Parse the GraphQL request from a `POST` JSON body, or from the `query` URL parameter on
-  a `GET`.
-- Reject introspection (`__schema` / `IntrospectionQuery`) with a GraphQL error **only if
-  introspection is disabled** in the handler's settings.
-- Otherwise return a **fixed placeholder JSON response** (`{"data":{"message":"GraphQL
-  endpoint is configured"}}`) rather than a result from any upstream.
+- Serve a real **GraphiQL IDE** for browser requests — a `GET` whose `Accept` contains
+  `text/html` and which has no `query=` parameter. The IDE is configured to talk to the same
+  endpoint.
+- Read the operation from a `POST` JSON body (`{"query": "..."}`) or from the `query` URL
+  parameter on a `GET`.
+- **Parse** the operation with a spec-compliant GraphQL parser and reject malformed queries.
+- Enforce **query-depth** and **complexity** limits, and **introspection** policy.
+- For a valid operation, hand the request back to the pipeline so it is **proxied to the
+  upstream** declared by the matching route — with the gateway's routing, auth, rate limiting,
+  and load balancing applied.
 
-In other words, the handler validates and parses the request shape but does not execute
-the query against anything. The source comments mark the federation/execution path as not
-yet implemented.
+Policy rejections return a GraphQL error envelope (`{"errors":[{"message": "..."}]}`) so
+GraphQL clients handle them normally.
 
-There is also no GraphQL configuration block in the gateway config — the handler is
-constructed with built-in defaults (endpoint `/graphql`, playground on, introspection on),
-and these are not exposed in YAML.
+## Enabling it
 
-## Proxying GraphQL today
-
-Because GraphQL is just HTTP `POST` (and `GET`) with a JSON body, you can proxy a real
-GraphQL server through the normal HTTP path. Route a path **other than `/graphql`** (so it
-does not hit the stub handler) at your GraphQL upstream:
+Add a `graphql:` block to the gateway config **and** declare a normal route for the endpoint
+pointing at your GraphQL upstream. The middleware adds parsing and policy enforcement on top of
+that route; the route itself does the routing and proxying.
 
 ```yaml
+graphql:
+  enabled: true
+  endpoint: /graphql        # path the GraphQL layer intercepts
+  playground: true          # serve GraphiQL on GET /graphql (HTML Accept)
+  introspection: true       # allow __schema / __type queries
+  max_depth: 15             # reject operations nested deeper than this
+  max_complexity: 1000      # reject operations selecting more fields than this
+
 upstreams:
-  - name: graphql-api
+  - name: graphql-backend
     instances:
       - id: graphql-1
         host: 127.0.0.1
         port: 4000
 
 routes:
-  - path: /api/graphql
+  - path: /graphql
     methods: [GET, POST]
-    upstream: graphql-api
+    upstream: graphql-backend
 ```
 
-This forwards GraphQL requests and responses verbatim like any other HTTP traffic, with
-the gateway's routing, middleware, auth, and load balancing applied. See
-[HTTP/1.1 & HTTP/2](/docs/protocols/http), [Routes](/docs/configuration/routes), and
-[Routing](/docs/concepts/routing).
+The layer is **disabled by default** (`enabled: false`); existing deployments are unaffected
+until you turn it on. If `graphql.enabled` is `true` but no route matches the endpoint path, a
+request to it returns the gateway's normal "route not found" response — the route is what
+supplies the upstream.
 
-<Callout type="info">
-  GraphQL subscriptions are typically delivered over WebSocket (`graphql-ws`). The
-  WebSocket proxy forwards the `Sec-WebSocket-Protocol` subprotocol, so a subscription
-  endpoint can be proxied as a normal WebSocket route. See
-  [WebSocket](/docs/protocols/websocket).
-</Callout>
+### Configuration reference
+
+| Field            | Default     | Description                                                                 |
+| ---------------- | ----------- | --------------------------------------------------------------------------- |
+| `enabled`        | `false`     | Turn the GraphQL-aware layer on.                                            |
+| `endpoint`       | `/graphql`  | Path the layer intercepts. Other paths pass straight through.              |
+| `playground`     | `true`      | Serve the GraphiQL IDE on an HTML `GET` to the endpoint.                   |
+| `introspection`  | `true`      | When `false`, operations selecting `__schema`/`__type` are rejected.       |
+| `max_depth`      | `15`        | Maximum selection nesting depth (root selection set = depth 1).            |
+| `max_complexity` | `1000`      | Maximum number of selected fields (an approximate query cost).            |
+
+## Subscriptions
+
+GraphQL subscriptions are typically delivered over WebSocket (`graphql-ws` /
+`graphql-transport-ws`). The WebSocket proxy forwards the `Sec-WebSocket-Protocol` subprotocol,
+so a subscription endpoint can be proxied as a normal WebSocket route. See
+[WebSocket](/docs/protocols/websocket).
 
 ## Limitations
 
-- **No GraphQL federation or schema stitching.** Despite the term appearing in code
-  comments, the gateway does not federate GraphQL schemas. (The gateway's "federation"
-  machinery is part of [FARP](/docs/concepts/farp) service discovery, not GraphQL.)
-- **No query execution or upstream proxying** from the built-in `/graphql` handler.
-- **No real Playground/GraphiQL IDE** — only a placeholder page.
-- **No query-depth enforcement, batching, or persisted queries.**
-- The `/graphql` path is claimed by the stub handler when protocol handlers are enabled;
-  use a different path to proxy a real GraphQL backend.
+- **Single-graph only.** No schema composition, query planning, or cross-subgraph entity
+  resolution yet — point the endpoint at one GraphQL upstream. (Federation is planned. The
+  gateway's existing "federation" machinery is part of [FARP](/docs/concepts/farp) service
+  discovery, not GraphQL.)
+- **Complexity is a field count.** `max_complexity` approximates cost by counting selected
+  fields; it is not type-weighted.
+- **Fragment spreads aren't expanded** for depth/complexity analysis (named fragments are not
+  resolved against a schema at this stage); inline fragments are analyzed at their enclosing
+  level.
+- **No query batching or persisted queries (APQ)** yet.
+- **Only the exact endpoint path is intercepted.** Subpaths (e.g. `/graphql/foo`) pass through
+  as ordinary HTTP and are routed normally.
+
+See also [Routes](/docs/configuration/routes), [Routing](/docs/concepts/routing), and
+[HTTP/1.1 & HTTP/2](/docs/protocols/http).
