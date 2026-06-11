@@ -5,9 +5,11 @@
 //! valid operations to the normal proxy pipeline. Modules are added by
 //! subsequent implementation tasks.
 
+pub mod middleware;
 pub mod playground;
 pub mod query;
 
+pub use middleware::GraphQlMiddleware;
 pub use query::{analyze_query, QueryAnalysis};
 
 #[cfg(test)]
