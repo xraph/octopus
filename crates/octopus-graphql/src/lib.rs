@@ -5,6 +5,10 @@
 //! valid operations to the normal proxy pipeline. Modules are added by
 //! subsequent implementation tasks.
 
+pub mod query;
+
+pub use query::{analyze_query, QueryAnalysis};
+
 #[cfg(test)]
 mod smoke {
     #[test]
