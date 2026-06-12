@@ -447,7 +447,8 @@ impl Server {
         if self.config.graphql.enabled {
             middlewares.push(Arc::new(octopus_graphql::GraphQlMiddleware::from_config(
                 &self.config.graphql,
-            )) as Arc<dyn octopus_core::middleware::Middleware>);
+            ))
+                as Arc<dyn octopus_core::middleware::Middleware>);
             tracing::info!(
                 endpoint = %self.config.graphql.endpoint,
                 "GraphQL gateway layer enabled"

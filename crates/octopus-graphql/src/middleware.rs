@@ -49,8 +49,9 @@ impl GraphQlMiddleware {
     fn extract_query(method: &Method, uri: &http::Uri, body: &Bytes) -> Result<String> {
         match *method {
             Method::POST => {
-                let v: serde_json::Value = serde_json::from_slice(body)
-                    .map_err(|e| Error::InvalidRequest(format!("Invalid GraphQL JSON body: {e}")))?;
+                let v: serde_json::Value = serde_json::from_slice(body).map_err(|e| {
+                    Error::InvalidRequest(format!("Invalid GraphQL JSON body: {e}"))
+                })?;
                 v.get("query")
                     .and_then(serde_json::Value::as_str)
                     .map(str::to_string)
@@ -171,7 +172,10 @@ mod tests {
     }
 
     fn cfg() -> GraphQLConfig {
-        GraphQLConfig { enabled: true, ..GraphQLConfig::default() }
+        GraphQLConfig {
+            enabled: true,
+            ..GraphQLConfig::default()
+        }
     }
 
     fn post_query(path: &str, body: &str) -> Request<Body> {
@@ -241,7 +245,9 @@ mod tests {
         let resp = mw.call(req, delegating_next()).await.unwrap();
         assert!(resp.headers().get("x-delegated").is_none());
         let body = resp.into_body().collect().await.unwrap().to_bytes();
-        assert!(String::from_utf8_lossy(&body).to_lowercase().contains("introspection"));
+        assert!(String::from_utf8_lossy(&body)
+            .to_lowercase()
+            .contains("introspection"));
     }
 
     #[tokio::test]

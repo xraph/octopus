@@ -1,0 +1,81 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e5]:
+    - generic [ref=e9]:
+      - list [ref=e11]:
+        - listitem [ref=e12]:
+          - button "Ford All Projects" [ref=e13] [cursor=pointer]:
+            - img [ref=e15]
+            - generic [ref=e17]:
+              - generic [ref=e18]: Ford
+              - generic [ref=e19]: All Projects
+            - img [ref=e20]
+      - generic [ref=e23]:
+        - generic [ref=e24]:
+          - generic [ref=e25]: Main
+          - list [ref=e26]:
+            - listitem [ref=e27]:
+              - link "Home" [ref=e28] [cursor=pointer]:
+                - /url: /
+                - img [ref=e29]
+                - generic [ref=e32]: Home
+            - listitem [ref=e33]:
+              - link "SOP" [ref=e34] [cursor=pointer]:
+                - /url: /sops
+                - img [ref=e35]
+                - generic [ref=e37]: SOP
+        - list [ref=e40]:
+          - listitem [ref=e41]:
+            - link "Studio" [ref=e42] [cursor=pointer]:
+              - /url: /_studio
+              - img [ref=e43]
+              - generic [ref=e53]: Studio
+      - list [ref=e55]:
+        - listitem [ref=e56]:
+          - button "RR Rex Raphael rex@xraph.com" [ref=e57] [cursor=pointer]:
+            - generic [ref=e59]: RR
+            - generic [ref=e60]:
+              - generic [ref=e61]: Rex Raphael
+              - generic [ref=e62]: rex@xraph.com
+            - img [ref=e63]
+      - button "Toggle Sidebar" [ref=e66]
+    - main [ref=e67]:
+      - generic [ref=e68]:
+        - button "Toggle Sidebar" [ref=e70] [cursor=pointer]:
+          - img
+          - generic [ref=e71]: Toggle Sidebar
+        - generic [ref=e75]:
+          - img [ref=e76]
+          - combobox "Search" [expanded] [ref=e79]
+          - generic:
+            - generic: ⌘
+            - text: K
+        - generic [ref=e80]:
+          - button "Notifications" [ref=e82] [cursor=pointer]:
+            - img [ref=e83]
+          - button "Ask Nemo" [ref=e86] [cursor=pointer]:
+            - img [ref=e87]
+      - main [ref=e95]:
+        - generic [ref=e125]:
+          - img [ref=e126]
+          - paragraph [ref=e129]: No data yet
+  - generic [ref=e131]:
+    - heading "Search" [level=2] [ref=e132]
+    - paragraph [ref=e133]: Search across all resources in your workspace
+  - region "Notifications alt+T"
+  - generic [ref=e138] [cursor=pointer]:
+    - button "Open Next.js Dev Tools" [ref=e139]:
+      - img [ref=e140]
+    - generic [ref=e143]:
+      - button "Open issues overlay" [ref=e144]:
+        - generic [ref=e145]:
+          - generic [ref=e146]: "2"
+          - generic [ref=e147]: "3"
+        - generic [ref=e148]:
+          - text: Issue
+          - generic [ref=e149]: s
+      - button "Collapse issues badge" [ref=e150]:
+        - img [ref=e151]
+  - alert [ref=e153]
+  - button "Fusion" [ref=e154] [cursor=pointer]:
+    - img [ref=e155]
+    - generic [ref=e158]: Fusion
