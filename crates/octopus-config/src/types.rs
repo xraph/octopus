@@ -51,6 +51,10 @@ pub struct Config {
     #[serde(default)]
     pub grpc: GrpcConfig,
 
+    /// GraphQL gateway configuration
+    #[serde(default)]
+    pub graphql: GraphQLConfig,
+
     /// Kubernetes operator (Gateway API + Octopus CRDs)
     #[serde(default)]
     pub kubernetes: KubernetesConfig,
@@ -1382,9 +1386,70 @@ impl Default for GrpcConfig {
     }
 }
 
+// ============================================================================
+// GraphQL Configuration
+// ============================================================================
+
+/// GraphQL gateway configuration.
+///
+/// When `enabled`, requests to `endpoint` are parsed and policy-checked before
+/// being proxied to the upstream declared by the matching route. Disabled by
+/// default so existing deployments are unaffected.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct GraphQLConfig {
+    /// Enable the GraphQL-aware gateway layer.
+    pub enabled: bool,
+    /// Endpoint path that GraphQL requests are served on.
+    pub endpoint: String,
+    /// Serve the GraphiQL IDE on `GET {endpoint}` with an HTML `Accept` header.
+    pub playground: bool,
+    /// Allow introspection queries (`__schema` / `__type`).
+    pub introspection: bool,
+    /// Reject operations whose selection nesting exceeds this depth.
+    pub max_depth: usize,
+    /// Reject operations whose field count (approximate cost) exceeds this value.
+    pub max_complexity: usize,
+}
+
+impl Default for GraphQLConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            endpoint: "/graphql".to_string(),
+            playground: true,
+            introspection: true,
+            max_depth: 15,
+            max_complexity: 1000,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn graphql_config_defaults() {
+        let cfg = GraphQLConfig::default();
+        assert!(!cfg.enabled);
+        assert_eq!(cfg.endpoint, "/graphql");
+        assert!(cfg.playground);
+        assert!(cfg.introspection);
+        assert_eq!(cfg.max_depth, 15);
+        assert_eq!(cfg.max_complexity, 1000);
+    }
+
+    #[test]
+    fn graphql_config_deserializes_partial_yaml() {
+        let yaml = "enabled: true\nmax_depth: 8\n";
+        let cfg: GraphQLConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(cfg.enabled);
+        assert_eq!(cfg.max_depth, 8);
+        // unspecified fields fall back to defaults
+        assert_eq!(cfg.endpoint, "/graphql");
+        assert!(cfg.introspection);
+    }
 
     #[test]
     fn test_default_values() {

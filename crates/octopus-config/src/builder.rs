@@ -59,6 +59,7 @@ impl ConfigBuilder {
             cors: None,
             admin: crate::types::AdminConfig::default(),
             grpc: crate::types::GrpcConfig::default(),
+            graphql: crate::types::GraphQLConfig::default(),
             kubernetes: crate::types::KubernetesConfig::default(),
         })
     }

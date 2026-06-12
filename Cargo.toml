@@ -19,6 +19,7 @@ members = [
     "crates/octopus-metrics",
     "crates/octopus-state",
     "crates/octopus-k8s",
+    "crates/octopus-graphql",
     "octopus-cli",
     "examples",
     "plugins/auth-jwt",
@@ -80,6 +81,9 @@ k8s-openapi = { version = "0.23", features = ["v1_30"] }
 schemars = "0.8"
 consul = "0.5"
 etcd-client = "0.13"
+
+# GraphQL parsing / AST (MIT OR Apache-2.0) — foundation for GraphQL + future federation
+apollo-compiler = "1.31"
 
 # OpenAPI/AsyncAPI
 utoipa = { version = "4.2", features = ["axum_extras"] }

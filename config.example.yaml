@@ -161,6 +161,17 @@ farp:
       #     default_port: 80
       #     watch_interval: 60s
 
+# GraphQL-aware gateway layer. When enabled, requests to `endpoint` are parsed
+# and policy-checked, then proxied to the upstream of the matching route below.
+# Disabled by default; existing deployments are unaffected.
+graphql:
+  enabled: false
+  endpoint: /graphql
+  playground: true        # serve GraphiQL on GET /graphql (HTML Accept)
+  introspection: true     # allow __schema / __type
+  max_depth: 15
+  max_complexity: 1000
+
 # Middleware configuration
 # Middleware runs for every request in the order defined
 middleware:
@@ -322,6 +333,15 @@ upstreams:
       min_requests: 10
       timeout: 30s
 
+  # GraphQL backend upstream — used by the /graphql routes above.
+  - name: graphql-backend
+    lb_policy: round_robin
+    instances:
+      - id: graphql-backend-1
+        host: localhost
+        port: 4000
+        weight: 1
+
 # Static route configuration (optional, if not using FARP)
 routes:
   - path: /api/users/*
@@ -334,7 +354,19 @@ routes:
     methods: [GET]
     upstream: user-service
     priority: 90
-  
+
+  # GraphQL routes — the graphql middleware layer adds query parsing and policy
+  # enforcement on top of these routes when `graphql.enabled: true` above.
+  - path: /graphql
+    methods: [POST]
+    upstream: graphql-backend
+    priority: 80
+
+  - path: /graphql
+    methods: [GET]
+    upstream: graphql-backend
+    priority: 80
+
   # WebSocket route example
   # WebSocket connections are automatically detected via Upgrade header
   # - path: /ws/*

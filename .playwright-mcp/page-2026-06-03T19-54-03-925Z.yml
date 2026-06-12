@@ -1,0 +1,156 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e5]:
+    - generic [ref=e9]:
+      - list [ref=e11]:
+        - listitem [ref=e12]:
+          - button "Ford All Projects" [ref=e13] [cursor=pointer]:
+            - img [ref=e15]
+            - generic [ref=e17]:
+              - generic [ref=e18]: Ford
+              - generic [ref=e19]: All Projects
+            - img [ref=e20]
+      - generic [ref=e23]:
+        - generic [ref=e24]:
+          - generic [ref=e25]: Main
+          - list [ref=e26]:
+            - listitem [ref=e27]:
+              - link "Home" [ref=e28] [cursor=pointer]:
+                - /url: /
+                - img [ref=e29]
+                - generic [ref=e32]: Home
+            - listitem [ref=e33]:
+              - link "SOP" [ref=e34] [cursor=pointer]:
+                - /url: /sops
+                - img [ref=e35]
+                - generic [ref=e37]: SOP
+        - list [ref=e40]:
+          - listitem [ref=e41]:
+            - link "Studio" [ref=e42] [cursor=pointer]:
+              - /url: /_studio
+              - img [ref=e43]
+              - generic [ref=e53]: Studio
+      - list [ref=e55]:
+        - listitem [ref=e56]:
+          - button "RR Rex Raphael rex@xraph.com" [ref=e57] [cursor=pointer]:
+            - generic [ref=e59]: RR
+            - generic [ref=e60]:
+              - generic [ref=e61]: Rex Raphael
+              - generic [ref=e62]: rex@xraph.com
+            - img [ref=e63]
+      - button "Toggle Sidebar" [ref=e66]
+    - main [ref=e67]:
+      - generic [ref=e68]:
+        - button "Toggle Sidebar" [ref=e70] [cursor=pointer]:
+          - img
+          - generic [ref=e71]: Toggle Sidebar
+        - generic [ref=e75]:
+          - img [ref=e76]
+          - combobox "Search" [expanded] [ref=e79]
+          - generic:
+            - generic: ⌘
+            - text: K
+        - generic [ref=e80]:
+          - button "Notifications" [ref=e82] [cursor=pointer]:
+            - img [ref=e83]
+          - button "Ask Nemo" [ref=e86] [cursor=pointer]:
+            - img [ref=e87]
+      - main [ref=e95]:
+        - generic [ref=e96]:
+          - generic [ref=e97]:
+            - generic [ref=e158]:
+              - generic [ref=e159]:
+                - generic [ref=e160]:
+                  - generic [ref=e161]:
+                    - heading "Pump Maintanance" [level=2] [ref=e162]
+                    - generic [ref=e163]: draft
+                  - paragraph [ref=e164]: SOP-MAINT-O1
+                  - generic [ref=e165]: open issue(s)
+                - generic [ref=e166]:
+                  - button "Submit for review" [ref=e167] [cursor=pointer]
+                  - button "Publish" [ref=e168] [cursor=pointer]
+                  - button "Start execution" [ref=e169] [cursor=pointer]
+              - generic [ref=e170]:
+                - generic [ref=e171]:
+                  - term [ref=e172]: Category
+                  - definition [ref=e173]: maintenance
+                - generic [ref=e174]:
+                  - term [ref=e175]: Created At
+                  - definition [ref=e176]: 2026-06-02T19:59:46.379Z
+                - generic [ref=e177]:
+                  - term [ref=e178]: Created By
+                  - definition [ref=e179]: ausr_01kt1yzmmne58td1enpr3r4v42
+                - generic [ref=e180]:
+                  - term [ref=e181]: Owner User Id
+                  - definition [ref=e182]: ausr_01kt1yzmmne58td1enpr3r4v42
+                - generic [ref=e251]:
+                  - term [ref=e252]: Primary Document Id
+                  - definition [ref=e253]: doc_01kt7gskssf9t8za85e0pdp2pe
+                - generic [ref=e183]:
+                  - term [ref=e184]: Review Period Months
+                  - definition [ref=e185]: "12"
+                - generic [ref=e186]:
+                  - term [ref=e187]: Updated At
+                  - definition [ref=e188]: 2026-06-03T19:54:01.942Z
+                - generic [ref=e189]:
+                  - term [ref=e190]: Updated By
+                  - definition [ref=e191]: ausr_01kt1yzmmne58td1enpr3r4v42
+            - generic [ref=e192]:
+              - navigation [ref=e193]:
+                - button "Content" [ref=e194] [cursor=pointer]:
+                  - img [ref=e195]
+                  - generic [ref=e198]: Content
+                - button "Files" [ref=e199] [cursor=pointer]:
+                  - img [ref=e200]
+                  - generic [ref=e203]: Files
+                - button "Version History" [ref=e204] [cursor=pointer]:
+                  - img [ref=e205]
+                  - generic [ref=e209]: Version History
+                - button "Comments" [ref=e210] [cursor=pointer]:
+                  - img [ref=e211]
+                  - generic [ref=e213]: Comments
+                - button "Distribution" [ref=e214] [cursor=pointer]:
+                  - img [ref=e215]
+                  - generic [ref=e220]: Distribution
+                - button "Executions" [ref=e221] [cursor=pointer]:
+                  - img [ref=e222]
+                  - generic [ref=e225]: Executions
+              - generic [ref=e227]:
+                - generic [ref=e229]:
+                  - generic [ref=e231]: Fusion Document
+                  - generic [ref=e255]:
+                    - generic:
+                      - generic [ref=e257]: Pump Maintanance
+                      - generic [ref=e258]:
+                        - generic "Anonymous (you)" [ref=e260]: A(
+                        - button "Switch to pageless" [ref=e262] [cursor=pointer]:
+                          - img [ref=e263]
+                        - button "More" [ref=e267] [cursor=pointer]:
+                          - img [ref=e268]
+                    - paragraph [ref=e279]
+                - generic [ref=e243]:
+                  - heading "Sections" [level=3] [ref=e245]
+                  - generic [ref=e246]:
+                    - img [ref=e247]
+                    - paragraph [ref=e250]: Nothing here yet.
+          - generic [ref=e125]:
+            - img [ref=e126]
+            - paragraph [ref=e129]: No acknowledgements yet
+  - generic [ref=e131]:
+    - heading "Search" [level=2] [ref=e132]
+    - paragraph [ref=e133]: Search across all resources in your workspace
+  - region "Notifications alt+T"
+  - generic [ref=e138] [cursor=pointer]:
+    - button "Open Next.js Dev Tools" [ref=e139]:
+      - img [ref=e140]
+    - generic [ref=e143]:
+      - button "Open issues overlay" [ref=e144]:
+        - generic [ref=e145]:
+          - generic [ref=e146]: "0"
+          - generic [ref=e147]: "1"
+        - generic [ref=e148]: Issue
+      - button "Collapse issues badge" [ref=e149]:
+        - img [ref=e150]
+  - alert [ref=e152]
+  - button "Fusion" [ref=e153] [cursor=pointer]:
+    - img [ref=e154]
+    - generic [ref=e157]: Fusion
