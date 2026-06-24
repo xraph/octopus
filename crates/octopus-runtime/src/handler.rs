@@ -545,6 +545,32 @@ impl RequestHandler {
         out
     }
 
+    /// Build the upstream request path for `route`. In `PathMode::Passthrough`
+    /// the original path is forwarded verbatim; otherwise the existing
+    /// strip/add/convention rewrite is applied.
+    fn compute_upstream_path(
+        route: &Route,
+        path: &str,
+        conv_rewrite: &Option<PathRewrite>,
+    ) -> String {
+        if matches!(
+            route.proxy.as_ref().map(|p| p.path_mode),
+            Some(octopus_router::PathMode::Passthrough)
+        ) {
+            return path.to_string();
+        }
+        let mut upstream_path = path.to_string();
+        if let Some(ref prefix) = route.strip_prefix {
+            if let Some(stripped) = upstream_path.strip_prefix(prefix.as_str()) {
+                upstream_path = stripped.to_string();
+            }
+        }
+        if let Some(ref prefix) = route.add_prefix {
+            upstream_path = join_prefix(prefix, &upstream_path);
+        }
+        Self::apply_convention_rewrite(upstream_path, conv_rewrite)
+    }
+
     /// Test helper: resolve only the upstream key (path-less), kept so existing
     /// convention tests read clearly. Production code uses
     /// [`resolve_upstream_with_path`](Self::resolve_upstream_with_path).
@@ -1009,17 +1035,7 @@ impl RequestHandler {
 
         // Build upstream WebSocket URL with path rewriting
         let upstream_base = instance.base_url();
-        let mut upstream_path = path.clone();
-        if let Some(ref prefix) = route.strip_prefix {
-            if let Some(stripped) = upstream_path.strip_prefix(prefix.as_str()) {
-                upstream_path = stripped.to_string();
-            }
-        }
-        if let Some(ref prefix) = route.add_prefix {
-            upstream_path = join_prefix(prefix, &upstream_path);
-        }
-        // Convention path-split rewrite (e.g. strip `/api` for the tenant API).
-        upstream_path = Self::apply_convention_rewrite(upstream_path, &conv_rewrite);
+        let upstream_path = Self::compute_upstream_path(&route, &path, &conv_rewrite);
         let upstream_ws_url = upstream_base
             .replace("http://", "ws://")
             .replace("https://", "wss://");
@@ -1160,17 +1176,7 @@ impl RequestHandler {
         })?;
 
         // Build upstream URL with path rewriting + query string
-        let mut upstream_path = path.clone();
-        if let Some(ref prefix) = route.strip_prefix {
-            if let Some(stripped) = upstream_path.strip_prefix(prefix.as_str()) {
-                upstream_path = stripped.to_string();
-            }
-        }
-        if let Some(ref prefix) = route.add_prefix {
-            upstream_path = join_prefix(prefix, &upstream_path);
-        }
-        // Convention path-split rewrite (e.g. strip `/api` for the tenant API).
-        upstream_path = Self::apply_convention_rewrite(upstream_path, &conv_rewrite);
+        let upstream_path = Self::compute_upstream_path(&route, &path, &conv_rewrite);
         let mut upstream_url = format!("{}{}", instance.base_url(), upstream_path);
         if let Some(ref qs) = query {
             upstream_url = format!("{upstream_url}?{qs}");
@@ -1367,17 +1373,7 @@ impl RequestHandler {
 
         // Build upstream URL
         let upstream_base = instance.base_url();
-        let mut upstream_path = path.clone();
-        if let Some(ref prefix) = route.strip_prefix {
-            if let Some(stripped) = upstream_path.strip_prefix(prefix.as_str()) {
-                upstream_path = stripped.to_string();
-            }
-        }
-        if let Some(ref prefix) = route.add_prefix {
-            upstream_path = join_prefix(prefix, &upstream_path);
-        }
-        // Convention path-split rewrite (e.g. strip `/api` for the tenant API).
-        upstream_path = Self::apply_convention_rewrite(upstream_path, &conv_rewrite);
+        let upstream_path = Self::compute_upstream_path(&route, &path, &conv_rewrite);
 
         // Parse deadline from grpc-timeout header
         let deadline = req
@@ -1561,17 +1557,7 @@ impl RequestHandler {
         );
 
         // Apply path rewriting (strip_prefix / add_prefix) before proxying
-        let mut upstream_path = path.clone();
-        if let Some(ref prefix) = route.strip_prefix {
-            if let Some(stripped) = upstream_path.strip_prefix(prefix.as_str()) {
-                upstream_path = stripped.to_string();
-            }
-        }
-        if let Some(ref prefix) = route.add_prefix {
-            upstream_path = join_prefix(prefix, &upstream_path);
-        }
-        // Convention path-split rewrite (e.g. strip `/api` for the tenant API).
-        upstream_path = Self::apply_convention_rewrite(upstream_path, &conv_rewrite);
+        let upstream_path = Self::compute_upstream_path(&route, &path, &conv_rewrite);
         if upstream_path != path {
             // Rebuild the URI with the rewritten path
             let mut parts = req.uri().clone().into_parts();
@@ -2063,5 +2049,38 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(key, "orders.acme.svc");
+    }
+
+    #[test]
+    fn passthrough_keeps_full_path() {
+        use octopus_router::{PathMode, ProxySpec};
+        let route = octopus_router::RouteBuilder::new()
+            .method(http::Method::GET)
+            .path("/twinos")
+            .upstream_name("u")
+            .strip_prefix("/twinos")
+            .proxy(Some(ProxySpec {
+                origin: None,
+                path_mode: PathMode::Passthrough,
+                rewrite_redirects: true,
+                rewrite_cookie_path: false,
+            }))
+            .build()
+            .unwrap();
+        let out = RequestHandler::compute_upstream_path(&route, "/twinos/public-config", &None);
+        assert_eq!(out, "/twinos/public-config");
+    }
+
+    #[test]
+    fn strip_mode_strips_prefix() {
+        let route = octopus_router::RouteBuilder::new()
+            .method(http::Method::GET)
+            .path("/twinos")
+            .upstream_name("u")
+            .strip_prefix("/twinos")
+            .build()
+            .unwrap();
+        let out = RequestHandler::compute_upstream_path(&route, "/twinos/public-config", &None);
+        assert_eq!(out, "/public-config");
     }
 }
