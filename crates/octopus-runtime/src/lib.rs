@@ -20,6 +20,7 @@ mod chain;
 pub mod handler;
 pub mod lifecycle;
 pub mod probes;
+pub mod redirect;
 pub mod server;
 pub mod shutdown;
 pub mod worker;
