@@ -708,8 +708,14 @@ impl Http2Pool {
         // NOTE: This path is plain TCP only. HTTP/2 over TLS (h2c excepted)
         // requires ALPN negotiation of the `h2` protocol, which the current
         // `TlsConfig` does not configure. Wiring a TLS handshake here without
-        // ALPN would fail at runtime, so TLS h2 upstreams are intentionally not
-        // supported yet. The HTTP/1.1 pool above handles external https origins.
+        // ALPN would silently send cleartext to a TLS port, so we reject TLS
+        // upstreams here loudly. The HTTP/1.1 pool handles external https origins.
+        if instance.is_tls() {
+            return Err(Error::UpstreamConnection(
+                "HTTP/2 over TLS upstreams are not supported (ALPN not configured)".to_string(),
+            ));
+        }
+
         let addr = format!("{}:{}", instance.address, instance.port);
         debug!(upstream = %addr, "Creating new HTTP/2 connection");
 
@@ -797,6 +803,20 @@ mod tests {
         let ks = UpstreamKey::from_instance(&secure);
         assert_ne!(kp, ks);
         let _ = &mut plain;
+    }
+
+    #[tokio::test]
+    async fn h2_tls_instance_is_rejected() {
+        let mut instance = UpstreamInstance::new("tls-upstream", "example.com", 443);
+        instance.set_tls(true, None, true);
+        let pool = Http2Pool::default();
+        let err = pool.get_sender(&instance).await.unwrap_err();
+        match err {
+            Error::UpstreamConnection(msg) => {
+                assert!(msg.contains("ALPN"), "expected ALPN mention in: {msg}");
+            }
+            other => panic!("expected UpstreamConnection, got {other:?}"),
+        }
     }
 
     // Requires network access to a real https origin — run manually with

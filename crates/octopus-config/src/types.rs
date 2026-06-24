@@ -723,7 +723,11 @@ impl RouteConfig {
             origin,
             path_mode: match self.path_mode.as_deref() {
                 Some("passthrough") => octopus_router::PathMode::Passthrough,
-                _ => octopus_router::PathMode::Strip,
+                Some("strip") | None => octopus_router::PathMode::Strip,
+                Some(other) => {
+                    tracing::warn!(path_mode = %other, "unrecognized path-mode; defaulting to strip");
+                    octopus_router::PathMode::Strip
+                }
             },
             rewrite_redirects: self.rewrite_redirects.unwrap_or(false),
             rewrite_cookie_path: self.rewrite_cookie_path.unwrap_or(false),

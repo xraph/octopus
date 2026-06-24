@@ -46,7 +46,11 @@ pub fn proxy_spec_from_annotations(
         origin,
         path_mode: match get("octopus.io/path-mode") {
             Some("passthrough") => octopus_router::PathMode::Passthrough,
-            _ => octopus_router::PathMode::Strip,
+            Some("strip") | None => octopus_router::PathMode::Strip,
+            Some(other) => {
+                tracing::warn!(path_mode = %other, "unrecognized path-mode; defaulting to strip");
+                octopus_router::PathMode::Strip
+            }
         },
         rewrite_redirects: get("octopus.io/rewrite-redirects") == Some("true"),
         rewrite_cookie_path: get("octopus.io/rewrite-cookie-path") == Some("true"),
@@ -308,7 +312,11 @@ fn octopus_route_proxy_spec(spec: &OctopusRouteSpec) -> Option<octopus_router::P
         origin,
         path_mode: match spec.path_mode.as_deref() {
             Some("passthrough") => octopus_router::PathMode::Passthrough,
-            _ => octopus_router::PathMode::Strip,
+            Some("strip") | None => octopus_router::PathMode::Strip,
+            Some(other) => {
+                tracing::warn!(path_mode = %other, "unrecognized path-mode; defaulting to strip");
+                octopus_router::PathMode::Strip
+            }
         },
         rewrite_redirects: spec.rewrite_redirects.unwrap_or(false),
         rewrite_cookie_path: spec.rewrite_cookie_path.unwrap_or(false),
