@@ -1731,22 +1731,35 @@ impl RequestHandler {
         }
 
         if proxy.rewrite_cookie_path {
-            // Set-Cookie can appear multiple times; collect all values, rewrite, then
-            // remove-all and re-append so we don't silently drop cookies.
-            let originals: Vec<String> = headers
+            // Collect raw HeaderValues first — before remove — so non-UTF-8 cookies
+            // are never lost. After remove we re-append each value, rewriting only
+            // those that are valid UTF-8 and carry a Path= attribute.
+            let raw_cookies: Vec<http::HeaderValue> = headers
                 .get_all(http::header::SET_COOKIE)
                 .iter()
-                .filter_map(|v| v.to_str().ok().map(str::to_string))
+                .cloned()
                 .collect();
 
-            if !originals.is_empty() {
+            if !raw_cookies.is_empty() {
                 headers.remove(http::header::SET_COOKIE);
-                for original in &originals {
-                    let rewritten = rw
-                        .rewrite_cookie_path(original)
-                        .unwrap_or_else(|| original.clone());
-                    if let Ok(hv) = http::HeaderValue::from_str(&rewritten) {
-                        headers.append(http::header::SET_COOKIE, hv);
+                for raw in raw_cookies {
+                    match raw.to_str() {
+                        Ok(s) => {
+                            // Valid UTF-8: attempt a Path= rewrite. If rewrite succeeds
+                            // and produces a valid header value, use the rewritten form;
+                            // otherwise fall back to the original raw value unchanged.
+                            let appended = rw.rewrite_cookie_path(s).and_then(|new_val| {
+                                http::HeaderValue::from_str(&new_val).ok()
+                            });
+                            headers.append(
+                                http::header::SET_COOKIE,
+                                appended.unwrap_or(raw),
+                            );
+                        }
+                        Err(_) => {
+                            // Non-UTF-8 bytes: preserve the raw value without modification.
+                            headers.append(http::header::SET_COOKIE, raw);
+                        }
                     }
                 }
             }
@@ -2253,5 +2266,102 @@ mod tests {
             .unwrap();
         let out = RequestHandler::compute_upstream_path(&route, "/twinos/public-config", &None);
         assert_eq!(out, "/public-config");
+    }
+
+    #[test]
+    fn set_cookie_non_utf8_preserved() {
+        use http::header::SET_COOKIE;
+        use http::HeaderMap;
+        use octopus_router::{PathMode, ProxySpec};
+
+        let route = octopus_router::RouteBuilder::new()
+            .method(http::Method::GET)
+            .path("/twinos")
+            .upstream_name("u")
+            .strip_prefix("/twinos")
+            .proxy(Some(ProxySpec {
+                origin: None,
+                path_mode: PathMode::Strip,
+                rewrite_redirects: true,
+                rewrite_cookie_path: true,
+            }))
+            .build()
+            .unwrap();
+
+        let mut headers = HeaderMap::new();
+        // Non-UTF-8 cookie — HeaderValue::from_bytes allows arbitrary bytes.
+        headers.append(
+            SET_COOKIE,
+            http::HeaderValue::from_bytes(b"sid=\xff\xfe; Path=/").unwrap(),
+        );
+        // Normal UTF-8 cookie whose Path= should be rewritten.
+        headers.append(SET_COOKIE, http::HeaderValue::from_static("a=b; Path=/"));
+
+        RequestHandler::apply_redirect_rewrite(
+            &route,
+            "twin.api.muono.cloud",
+            Some("10.0.0.1:7900"),
+            &mut headers,
+        );
+
+        let cookies: Vec<&http::HeaderValue> = headers.get_all(SET_COOKIE).iter().collect();
+        // (a) Both cookies must still be present.
+        assert_eq!(cookies.len(), 2, "both cookies preserved");
+        // (b) Non-UTF-8 bytes are unchanged.
+        assert!(
+            headers
+                .get_all(SET_COOKIE)
+                .iter()
+                .any(|v| v.as_bytes() == b"sid=\xff\xfe; Path=/"),
+            "non-UTF-8 cookie bytes unchanged"
+        );
+        // (c) Normal cookie Path= gets the external prefix prepended.
+        assert!(
+            headers
+                .get_all(SET_COOKIE)
+                .iter()
+                .any(|v| v.as_bytes() == b"a=b; Path=/twinos/"),
+            "normal cookie path rewritten"
+        );
+    }
+
+    #[test]
+    fn proxy_some_but_flags_off_does_not_rewrite() {
+        use http::HeaderMap;
+        use octopus_router::{PathMode, ProxySpec};
+
+        let route = octopus_router::RouteBuilder::new()
+            .method(http::Method::GET)
+            .path("/twinos")
+            .upstream_name("u")
+            .strip_prefix("/twinos")
+            .proxy(Some(ProxySpec {
+                origin: None,
+                path_mode: PathMode::Strip,
+                rewrite_redirects: false,
+                rewrite_cookie_path: false,
+            }))
+            .build()
+            .unwrap();
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            http::header::LOCATION,
+            "/public-config".parse().unwrap(),
+        );
+
+        RequestHandler::apply_redirect_rewrite(
+            &route,
+            "twin.api.muono.cloud",
+            Some("10.0.0.1:7900"),
+            &mut headers,
+        );
+
+        // Both flags are off → Location must be unchanged.
+        assert_eq!(
+            headers.get(http::header::LOCATION).unwrap(),
+            "/public-config",
+            "Location unchanged when both proxy flags are off"
+        );
     }
 }

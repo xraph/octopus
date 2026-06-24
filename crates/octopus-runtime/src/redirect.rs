@@ -77,7 +77,7 @@ impl RedirectRewrite {
     /// or the rewrite returns `None`.
     pub fn rewrite_cookie_path(&self, value: &str) -> Option<String> {
         // Split on ';' to find the Path= attribute while preserving the structure.
-        let mut parts: Vec<&str> = value.split(';').collect();
+        let parts: Vec<&str> = value.split(';').collect();
         let mut path_idx = None;
         let mut path_value_start = 0usize; // byte offset of value within the part
 
@@ -102,10 +102,8 @@ impl RedirectRewrite {
         // Rebuild the part preserving leading whitespace and the attribute name casing.
         let prefix = &part[..path_value_start];
         let new_part = format!("{prefix}{new_path}");
-        parts[idx] = &new_part; // lifetime trick: borrow from `new_part`
 
-        // Can't store &str pointing at a local String alongside &str slices pointing
-        // at `value` in a single Vec — collect and join instead.
+        // Join all parts, substituting the rewritten part at `idx`.
         let mut result = String::with_capacity(value.len() + new_path.len());
         for (i, p) in parts.iter().enumerate() {
             if i > 0 {
