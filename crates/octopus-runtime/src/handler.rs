@@ -465,14 +465,20 @@ impl RequestHandler {
         key.to_string()
     }
 
+    /// Format a stable synthetic upstream key from an origin's host and port.
+    fn origin_key(origin: &octopus_router::UpstreamOrigin) -> String {
+        format!("__origin__:{}:{}", origin.host, origin.port)
+    }
+
     /// Returns a stable synthetic upstream key for an external-origin route,
     /// or `None` when the route has no `proxy.origin`.
+    #[cfg(test)]
     fn origin_upstream_key(route: &Route) -> Option<String> {
         route
             .proxy
             .as_ref()
             .and_then(|p| p.origin.as_ref())
-            .map(|o| format!("__origin__:{}:{}", o.host, o.port))
+            .map(Self::origin_key)
     }
 
     /// Idempotently register a single-instance upstream cluster for an external
@@ -494,13 +500,6 @@ impl RequestHandler {
         key.to_string()
     }
 
-    /// Resolve the upstream cluster name for a matched route and request host.
-    ///
-    /// For convention routes the `{namespace, service}` target is derived from
-    /// the host — first via the optional Rhai `script` (which may decline by
-    /// returning `()`), then falling back to the label `layout` — and a
-    /// Service-DNS upstream is lazily registered. Other routes use their declared
-    /// upstream name unchanged.
     /// Resolve the upstream cluster name and any path rewrite for a matched route.
     ///
     /// For convention routes the `{namespace, service}` target is derived from the
@@ -517,8 +516,8 @@ impl RequestHandler {
     ) -> Result<(String, Option<PathRewrite>)> {
         // External-origin routes bypass cluster resolution entirely: build a
         // synthetic single-instance cluster keyed by host:port and return it.
-        if let Some(key) = Self::origin_upstream_key(route) {
-            let origin = route.proxy.as_ref().unwrap().origin.as_ref().unwrap();
+        if let Some(origin) = route.proxy.as_ref().and_then(|p| p.origin.as_ref()) {
+            let key = Self::origin_key(origin);
             self.register_origin_upstream(&key, origin);
             return Ok((key, None));
         }
@@ -2455,6 +2454,37 @@ mod tests {
             .build()
             .unwrap();
         assert_eq!(RequestHandler::origin_upstream_key(&route_no_origin), None);
+    }
+
+    #[test]
+    fn origin_key_format_is_stable() {
+        use octopus_router::{Scheme, UpstreamOrigin};
+        // Http scheme: key must encode host and port; scheme is not part of the key.
+        let http_origin = UpstreamOrigin {
+            scheme: Scheme::Http,
+            host: "example.com".into(),
+            port: 80,
+            sni: None,
+            tls_verify: true,
+        };
+        assert_eq!(
+            RequestHandler::origin_upstream_key(
+                &octopus_router::RouteBuilder::new()
+                    .method(http::Method::GET)
+                    .path("/ext")
+                    .upstream_name("u")
+                    .proxy(Some(octopus_router::ProxySpec {
+                        origin: Some(http_origin),
+                        path_mode: octopus_router::PathMode::Strip,
+                        rewrite_redirects: false,
+                        rewrite_cookie_path: false,
+                    }))
+                    .build()
+                    .unwrap()
+            )
+            .as_deref(),
+            Some("__origin__:example.com:80")
+        );
     }
 
     #[tokio::test]
