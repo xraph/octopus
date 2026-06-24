@@ -1,6 +1,7 @@
 //! HTTP request handler
 
 use crate::admin::AdminHandler;
+use crate::redirect::RedirectRewrite;
 use crate::lifecycle::LifecycleState;
 use crate::probes::{self, ProbeRoutes};
 use arc_swap::ArcSwap;
@@ -1291,6 +1292,14 @@ impl RequestHandler {
             headers.insert(http::header::CACHE_CONTROL, "no-cache".parse().unwrap());
         }
 
+        // Rewrite redirect headers for proxy-mode routes.
+        Self::apply_redirect_rewrite(
+            &route,
+            &host,
+            Some(&format!("{}:{}", instance.address, instance.port)),
+            headers,
+        );
+
         // Record the SSE connection start
         self.metrics_collector.record_request(
             &route_key,
@@ -1444,7 +1453,16 @@ impl RequestHandler {
                 );
 
                 // Stream response back — convert Incoming to streaming Body
-                let (parts, body) = resp.into_parts();
+                let (mut parts, body) = resp.into_parts();
+
+                // Rewrite redirect headers for proxy-mode routes.
+                Self::apply_redirect_rewrite(
+                    &route,
+                    &host,
+                    Some(&format!("{}:{}", instance.address, instance.port)),
+                    &mut parts.headers,
+                );
+
                 let response = Response::from_parts(parts, streaming(body));
                 Ok(response)
             }
@@ -1611,7 +1629,15 @@ impl RequestHandler {
                     "Request completed"
                 );
 
-                // Response is already Full<Bytes> from proxy_with_retry
+                // Rewrite redirect headers for proxy-mode routes before returning.
+                let mut response = response;
+                Self::apply_redirect_rewrite(
+                    &route,
+                    &host,
+                    Some(&format!("{}:{}", instance.address, instance.port)),
+                    response.headers_mut(),
+                );
+
                 Ok(response)
             }
             Err(e) => {
@@ -1634,6 +1660,95 @@ impl RequestHandler {
                     "Proxy error"
                 );
                 self.error_response(StatusCode::BAD_GATEWAY, "Upstream error")
+            }
+        }
+    }
+
+    /// Rewrite redirect-bearing response headers for proxy-mode routes.
+    ///
+    /// For routes with `proxy.rewrite_redirects == true` this re-adds the
+    /// external prefix that was stripped on the request to `Location`,
+    /// `Content-Location`, and `Refresh` headers, and optionally rewrites the
+    /// `Path=` attribute of all `Set-Cookie` headers when
+    /// `proxy.rewrite_cookie_path == true`. No-op for routes without a
+    /// `ProxySpec` or when the flag is off.
+    fn apply_redirect_rewrite(
+        route: &Route,
+        gateway_host: &str,
+        instance_authority: Option<&str>,
+        headers: &mut http::HeaderMap,
+    ) {
+        let Some(proxy) = route.proxy.as_ref() else {
+            return;
+        };
+        if !proxy.rewrite_redirects && !proxy.rewrite_cookie_path {
+            return;
+        }
+
+        // The prefix that was stripped on the inbound request (empty for passthrough).
+        let external_prefix = match proxy.path_mode {
+            octopus_router::PathMode::Passthrough => String::new(),
+            octopus_router::PathMode::Strip => {
+                route.strip_prefix.clone().unwrap_or_default()
+            }
+        };
+
+        // Upstream authority: external origin takes precedence over in-cluster instance.
+        let upstream_authority = proxy
+            .origin
+            .as_ref()
+            .map(|o| format!("{}:{}", o.host, o.port))
+            .or_else(|| instance_authority.map(str::to_string));
+
+        let rw = RedirectRewrite {
+            external_prefix,
+            upstream_authority,
+            gateway_scheme: "https".to_string(),
+            gateway_authority: gateway_host.to_string(),
+        };
+
+        if proxy.rewrite_redirects {
+            // Rewrite Location and Content-Location.
+            for name in [http::header::LOCATION, http::header::CONTENT_LOCATION] {
+                if let Some(val) = headers.get(&name).and_then(|v| v.to_str().ok()) {
+                    if let Some(new_val) = rw.rewrite_location(val) {
+                        if let Ok(hv) = http::HeaderValue::from_str(&new_val) {
+                            headers.insert(name, hv);
+                        }
+                    }
+                }
+            }
+
+            // Rewrite Refresh header.
+            let refresh_name = http::header::HeaderName::from_static("refresh");
+            if let Some(val) = headers.get(&refresh_name).and_then(|v| v.to_str().ok()) {
+                if let Some(new_val) = rw.rewrite_refresh(val) {
+                    if let Ok(hv) = http::HeaderValue::from_str(&new_val) {
+                        headers.insert(refresh_name, hv);
+                    }
+                }
+            }
+        }
+
+        if proxy.rewrite_cookie_path {
+            // Set-Cookie can appear multiple times; collect all values, rewrite, then
+            // remove-all and re-append so we don't silently drop cookies.
+            let originals: Vec<String> = headers
+                .get_all(http::header::SET_COOKIE)
+                .iter()
+                .filter_map(|v| v.to_str().ok().map(str::to_string))
+                .collect();
+
+            if !originals.is_empty() {
+                headers.remove(http::header::SET_COOKIE);
+                for original in &originals {
+                    let rewritten = rw
+                        .rewrite_cookie_path(original)
+                        .unwrap_or_else(|| original.clone());
+                    if let Ok(hv) = http::HeaderValue::from_str(&rewritten) {
+                        headers.append(http::header::SET_COOKIE, hv);
+                    }
+                }
             }
         }
     }
@@ -2049,6 +2164,62 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(key, "orders.acme.svc");
+    }
+
+    #[test]
+    fn rewrites_location_for_proxy_route() {
+        use http::HeaderMap;
+        use octopus_router::{PathMode, ProxySpec};
+        let route = octopus_router::RouteBuilder::new()
+            .method(http::Method::GET)
+            .path("/twinos")
+            .upstream_name("u")
+            .strip_prefix("/twinos")
+            .proxy(Some(ProxySpec {
+                origin: None,
+                path_mode: PathMode::Strip,
+                rewrite_redirects: true,
+                rewrite_cookie_path: false,
+            }))
+            .build()
+            .unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert(http::header::LOCATION, "/public-config".parse().unwrap());
+        RequestHandler::apply_redirect_rewrite(
+            &route,
+            "twin.api.muono.cloud",
+            Some("10.0.0.1:7900"),
+            &mut headers,
+        );
+        assert_eq!(
+            headers.get(http::header::LOCATION).unwrap(),
+            "/twinos/public-config"
+        );
+    }
+
+    #[test]
+    fn does_not_rewrite_when_flag_off() {
+        use http::HeaderMap;
+        let route = octopus_router::RouteBuilder::new()
+            .method(http::Method::GET)
+            .path("/twinos")
+            .upstream_name("u")
+            .strip_prefix("/twinos")
+            .build()
+            .unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert(http::header::LOCATION, "/public-config".parse().unwrap());
+        RequestHandler::apply_redirect_rewrite(
+            &route,
+            "twin.api.muono.cloud",
+            Some("10.0.0.1:7900"),
+            &mut headers,
+        );
+        // No proxy spec → no rewrite.
+        assert_eq!(
+            headers.get(http::header::LOCATION).unwrap(),
+            "/public-config"
+        );
     }
 
     #[test]

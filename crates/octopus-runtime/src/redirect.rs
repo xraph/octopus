@@ -50,6 +50,76 @@ impl RedirectRewrite {
         None
     }
 
+    /// Rewrite the `url=` portion of a `Refresh` header value.
+    ///
+    /// `Refresh` looks like `5; url=/path` or `0;url=https://host/x`. The `url=`
+    /// token is case-insensitive and may have optional whitespace around it.
+    /// Returns `None` if there is no `url=` token or the target rewrite returns `None`.
+    pub fn rewrite_refresh(&self, value: &str) -> Option<String> {
+        // Find the position of "url=" (case-insensitive).
+        let lower = value.to_ascii_lowercase();
+        let url_pos = lower.find("url=")?;
+
+        let before = &value[..url_pos];
+        // The separator text up to and including "url=" (preserving original case).
+        let sep = &value[url_pos..url_pos + 4]; // exactly "url=" in original casing
+        let target = &value[url_pos + 4..];
+
+        let new_target = self.rewrite_location(target)?;
+        Some(format!("{before}{sep}{new_target}"))
+    }
+
+    /// Rewrite the `Path=` attribute inside a `Set-Cookie` header value.
+    ///
+    /// Finds the `Path=<p>` attribute (case-insensitive name), rewrites `<p>` via
+    /// [`Self::rewrite_location`], and reassembles the cookie string unchanged
+    /// except for the `Path` value. Returns `None` if there is no `Path=` attribute
+    /// or the rewrite returns `None`.
+    pub fn rewrite_cookie_path(&self, value: &str) -> Option<String> {
+        // Split on ';' to find the Path= attribute while preserving the structure.
+        let mut parts: Vec<&str> = value.split(';').collect();
+        let mut path_idx = None;
+        let mut path_value_start = 0usize; // byte offset of value within the part
+
+        for (i, part) in parts.iter().enumerate() {
+            let trimmed = part.trim_start();
+            let lower = trimmed.to_ascii_lowercase();
+            if lower.starts_with("path=") {
+                path_idx = Some(i);
+                // Compute where the value starts within `part` (not trimmed version).
+                let leading = part.len() - trimmed.len();
+                path_value_start = leading + "path=".len();
+                break;
+            }
+        }
+
+        let idx = path_idx?;
+        let part = parts[idx];
+        let path_value = &part[path_value_start..];
+
+        let new_path = self.rewrite_location(path_value.trim())?;
+
+        // Rebuild the part preserving leading whitespace and the attribute name casing.
+        let prefix = &part[..path_value_start];
+        let new_part = format!("{prefix}{new_path}");
+        parts[idx] = &new_part; // lifetime trick: borrow from `new_part`
+
+        // Can't store &str pointing at a local String alongside &str slices pointing
+        // at `value` in a single Vec — collect and join instead.
+        let mut result = String::with_capacity(value.len() + new_path.len());
+        for (i, p) in parts.iter().enumerate() {
+            if i > 0 {
+                result.push(';');
+            }
+            if i == idx {
+                result.push_str(&new_part);
+            } else {
+                result.push_str(p);
+            }
+        }
+        Some(result)
+    }
+
     /// Join the external prefix onto an upstream path without doubling the seam slash.
     fn prefixed(&self, path: &str) -> String {
         if self.external_prefix.is_empty() {
@@ -122,5 +192,100 @@ mod tests {
     #[test]
     fn internal_double_slash_preserved() {
         assert_eq!(rw().rewrite_location("//x").as_deref(), Some("/twinos//x"));
+    }
+
+    // ── rewrite_refresh ───────────────────────────────────────────────────────
+
+    #[test]
+    fn refresh_url_gets_prefix() {
+        // Standard form: `5; url=/path`
+        assert_eq!(
+            rw().rewrite_refresh("5; url=/public-config").as_deref(),
+            Some("5; url=/twinos/public-config")
+        );
+    }
+
+    #[test]
+    fn refresh_url_no_space_gets_prefix() {
+        // Compact form: `0;url=/path`
+        assert_eq!(
+            rw().rewrite_refresh("0;url=/public-config").as_deref(),
+            Some("0;url=/twinos/public-config")
+        );
+    }
+
+    #[test]
+    fn refresh_url_absolute_upstream_swapped() {
+        assert_eq!(
+            rw()
+                .rewrite_refresh("0;url=http://10.0.0.1:7900/public-config")
+                .as_deref(),
+            Some("0;url=https://twin.api.muono.cloud/twinos/public-config")
+        );
+    }
+
+    #[test]
+    fn refresh_without_url_untouched() {
+        // A bare numeric delay with no `url=` returns None.
+        assert_eq!(rw().rewrite_refresh("5"), None);
+    }
+
+    #[test]
+    fn refresh_url_case_insensitive() {
+        // `URL=` in uppercase is found.
+        assert_eq!(
+            rw().rewrite_refresh("5; URL=/public-config").as_deref(),
+            Some("5; URL=/twinos/public-config")
+        );
+    }
+
+    // ── rewrite_cookie_path ──────────────────────────────────────────────────
+
+    #[test]
+    fn cookie_path_gets_prefix() {
+        assert_eq!(
+            rw()
+                .rewrite_cookie_path("session=abc; Path=/; HttpOnly")
+                .as_deref(),
+            Some("session=abc; Path=/twinos/; HttpOnly")
+        );
+    }
+
+    #[test]
+    fn cookie_path_non_root_gets_prefix() {
+        assert_eq!(
+            rw()
+                .rewrite_cookie_path("tok=xyz; Path=/app; Secure")
+                .as_deref(),
+            Some("tok=xyz; Path=/twinos/app; Secure")
+        );
+    }
+
+    #[test]
+    fn cookie_path_case_insensitive_attribute_name() {
+        // `path=` in lowercase is found (case-insensitive match); original casing preserved.
+        assert_eq!(
+            rw()
+                .rewrite_cookie_path("x=1; path=/; HttpOnly")
+                .as_deref(),
+            Some("x=1; path=/twinos/; HttpOnly")
+        );
+    }
+
+    #[test]
+    fn cookie_without_path_untouched() {
+        // No `Path=` attribute → None.
+        assert_eq!(rw().rewrite_cookie_path("session=abc; HttpOnly"), None);
+    }
+
+    #[test]
+    fn cookie_path_first_in_value() {
+        // Path= immediately after the cookie name=value.
+        assert_eq!(
+            rw()
+                .rewrite_cookie_path("x=1;Path=/")
+                .as_deref(),
+            Some("x=1;Path=/twinos/")
+        );
     }
 }
