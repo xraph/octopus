@@ -26,6 +26,7 @@ pub mod convention;
 pub mod host;
 pub mod load_balancer;
 pub mod matcher;
+mod proxy_spec;
 pub mod route;
 pub mod trie;
 pub mod virtual_gateway;
@@ -36,6 +37,7 @@ pub use convention::{
 pub use host::HostMatch;
 pub use load_balancer::{new_load_balancer, LoadBalancer};
 pub use matcher::{Match, PathMatcher};
+pub use proxy_spec::{PathMode, ProxySpec, Scheme, UpstreamOrigin};
 pub use route::{Route, RouteBuilder, RouteCorsOverride};
 pub use trie::RouteTrie;
 pub use virtual_gateway::{
