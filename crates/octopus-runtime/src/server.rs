@@ -1282,6 +1282,7 @@ impl ServerBuilder {
                 r.require_scopes = rc.require_scopes.clone();
                 r.authz_rule = rc.authz_rule.clone();
                 r.timeout = rc.timeout;
+                r.proxy = rc.proxy_spec();
                 if let Some(rl) = &rc.rate_limit {
                     r.rate_limit = Some(RateLimit {
                         requests: rl.requests_per_window,

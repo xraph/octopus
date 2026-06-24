@@ -716,10 +716,9 @@ impl RouteConfig {
         if !any {
             return None;
         }
-        let origin = self
-            .upstream_origin
-            .as_ref()
-            .and_then(|u| parse_origin(u, self.tls_verify.unwrap_or(true)));
+        let origin = self.upstream_origin.as_ref().and_then(|u| {
+            octopus_router::UpstreamOrigin::parse(u, self.tls_verify.unwrap_or(true))
+        });
         Some(octopus_router::ProxySpec {
             origin,
             path_mode: match self.path_mode.as_deref() {
@@ -730,37 +729,6 @@ impl RouteConfig {
             rewrite_cookie_path: self.rewrite_cookie_path.unwrap_or(false),
         })
     }
-}
-
-/// Parse `scheme://host[:port]` into an [`octopus_router::UpstreamOrigin`].
-/// Only `http://` and `https://` are accepted; returns `None` for anything else.
-/// Default port: 443 for https, 80 for http.
-fn parse_origin(s: &str, tls_verify: bool) -> Option<octopus_router::UpstreamOrigin> {
-    let (scheme, rest) = if let Some(r) = s.strip_prefix("https://") {
-        (octopus_router::Scheme::Https, r)
-    } else if let Some(r) = s.strip_prefix("http://") {
-        (octopus_router::Scheme::Http, r)
-    } else {
-        return None;
-    };
-    let (host, port) = match rest.split_once(':') {
-        Some((h, p)) => (h.to_string(), p.parse().ok()?),
-        None => (
-            rest.to_string(),
-            if matches!(scheme, octopus_router::Scheme::Https) {
-                443
-            } else {
-                80
-            },
-        ),
-    };
-    Some(octopus_router::UpstreamOrigin {
-        scheme,
-        host,
-        port,
-        sni: None,
-        tls_verify,
-    })
 }
 
 /// Plugin configuration

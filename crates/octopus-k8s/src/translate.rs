@@ -251,6 +251,32 @@ fn expand_paths(path_type: &str, value: &str) -> Vec<String> {
     }
 }
 
+/// Build a [`octopus_router::ProxySpec`] from the route's proxy fields, or
+/// `None` when none are set (so legacy routes are unaffected).
+fn octopus_route_proxy_spec(spec: &OctopusRouteSpec) -> Option<octopus_router::ProxySpec> {
+    let any = spec.path_mode.is_some()
+        || spec.upstream_origin.is_some()
+        || spec.rewrite_redirects.is_some()
+        || spec.rewrite_cookie_path.is_some();
+    if !any {
+        return None;
+    }
+    let tls_verify = spec.tls_verify.unwrap_or(true);
+    let origin = spec
+        .upstream_origin
+        .as_deref()
+        .and_then(|u| octopus_router::UpstreamOrigin::parse(u, tls_verify));
+    Some(octopus_router::ProxySpec {
+        origin,
+        path_mode: match spec.path_mode.as_deref() {
+            Some("passthrough") => octopus_router::PathMode::Passthrough,
+            _ => octopus_router::PathMode::Strip,
+        },
+        rewrite_redirects: spec.rewrite_redirects.unwrap_or(false),
+        rewrite_cookie_path: spec.rewrite_cookie_path.unwrap_or(false),
+    })
+}
+
 /// Translate an `OctopusRoute` into intermediate routes. Unlike Gateway API
 /// routes, the path is used as-is (it is already a native router pattern) and
 /// the upstream is referenced by name (resolved from an `OctopusUpstream` or
@@ -286,6 +312,7 @@ pub fn octopus_route_to_route(
         route.priority = spec.priority.unwrap_or(0);
         route.strip_prefix = spec.strip_prefix.clone();
         route.add_prefix = spec.add_prefix.clone();
+        route.proxy = octopus_route_proxy_spec(spec);
         route.auth_provider = spec.auth_provider.clone();
         route.skip_auth = spec.skip_auth;
         route.require_roles = spec.require_roles.clone();
@@ -773,6 +800,28 @@ mod tests {
         let methods: std::collections::HashSet<String> =
             routes.iter().map(|r| r.method.to_string()).collect();
         assert!(methods.contains("GET") && methods.contains("POST"));
+    }
+
+    #[test]
+    fn octopus_route_maps_proxy_fields() {
+        use crate::crds::OctopusRouteSpec;
+        let spec = OctopusRouteSpec {
+            parent_refs: vec!["gw".into()],
+            path: "/twinos".into(),
+            methods: vec!["GET".into()],
+            upstream: "twinos".into(),
+            strip_prefix: Some("/twinos".into()),
+            path_mode: Some("strip".into()),
+            rewrite_redirects: Some(true),
+            upstream_origin: None,
+            rewrite_cookie_path: None,
+            tls_verify: None,
+            ..Default::default()
+        };
+        let routes = octopus_route_to_route("r", "ns", &spec);
+        let p = routes[0].proxy.as_ref().unwrap();
+        assert!(p.rewrite_redirects);
+        assert_eq!(p.path_mode, octopus_router::PathMode::Strip);
     }
 
     #[test]

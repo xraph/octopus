@@ -49,6 +49,36 @@ impl UpstreamOrigin {
     pub fn base_url(&self) -> String {
         format!("{}://{}:{}", self.scheme.as_str(), self.host, self.port)
     }
+
+    /// Parse `scheme://host[:port]` into an origin. `https`→default port 443,
+    /// `http`→80. Returns `None` for a non-http(s) scheme, empty host, or a
+    /// non-numeric port.
+    pub fn parse(s: &str, tls_verify: bool) -> Option<Self> {
+        let (scheme, rest) = if let Some(r) = s.strip_prefix("https://") {
+            (Scheme::Https, r)
+        } else if let Some(r) = s.strip_prefix("http://") {
+            (Scheme::Http, r)
+        } else {
+            return None;
+        };
+        let (host, port) = match rest.split_once(':') {
+            Some((h, p)) => (h.to_string(), p.parse().ok()?),
+            None => (
+                rest.to_string(),
+                if matches!(scheme, Scheme::Https) { 443 } else { 80 },
+            ),
+        };
+        if host.is_empty() {
+            return None;
+        }
+        Some(UpstreamOrigin {
+            scheme,
+            host,
+            port,
+            sni: None,
+            tls_verify,
+        })
+    }
 }
 
 /// Per-route reverse-proxy configuration. Absence (`Route.proxy == None`)
@@ -84,5 +114,37 @@ mod tests {
             tls_verify: true,
         };
         assert_eq!(o.base_url(), "https://api.example.com:443");
+    }
+
+    #[test]
+    fn parse_https_default_port() {
+        let o = UpstreamOrigin::parse("https://api.example.com", true).unwrap();
+        assert_eq!(o.host, "api.example.com");
+        assert_eq!(o.port, 443);
+        assert_eq!(o.scheme, Scheme::Https);
+    }
+
+    #[test]
+    fn parse_http_default_port() {
+        let o = UpstreamOrigin::parse("http://h", true).unwrap();
+        assert_eq!(o.port, 80);
+        assert_eq!(o.scheme, Scheme::Http);
+    }
+
+    #[test]
+    fn parse_explicit_port() {
+        let o = UpstreamOrigin::parse("https://h:8443", true).unwrap();
+        assert_eq!(o.port, 8443);
+    }
+
+    #[test]
+    fn parse_rejects_empty_host() {
+        assert!(UpstreamOrigin::parse("https://", true).is_none());
+        assert!(UpstreamOrigin::parse("https://:8080", true).is_none());
+    }
+
+    #[test]
+    fn parse_rejects_bad_scheme() {
+        assert!(UpstreamOrigin::parse("ftp://h", true).is_none());
     }
 }

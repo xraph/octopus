@@ -207,6 +207,27 @@ pub struct OctopusRouteSpec {
     /// (`*.<baseDomain>`) whose upstream is derived per request from the host.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub convention: Option<ConventionSpec>,
+    /// How the request path is forwarded to the upstream: `"strip"` (default)
+    /// applies the strip/add-prefix rewrite; `"passthrough"` forwards the
+    /// original path untouched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path_mode: Option<String>,
+    /// External upstream origin, e.g. `https://api.example.com:443`. When set,
+    /// the route reverse-proxies to this origin instead of the in-cluster
+    /// `upstream`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_origin: Option<String>,
+    /// Rewrite `Location`/`Content-Location`/`Refresh` response headers so the
+    /// client sees the gateway URL, not the upstream origin URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rewrite_redirects: Option<bool>,
+    /// Also rewrite the `Path=` attribute of `Set-Cookie` response headers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rewrite_cookie_path: Option<bool>,
+    /// Verify the upstream TLS certificate (defaults to `true`). Set `false`
+    /// for self-signed or internal-CA certs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tls_verify: Option<bool>,
 }
 
 /// Host-to-backend convention: derive `{namespace, service}` from the request

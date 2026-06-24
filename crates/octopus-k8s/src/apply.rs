@@ -124,6 +124,9 @@ fn build_route(route: &IntermediateRoute, policy: Option<&GatewayPolicy>) -> Res
     if route.convention.is_some() {
         builder = builder.convention(route.convention.clone());
     }
+    if let Some(proxy) = &route.proxy {
+        builder = builder.proxy(Some(proxy.clone()));
+    }
 
     builder.build().map_err(|e| K8sError::Apply(e.to_string()))
 }
