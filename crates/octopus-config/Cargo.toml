@@ -10,6 +10,7 @@ description = "Configuration management for Octopus API Gateway"
 
 [dependencies]
 octopus-core = { path = "../octopus-core" }
+octopus-router = { path = "../octopus-router" }
 
 # Serialization
 serde.workspace = true

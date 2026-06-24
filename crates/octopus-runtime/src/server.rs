@@ -654,6 +654,9 @@ impl Server {
                                     max_age: cors_cfg.max_age,
                                 }));
                             }
+                            if let Some(spec) = route_config.proxy_spec() {
+                                builder = builder.proxy(Some(spec));
+                            }
 
                             match builder.build() {
                                 Ok(route) => {
@@ -920,6 +923,9 @@ impl ServerBuilder {
                         allow_credentials: cors_cfg.allow_credentials,
                         max_age: cors_cfg.max_age,
                     }));
+                }
+                if let Some(spec) = route_config.proxy_spec() {
+                    builder = builder.proxy(Some(spec));
                 }
 
                 router.add_route(builder.build()?)?;

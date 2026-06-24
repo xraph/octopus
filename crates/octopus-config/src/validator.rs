@@ -207,6 +207,11 @@ mod tests {
             timeout: None,
             rate_limit: None,
             cors: None,
+            path_mode: None,
+            upstream_origin: None,
+            rewrite_redirects: None,
+            rewrite_cookie_path: None,
+            tls_verify: None,
         });
 
         assert!(validate_config(&config).is_err());
