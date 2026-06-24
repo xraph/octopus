@@ -21,20 +21,57 @@ const PREFIX_WILDCARD: &str = "octopus_prefix";
 /// treats an unset method as "all methods").
 const DEFAULT_METHODS: &[&str] = &["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 
+/// Build a ProxySpec from `octopus.io/*` HTTPRoute annotations. `None` when none present.
+pub fn proxy_spec_from_annotations(
+    ann: &std::collections::BTreeMap<String, String>,
+) -> Option<octopus_router::ProxySpec> {
+    let get = |k: &str| ann.get(k).map(|s| s.as_str());
+    let any = [
+        "octopus.io/path-mode",
+        "octopus.io/upstream-origin",
+        "octopus.io/rewrite-redirects",
+        "octopus.io/rewrite-cookie-path",
+    ]
+    .iter()
+    .any(|k| ann.contains_key(*k));
+    if !any {
+        return None;
+    }
+    let tls_verify = get("octopus.io/tls-verify")
+        .map(|v| v != "false")
+        .unwrap_or(true);
+    let origin = get("octopus.io/upstream-origin")
+        .and_then(|u| octopus_router::UpstreamOrigin::parse(u, tls_verify));
+    Some(octopus_router::ProxySpec {
+        origin,
+        path_mode: match get("octopus.io/path-mode") {
+            Some("passthrough") => octopus_router::PathMode::Passthrough,
+            _ => octopus_router::PathMode::Strip,
+        },
+        rewrite_redirects: get("octopus.io/rewrite-redirects") == Some("true"),
+        rewrite_cookie_path: get("octopus.io/rewrite-cookie-path") == Some("true"),
+    })
+}
+
 /// Translate an `HTTPRoute` into intermediate routes and the upstream clusters
 /// they target. `name`/`namespace` are the route's own identity;
 /// `listener_hostnames` is the union of the parent Gateway listener hostnames the
 /// route attaches to (empty = unconstrained), intersected with the route's own.
+/// `annotations` are the HTTPRoute's metadata annotations, used to populate
+/// proxy-mode fields via `octopus.io/*` keys.
 pub fn httproute_to_route(
     name: &str,
     namespace: &str,
     spec: &HTTPRouteSpec,
     listener_hostnames: &[String],
+    annotations: &std::collections::BTreeMap<String, String>,
 ) -> (Vec<IntermediateRoute>, Vec<UpstreamCluster>) {
     let mut routes = Vec::new();
     let mut upstreams = Vec::new();
     // Effective hostnames = route hostnames ∩ parent listener hostnames.
     let hosts = intersect_hostnames(&spec.hostnames, listener_hostnames);
+    // Proxy spec derived from annotations — None for routes with no octopus.io/* keys.
+    let proxy = proxy_spec_from_annotations(annotations);
 
     for (idx, rule) in spec.rules.iter().enumerate() {
         if rule.backend_refs.is_empty() {
@@ -102,6 +139,7 @@ pub fn httproute_to_route(
                             route.strip_prefix = Some(path_value.clone());
                             route.add_prefix = replace_prefix.clone();
                         }
+                        route.proxy = proxy.clone();
                         routes.push(route);
                     }
                 }
@@ -504,7 +542,7 @@ mod tests {
             backend_refs: vec![backend("api-svc", 8080, None)],
         }]);
 
-        let (routes, upstreams) = httproute_to_route("api-route", "default", &s, &[]);
+        let (routes, upstreams) = httproute_to_route("api-route", "default", &s, &[], &std::collections::BTreeMap::new());
 
         assert_eq!(upstreams.len(), 1, "one upstream cluster for the rule");
         let cluster = &upstreams[0];
@@ -534,7 +572,7 @@ mod tests {
         }]);
         s.hostnames = vec!["api.example.com".into(), "*.acme.com".into()];
 
-        let (routes, _) = httproute_to_route("api-route", "default", &s, &[]);
+        let (routes, _) = httproute_to_route("api-route", "default", &s, &[], &std::collections::BTreeMap::new());
 
         let hosts: std::collections::HashSet<_> = routes.iter().map(|r| r.host.clone()).collect();
         assert!(
@@ -558,7 +596,7 @@ mod tests {
             filters: vec![],
             backend_refs: vec![backend("api-svc", 8080, None)],
         }]);
-        let (routes, _) = httproute_to_route("api-route", "default", &s, &[]);
+        let (routes, _) = httproute_to_route("api-route", "default", &s, &[], &std::collections::BTreeMap::new());
         assert!(
             routes.iter().all(|r| r.host == HostMatch::Any),
             "no hostnames → any-host routes (legacy behavior)"
@@ -684,7 +722,7 @@ mod tests {
             backend_refs: vec![backend("api-svc", 8080, None)],
         }]);
 
-        let (routes, _) = httproute_to_route("api-route", "default", &s, &[]);
+        let (routes, _) = httproute_to_route("api-route", "default", &s, &[], &std::collections::BTreeMap::new());
         assert!(!routes.is_empty());
         for r in &routes {
             assert_eq!(r.strip_prefix.as_deref(), Some("/api"));
@@ -700,7 +738,7 @@ mod tests {
             backend_refs: vec![backend("v1", 80, Some(80)), backend("v2", 80, Some(20))],
         }]);
 
-        let (_, upstreams) = httproute_to_route("split", "prod", &s, &[]);
+        let (_, upstreams) = httproute_to_route("split", "prod", &s, &[], &std::collections::BTreeMap::new());
         assert_eq!(upstreams.len(), 1);
         let cluster = &upstreams[0];
         assert_eq!(cluster.instances.len(), 2, "one instance per backend");
@@ -737,7 +775,7 @@ mod tests {
             backend_refs: vec![backend("svc", 80, None)],
         }]);
 
-        let (routes, _) = httproute_to_route("r", "default", &s, &[]);
+        let (routes, _) = httproute_to_route("r", "default", &s, &[], &std::collections::BTreeMap::new());
         let methods: std::collections::HashSet<String> =
             routes.iter().map(|r| r.method.to_string()).collect();
         assert!(methods.contains("GET") && methods.contains("POST") && methods.contains("DELETE"));
@@ -753,7 +791,7 @@ mod tests {
             backend_refs: vec![backend("svc", 80, None)],
         }]);
 
-        let (routes, _) = httproute_to_route("r", "default", &s, &[]);
+        let (routes, _) = httproute_to_route("r", "default", &s, &[], &std::collections::BTreeMap::new());
         let paths: std::collections::HashSet<&str> =
             routes.iter().map(|r| r.path.as_str()).collect();
         assert!(paths.contains("/"), "catch-all root");
@@ -1061,5 +1099,23 @@ mod tests {
         assert_eq!(routes.len(), 1);
         assert_eq!(routes[0].path, "/*octopus_prefix");
         assert_eq!(routes[0].method, Method::POST);
+    }
+
+    #[test]
+    fn httproute_annotations_map_to_proxy() {
+        use std::collections::BTreeMap;
+        let mut ann = BTreeMap::new();
+        ann.insert("octopus.io/path-mode".to_string(), "strip".to_string());
+        ann.insert("octopus.io/rewrite-redirects".to_string(), "true".to_string());
+        let spec = proxy_spec_from_annotations(&ann);
+        let p = spec.unwrap();
+        assert!(p.rewrite_redirects);
+        assert_eq!(p.path_mode, octopus_router::PathMode::Strip);
+    }
+
+    #[test]
+    fn no_annotations_means_no_proxy() {
+        use std::collections::BTreeMap;
+        assert!(proxy_spec_from_annotations(&BTreeMap::new()).is_none());
     }
 }
