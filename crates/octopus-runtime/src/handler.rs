@@ -465,6 +465,35 @@ impl RequestHandler {
         key.to_string()
     }
 
+    /// Returns a stable synthetic upstream key for an external-origin route,
+    /// or `None` when the route has no `proxy.origin`.
+    fn origin_upstream_key(route: &Route) -> Option<String> {
+        route
+            .proxy
+            .as_ref()
+            .and_then(|p| p.origin.as_ref())
+            .map(|o| format!("__origin__:{}:{}", o.host, o.port))
+    }
+
+    /// Idempotently register a single-instance upstream cluster for an external
+    /// origin, returning the cluster key. Mirrors `register_convention_upstream`.
+    fn register_origin_upstream(&self, key: &str, origin: &octopus_router::UpstreamOrigin) -> String {
+        let host = origin.host.clone();
+        let port = origin.port;
+        let tls = matches!(origin.scheme, octopus_router::Scheme::Https);
+        let sni = origin.sni.clone();
+        let verify = origin.tls_verify;
+        let key_owned = key.to_string();
+        self.router.ensure_upstream(key, move || {
+            let mut cluster = UpstreamCluster::new(&key_owned);
+            let mut instance = UpstreamInstance::new(&key_owned, host.clone(), port);
+            instance.set_tls(tls, sni, verify);
+            cluster.add_instance(instance);
+            cluster
+        });
+        key.to_string()
+    }
+
     /// Resolve the upstream cluster name for a matched route and request host.
     ///
     /// For convention routes the `{namespace, service}` target is derived from
@@ -486,6 +515,14 @@ impl RequestHandler {
         host: &str,
         path: &str,
     ) -> Result<(String, Option<PathRewrite>)> {
+        // External-origin routes bypass cluster resolution entirely: build a
+        // synthetic single-instance cluster keyed by host:port and return it.
+        if let Some(key) = Self::origin_upstream_key(route) {
+            let origin = route.proxy.as_ref().unwrap().origin.as_ref().unwrap();
+            self.register_origin_upstream(&key, origin);
+            return Ok((key, None));
+        }
+
         let Some(conv) = &route.convention else {
             return Ok((route.upstream_name.clone(), None));
         };
@@ -2362,6 +2399,97 @@ mod tests {
             headers.get(http::header::LOCATION).unwrap(),
             "/public-config",
             "Location unchanged when both proxy flags are off"
+        );
+    }
+
+    #[test]
+    fn origin_route_produces_origin_upstream_key() {
+        use octopus_router::{PathMode, ProxySpec, Scheme, UpstreamOrigin};
+        let route = octopus_router::RouteBuilder::new()
+            .method(http::Method::GET)
+            .path("/ext")
+            .upstream_name("u")
+            .proxy(Some(ProxySpec {
+                origin: Some(UpstreamOrigin {
+                    scheme: Scheme::Https,
+                    host: "api.example.com".into(),
+                    port: 443,
+                    sni: None,
+                    tls_verify: true,
+                }),
+                path_mode: PathMode::Strip,
+                rewrite_redirects: true,
+                rewrite_cookie_path: false,
+            }))
+            .build()
+            .unwrap();
+        assert_eq!(
+            RequestHandler::origin_upstream_key(&route).as_deref(),
+            Some("__origin__:api.example.com:443")
+        );
+    }
+
+    #[test]
+    fn no_origin_returns_none_for_origin_upstream_key() {
+        use octopus_router::{PathMode, ProxySpec};
+        // Route without proxy.origin → None.
+        let route_no_proxy = octopus_router::RouteBuilder::new()
+            .method(http::Method::GET)
+            .path("/ext")
+            .upstream_name("u")
+            .build()
+            .unwrap();
+        assert_eq!(RequestHandler::origin_upstream_key(&route_no_proxy), None);
+
+        // Route with proxy but origin == None → None.
+        let route_no_origin = octopus_router::RouteBuilder::new()
+            .method(http::Method::GET)
+            .path("/ext")
+            .upstream_name("u")
+            .proxy(Some(ProxySpec {
+                origin: None,
+                path_mode: PathMode::Strip,
+                rewrite_redirects: false,
+                rewrite_cookie_path: false,
+            }))
+            .build()
+            .unwrap();
+        assert_eq!(RequestHandler::origin_upstream_key(&route_no_origin), None);
+    }
+
+    #[tokio::test]
+    async fn origin_route_short_circuits_resolve_upstream_with_path() {
+        use octopus_router::{PathMode, ProxySpec, Scheme, UpstreamOrigin};
+        let handler = create_test_handler();
+        let route = octopus_router::RouteBuilder::new()
+            .method(http::Method::GET)
+            .path("/ext")
+            .upstream_name("u")
+            .proxy(Some(ProxySpec {
+                origin: Some(UpstreamOrigin {
+                    scheme: Scheme::Https,
+                    host: "api.example.com".into(),
+                    port: 443,
+                    sni: None,
+                    tls_verify: true,
+                }),
+                path_mode: PathMode::Strip,
+                rewrite_redirects: true,
+                rewrite_cookie_path: false,
+            }))
+            .build()
+            .unwrap();
+
+        let (key, rewrite) = handler
+            .resolve_upstream_with_path(&route, "any.host.com", "/ext/path")
+            .await
+            .unwrap();
+        assert_eq!(key, "__origin__:api.example.com:443");
+        assert!(rewrite.is_none(), "origin routes carry no path rewrite");
+        // The synthetic upstream must be registered in the router.
+        assert!(
+            handler.router.get_upstream("__origin__:api.example.com:443").is_some(),
+            "synthetic origin upstream registered"
         );
     }
 }
