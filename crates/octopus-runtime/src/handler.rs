@@ -114,6 +114,31 @@ pub struct RequestHandler {
     gateway_index: Arc<ArcSwap<VirtualGatewayIndex>>,
 }
 
+/// Join a rewrite `prefix` onto the already prefix-stripped `rest` of a request
+/// path, collapsing the seam to exactly one `/`.
+///
+/// This implements Gateway API `ReplacePrefixMatch` join semantics. A naive
+/// `format!("{prefix}{rest}")` doubles the slash whenever `prefix` ends with `/`
+/// and `rest` begins with `/` — exactly the common `replacePrefixMatch: "/"`
+/// (full prefix strip) case, where `/twinos/public-config` would become
+/// `//public-config`. Go `net/http` upstreams answer such non-clean paths with a
+/// 301 to the cleaned path, which drops the gateway's external prefix and breaks
+/// every non-root route. Collapsing the seam keeps the upstream path clean
+/// (`/public-config`) and never yields an empty path.
+fn join_prefix(prefix: &str, rest: &str) -> String {
+    let base = prefix.trim_end_matches('/');
+    let joined = match rest.strip_prefix('/') {
+        Some(tail) => format!("{base}/{tail}"),
+        None if rest.is_empty() => base.to_string(),
+        None => format!("{base}/{rest}"),
+    };
+    if joined.is_empty() {
+        "/".to_string()
+    } else {
+        joined
+    }
+}
+
 impl std::fmt::Debug for RequestHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RequestHandler")
@@ -515,7 +540,7 @@ impl RequestHandler {
             }
         }
         if let Some(add) = &rw.add {
-            out = format!("{add}{out}");
+            out = join_prefix(add, &out);
         }
         out
     }
@@ -991,7 +1016,7 @@ impl RequestHandler {
             }
         }
         if let Some(ref prefix) = route.add_prefix {
-            upstream_path = format!("{prefix}{upstream_path}");
+            upstream_path = join_prefix(prefix, &upstream_path);
         }
         // Convention path-split rewrite (e.g. strip `/api` for the tenant API).
         upstream_path = Self::apply_convention_rewrite(upstream_path, &conv_rewrite);
@@ -1142,7 +1167,7 @@ impl RequestHandler {
             }
         }
         if let Some(ref prefix) = route.add_prefix {
-            upstream_path = format!("{prefix}{upstream_path}");
+            upstream_path = join_prefix(prefix, &upstream_path);
         }
         // Convention path-split rewrite (e.g. strip `/api` for the tenant API).
         upstream_path = Self::apply_convention_rewrite(upstream_path, &conv_rewrite);
@@ -1349,7 +1374,7 @@ impl RequestHandler {
             }
         }
         if let Some(ref prefix) = route.add_prefix {
-            upstream_path = format!("{prefix}{upstream_path}");
+            upstream_path = join_prefix(prefix, &upstream_path);
         }
         // Convention path-split rewrite (e.g. strip `/api` for the tenant API).
         upstream_path = Self::apply_convention_rewrite(upstream_path, &conv_rewrite);
@@ -1543,7 +1568,7 @@ impl RequestHandler {
             }
         }
         if let Some(ref prefix) = route.add_prefix {
-            upstream_path = format!("{prefix}{upstream_path}");
+            upstream_path = join_prefix(prefix, &upstream_path);
         }
         // Convention path-split rewrite (e.g. strip `/api` for the tenant API).
         upstream_path = Self::apply_convention_rewrite(upstream_path, &conv_rewrite);
@@ -1881,6 +1906,23 @@ mod tests {
             RequestHandler::apply_convention_rewrite("/api/orders".to_string(), &rewrite),
             "/orders"
         );
+    }
+
+    #[test]
+    fn join_prefix_collapses_replace_prefix_match_slash() {
+        // `replacePrefixMatch: "/"` full strip — must NOT become `//public-config`.
+        // A Go `net/http` upstream answers `//public-config` with a 301 to the
+        // cleaned path, which drops the gateway's external prefix and 404s.
+        assert_eq!(super::join_prefix("/", "/public-config"), "/public-config");
+        // Exact match of the external prefix strips to empty; root stays `/`.
+        assert_eq!(super::join_prefix("/", ""), "/");
+        // A real replacement prefix keeps a single seam slash.
+        assert_eq!(super::join_prefix("/v2", "/orders"), "/v2/orders");
+        assert_eq!(super::join_prefix("/v2", ""), "/v2");
+        // A trailing-slash request remainder is preserved.
+        assert_eq!(super::join_prefix("/v2", "/"), "/v2/");
+        // Empty replacement (pure strip) keeps a single leading slash.
+        assert_eq!(super::join_prefix("", "/orders"), "/orders");
     }
 
     fn convention_route_with_script(script: &str) -> octopus_router::Route {
