@@ -8,12 +8,73 @@ use hyper_util::rt::TokioIo;
 use octopus_core::{Error, Result, UpstreamInstance};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::net::TcpStream;
 use tokio::sync::{Mutex, Semaphore};
 use tokio::time::timeout;
 use tracing::{debug, info, trace, warn};
+
+use crate::tls::TlsConfig;
+
+/// Cached verify-on TLS config. Building the root store is expensive, so we do
+/// it once and clone the cheap `Arc`-backed handle per connection.
+static TLS_VERIFY: OnceLock<TlsConfig> = OnceLock::new();
+
+/// Cached verify-off (insecure) TLS config for upstreams with `tls_verify=false`.
+static TLS_INSECURE: OnceLock<TlsConfig> = OnceLock::new();
+
+/// Return a shared [`TlsConfig`], building it once per verify mode.
+fn shared_tls_config(verify: bool) -> Result<TlsConfig> {
+    let cell = if verify { &TLS_VERIFY } else { &TLS_INSECURE };
+    if let Some(cfg) = cell.get() {
+        return Ok(cfg.clone());
+    }
+    let built = if verify {
+        TlsConfig::new()?
+    } else {
+        TlsConfig::insecure()?
+    };
+    // Another thread may have raced us; either way we end up with a usable handle.
+    Ok(cell.get_or_init(|| built).clone())
+}
+
+/// Drive a freshly handshaked HTTP/1.1 connection in the background. Shared by
+/// the plain and TLS paths so both return the same `SendRequest` type.
+async fn spawn_http1_handshake<I>(io: TokioIo<I>) -> Result<http1::SendRequest<Full<Bytes>>>
+where
+    I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Unpin + 'static,
+{
+    let (sender, conn) = http1::Builder::new()
+        .handshake::<_, Full<Bytes>>(io)
+        .await
+        .map_err(|e| Error::UpstreamConnection(format!("HTTP handshake failed: {e}")))?;
+
+    tokio::spawn(async move {
+        if let Err(e) = conn.await {
+            debug!("Connection error: {}", e);
+        }
+    });
+
+    Ok(sender)
+}
+
+/// Plain (non-TLS) HTTP/1.1 handshake over a raw TCP stream.
+async fn handshake_plain(stream: TcpStream) -> Result<http1::SendRequest<Full<Bytes>>> {
+    spawn_http1_handshake(TokioIo::new(stream)).await
+}
+
+/// TLS-wrapped HTTP/1.1 handshake. Performs the rustls handshake against
+/// `domain` first, then the HTTP/1.1 handshake over the encrypted stream.
+async fn handshake_tls(
+    stream: TcpStream,
+    domain: &str,
+    verify: bool,
+) -> Result<http1::SendRequest<Full<Bytes>>> {
+    let tls_config = shared_tls_config(verify)?;
+    let tls_stream = tls_config.connect(stream, domain).await?;
+    spawn_http1_handshake(TokioIo::new(tls_stream)).await
+}
 
 /// Connection pool configuration
 #[derive(Debug, Clone)]
@@ -127,6 +188,9 @@ pub struct UpstreamKey {
     pub host: String,
     /// Upstream port number
     pub port: u16,
+    /// Whether the connection uses TLS (https). Keeps http and https pools
+    /// distinct so a plain connection is never reused for a secure target.
+    pub tls: bool,
 }
 
 impl UpstreamKey {
@@ -135,6 +199,7 @@ impl UpstreamKey {
         Self {
             host: instance.address.clone(),
             port: instance.port,
+            tls: instance.is_tls(),
         }
     }
 }
@@ -376,22 +441,26 @@ impl ConnectionPool {
             warn!("Failed to set TCP_NODELAY: {}", e);
         }
 
-        // Perform HTTP/1.1 handshake with explicit body type
-        let io = TokioIo::new(stream);
-        let (sender, conn) = http1::Builder::new()
-            .handshake::<_, Full<Bytes>>(io)
-            .await
-            .map_err(|e| {
+        // Wrap in TLS for https upstreams; otherwise hand the raw stream to the
+        // HTTP/1.1 handshake exactly as before. Both helpers return the same
+        // `SendRequest` type so the rest of the path stays single-typed.
+        let sender = if instance.is_tls() {
+            let domain = instance
+                .sni
+                .clone()
+                .unwrap_or_else(|| instance.address.clone());
+            handshake_tls(stream, &domain, instance.tls_verify)
+                .await
+                .map_err(|e| {
+                    pool.metrics.record_error();
+                    e
+                })?
+        } else {
+            handshake_plain(stream).await.map_err(|e| {
                 pool.metrics.record_error();
-                Error::UpstreamConnection(format!("HTTP handshake failed: {e}"))
-            })?;
-
-        // Spawn connection task
-        tokio::spawn(async move {
-            if let Err(e) = conn.await {
-                debug!("Connection error: {}", e);
-            }
-        });
+                e
+            })?
+        };
 
         pool.metrics.record_created();
 
@@ -634,7 +703,13 @@ impl Http2Pool {
             self.connections.remove(&key);
         }
 
-        // Create new HTTP/2 connection
+        // Create new HTTP/2 connection.
+        //
+        // NOTE: This path is plain TCP only. HTTP/2 over TLS (h2c excepted)
+        // requires ALPN negotiation of the `h2` protocol, which the current
+        // `TlsConfig` does not configure. Wiring a TLS handshake here without
+        // ALPN would fail at runtime, so TLS h2 upstreams are intentionally not
+        // supported yet. The HTTP/1.1 pool above handles external https origins.
         let addr = format!("{}:{}", instance.address, instance.port);
         debug!(upstream = %addr, "Creating new HTTP/2 connection");
 
@@ -711,6 +786,33 @@ mod tests {
 
         assert_eq!(key.host, "localhost");
         assert_eq!(key.port, 8080);
+    }
+
+    #[test]
+    fn upstream_key_distinguishes_tls() {
+        let mut plain = UpstreamInstance::new("a", "h", 443);
+        let mut secure = UpstreamInstance::new("a", "h", 443);
+        secure.set_tls(true, None, true);
+        let kp = UpstreamKey::from_instance(&plain);
+        let ks = UpstreamKey::from_instance(&secure);
+        assert_ne!(kp, ks);
+        let _ = &mut plain;
+    }
+
+    // Requires network access to a real https origin — run manually with
+    // `cargo test -p octopus-proxy --ignored tls_handshake_real_origin`.
+    #[tokio::test]
+    #[ignore]
+    async fn tls_handshake_real_origin() {
+        let mut instance = UpstreamInstance::new("example", "example.com", 443);
+        instance.set_tls(true, None, true);
+
+        let pool = ConnectionPool::default();
+        let conn = pool
+            .get_connection(&instance)
+            .await
+            .expect("TLS connection to example.com should succeed");
+        assert!(conn.sender.is_ready() || !conn.sender.is_closed());
     }
 
     #[tokio::test]
