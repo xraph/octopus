@@ -6,7 +6,7 @@
 //! logic so it is exhaustively unit-testable; the handler supplies the context.
 
 /// Context for rewriting a single redirect header value.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RedirectRewrite {
     /// External prefix that was stripped on the request (e.g. "/twinos"); empty if none.
     pub external_prefix: String,
@@ -115,8 +115,12 @@ mod tests {
     }
 
     #[test]
-    fn no_double_slash_when_prefix_joined() {
+    fn root_path_gets_prefix_with_single_slash() {
         assert_eq!(rw().rewrite_location("/").as_deref(), Some("/twinos/"));
+    }
+
+    #[test]
+    fn internal_double_slash_preserved() {
         assert_eq!(rw().rewrite_location("//x").as_deref(), Some("/twinos//x"));
     }
 }
