@@ -262,7 +262,10 @@ impl RouteReconciler {
         annotations: &BTreeMap<String, String>,
     ) {
         if let Ok(mut m) = self.httproutes.lock() {
-            m.insert(format!("{namespace}/{name}"), (spec.clone(), annotations.clone()));
+            m.insert(
+                format!("{namespace}/{name}"),
+                (spec.clone(), annotations.clone()),
+            );
         }
         self.translate_httproute(name, namespace, spec, annotations);
         self.reapply();
@@ -276,7 +279,8 @@ impl RouteReconciler {
         annotations: &BTreeMap<String, String>,
     ) {
         let listeners = self.listener_hostnames_for(&spec.parent_refs, namespace);
-        let (routes, upstreams) = httproute_to_route(name, namespace, spec, &listeners, annotations);
+        let (routes, upstreams) =
+            httproute_to_route(name, namespace, spec, &listeners, annotations);
         if let Ok(mut store) = self.store.lock() {
             store.insert(
                 SourceKey::new(RouteSource::GatewayApi, format!("{namespace}/{name}")),

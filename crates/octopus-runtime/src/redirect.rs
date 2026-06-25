@@ -8,7 +8,7 @@
 /// Context for rewriting a single redirect header value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RedirectRewrite {
-    /// External prefix that was stripped on the request (e.g. "/twinos"); empty if none.
+    /// External prefix that was stripped on the request (e.g. "/example"); empty if none.
     pub external_prefix: String,
     /// Authority (`host[:port]`) the upstream sees itself as — an in-cluster
     /// `ip:port` or an external origin host. Absolute redirects to this authority
@@ -16,7 +16,7 @@ pub struct RedirectRewrite {
     pub upstream_authority: Option<String>,
     /// External scheme to emit on rewritten absolute URLs (e.g. "https").
     pub gateway_scheme: String,
-    /// External authority clients use (e.g. "twin.api.muono.cloud").
+    /// External authority clients use (e.g. "gw.example.cloud").
     pub gateway_authority: String,
 }
 
@@ -25,7 +25,10 @@ impl RedirectRewrite {
     /// unchanged (cross-origin, or nothing to do).
     pub fn rewrite_location(&self, value: &str) -> Option<String> {
         // Absolute URL: only touch it if it points at our upstream authority.
-        if let Some(rest) = value.strip_prefix("http://").or_else(|| value.strip_prefix("https://")) {
+        if let Some(rest) = value
+            .strip_prefix("http://")
+            .or_else(|| value.strip_prefix("https://"))
+        {
             let upstream = self.upstream_authority.as_deref()?;
             let (authority, path) = match rest.find('/') {
                 Some(i) => (&rest[..i], &rest[i..]),
@@ -35,7 +38,10 @@ impl RedirectRewrite {
                 return None; // cross-origin — leave untouched
             }
             let new_path = self.prefixed(path);
-            return Some(format!("{}://{}{}", self.gateway_scheme, self.gateway_authority, new_path));
+            return Some(format!(
+                "{}://{}{}",
+                self.gateway_scheme, self.gateway_authority, new_path
+            ));
         }
 
         // Root-relative path: re-add the external prefix.
@@ -137,23 +143,27 @@ mod tests {
 
     fn rw() -> RedirectRewrite {
         RedirectRewrite {
-            external_prefix: "/twinos".to_string(),
+            external_prefix: "/example".to_string(),
             upstream_authority: Some("10.0.0.1:7900".to_string()),
             gateway_scheme: "https".to_string(),
-            gateway_authority: "twin.api.muono.cloud".to_string(),
+            gateway_authority: "gw.example.cloud".to_string(),
         }
     }
 
     #[test]
     fn root_relative_gets_external_prefix() {
-        assert_eq!(rw().rewrite_location("/public-config").as_deref(), Some("/twinos/public-config"));
+        assert_eq!(
+            rw().rewrite_location("/public-config").as_deref(),
+            Some("/example/public-config")
+        );
     }
 
     #[test]
     fn absolute_upstream_authority_swapped_and_prefixed() {
         assert_eq!(
-            rw().rewrite_location("http://10.0.0.1:7900/public-config").as_deref(),
-            Some("https://twin.api.muono.cloud/twinos/public-config")
+            rw().rewrite_location("http://10.0.0.1:7900/public-config")
+                .as_deref(),
+            Some("https://gw.example.cloud/example/public-config")
         );
     }
 
@@ -163,33 +173,40 @@ mod tests {
             external_prefix: "/ext".to_string(),
             upstream_authority: Some("api.example.com".to_string()),
             gateway_scheme: "https".to_string(),
-            gateway_authority: "twin.api.muono.cloud".to_string(),
+            gateway_authority: "gw.example.cloud".to_string(),
         };
         assert_eq!(
-            r.rewrite_location("https://api.example.com/whatever").as_deref(),
-            Some("https://twin.api.muono.cloud/ext/whatever")
+            r.rewrite_location("https://api.example.com/whatever")
+                .as_deref(),
+            Some("https://gw.example.cloud/ext/whatever")
         );
     }
 
     #[test]
     fn unrelated_absolute_left_untouched() {
-        assert_eq!(rw().rewrite_location("https://accounts.google.com/o/oauth2"), None);
+        assert_eq!(
+            rw().rewrite_location("https://accounts.google.com/o/oauth2"),
+            None
+        );
     }
 
     #[test]
     fn empty_prefix_is_identity_for_root_relative() {
-        let r = RedirectRewrite { external_prefix: String::new(), ..rw() };
+        let r = RedirectRewrite {
+            external_prefix: String::new(),
+            ..rw()
+        };
         assert_eq!(r.rewrite_location("/foo"), None);
     }
 
     #[test]
     fn root_path_gets_prefix_with_single_slash() {
-        assert_eq!(rw().rewrite_location("/").as_deref(), Some("/twinos/"));
+        assert_eq!(rw().rewrite_location("/").as_deref(), Some("/example/"));
     }
 
     #[test]
     fn internal_double_slash_preserved() {
-        assert_eq!(rw().rewrite_location("//x").as_deref(), Some("/twinos//x"));
+        assert_eq!(rw().rewrite_location("//x").as_deref(), Some("/example//x"));
     }
 
     // ── rewrite_refresh ───────────────────────────────────────────────────────
@@ -199,7 +216,7 @@ mod tests {
         // Standard form: `5; url=/path`
         assert_eq!(
             rw().rewrite_refresh("5; url=/public-config").as_deref(),
-            Some("5; url=/twinos/public-config")
+            Some("5; url=/example/public-config")
         );
     }
 
@@ -208,17 +225,16 @@ mod tests {
         // Compact form: `0;url=/path`
         assert_eq!(
             rw().rewrite_refresh("0;url=/public-config").as_deref(),
-            Some("0;url=/twinos/public-config")
+            Some("0;url=/example/public-config")
         );
     }
 
     #[test]
     fn refresh_url_absolute_upstream_swapped() {
         assert_eq!(
-            rw()
-                .rewrite_refresh("0;url=http://10.0.0.1:7900/public-config")
+            rw().rewrite_refresh("0;url=http://10.0.0.1:7900/public-config")
                 .as_deref(),
-            Some("0;url=https://twin.api.muono.cloud/twinos/public-config")
+            Some("0;url=https://gw.example.cloud/example/public-config")
         );
     }
 
@@ -233,7 +249,7 @@ mod tests {
         // `URL=` in uppercase is found.
         assert_eq!(
             rw().rewrite_refresh("5; URL=/public-config").as_deref(),
-            Some("5; URL=/twinos/public-config")
+            Some("5; URL=/example/public-config")
         );
     }
 
@@ -242,20 +258,18 @@ mod tests {
     #[test]
     fn cookie_path_gets_prefix() {
         assert_eq!(
-            rw()
-                .rewrite_cookie_path("session=abc; Path=/; HttpOnly")
+            rw().rewrite_cookie_path("session=abc; Path=/; HttpOnly")
                 .as_deref(),
-            Some("session=abc; Path=/twinos/; HttpOnly")
+            Some("session=abc; Path=/example/; HttpOnly")
         );
     }
 
     #[test]
     fn cookie_path_non_root_gets_prefix() {
         assert_eq!(
-            rw()
-                .rewrite_cookie_path("tok=xyz; Path=/app; Secure")
+            rw().rewrite_cookie_path("tok=xyz; Path=/app; Secure")
                 .as_deref(),
-            Some("tok=xyz; Path=/twinos/app; Secure")
+            Some("tok=xyz; Path=/example/app; Secure")
         );
     }
 
@@ -263,10 +277,8 @@ mod tests {
     fn cookie_path_case_insensitive_attribute_name() {
         // `path=` in lowercase is found (case-insensitive match); original casing preserved.
         assert_eq!(
-            rw()
-                .rewrite_cookie_path("x=1; path=/; HttpOnly")
-                .as_deref(),
-            Some("x=1; path=/twinos/; HttpOnly")
+            rw().rewrite_cookie_path("x=1; path=/; HttpOnly").as_deref(),
+            Some("x=1; path=/example/; HttpOnly")
         );
     }
 
@@ -280,10 +292,8 @@ mod tests {
     fn cookie_path_first_in_value() {
         // Path= immediately after the cookie name=value.
         assert_eq!(
-            rw()
-                .rewrite_cookie_path("x=1;Path=/")
-                .as_deref(),
-            Some("x=1;Path=/twinos/")
+            rw().rewrite_cookie_path("x=1;Path=/").as_deref(),
+            Some("x=1;Path=/example/")
         );
     }
 }

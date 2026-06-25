@@ -2,7 +2,7 @@
 //!
 //! By default FARP registers discovered services as host-agnostic routes
 //! (`/{service}/...` on any host). A [`GatewayBinding`] scopes them to a single
-//! gateway's hostname (e.g. `api.twinos.cloud`), attaches them to that gateway
+//! gateway's hostname (e.g. `api.example.cloud`), attaches them to that gateway
 //! for attribution, and applies its default auth provider — so a federated API
 //! surface lives under one host with service-scoped prefixes.
 
@@ -126,20 +126,21 @@ mod tests {
 
     #[test]
     fn binding_scopes_host_and_attaches_gateway() {
-        let binding = GatewayBinding::new("api.twinos.cloud")
+        let binding = GatewayBinding::new("api.example.cloud")
             .with_gateway_id(Some("platform-api".into()))
             .with_default_auth(Some("jwt".into()));
         let route = apply_gateway_binding(base_builder(), Some(&binding), false)
             .build()
             .unwrap();
-        assert_eq!(route.host, HostMatch::Exact("api.twinos.cloud".into()));
+        assert_eq!(route.host, HostMatch::Exact("api.example.cloud".into()));
         assert_eq!(route.gateway_id.as_deref(), Some("platform-api"));
         assert_eq!(route.auth_provider.as_deref(), Some("jwt"));
     }
 
     #[test]
     fn binding_does_not_override_existing_auth() {
-        let binding = GatewayBinding::new("api.twinos.cloud").with_default_auth(Some("jwt".into()));
+        let binding =
+            GatewayBinding::new("api.example.cloud").with_default_auth(Some("jwt".into()));
         // route_has_auth = true → the route's own auth provider must be preserved.
         let route = apply_gateway_binding(
             base_builder().auth_provider(Some("service-specific")),
@@ -162,7 +163,7 @@ mod tests {
 
     #[test]
     fn binding_applies_rate_limit_and_timeout() {
-        let binding = GatewayBinding::new("api.twinos.cloud")
+        let binding = GatewayBinding::new("api.example.cloud")
             .with_rate_limit(Some((100, Duration::from_secs(60))))
             .with_timeout(Some(Duration::from_secs(7)));
         let route = apply_gateway_binding(base_builder(), Some(&binding), false)
@@ -174,7 +175,7 @@ mod tests {
 
     #[test]
     fn wildcard_hostname_parses_to_wildcard_match() {
-        let binding = GatewayBinding::new("*.twinos.cloud");
-        assert_eq!(binding.host, HostMatch::Wildcard(".twinos.cloud".into()));
+        let binding = GatewayBinding::new("*.example.cloud");
+        assert_eq!(binding.host, HostMatch::Wildcard(".example.cloud".into()));
     }
 }

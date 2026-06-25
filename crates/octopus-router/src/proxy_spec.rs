@@ -65,7 +65,11 @@ impl UpstreamOrigin {
             Some((h, p)) => (h.to_string(), p.parse().ok()?),
             None => (
                 rest.to_string(),
-                if matches!(scheme, Scheme::Https) { 443 } else { 80 },
+                if matches!(scheme, Scheme::Https) {
+                    443
+                } else {
+                    80
+                },
             ),
         };
         if host.is_empty() {

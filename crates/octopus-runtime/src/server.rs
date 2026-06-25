@@ -948,7 +948,7 @@ impl ServerBuilder {
             let federation = Arc::new(octopus_farp::SchemaFederation::new());
 
             // Optional virtual-gateway binding: scope all FARP routes under one
-            // hostname (e.g. api.twinos.cloud) and attach them for policy.
+            // hostname (e.g. api.example.cloud) and attach them for policy.
             let farp_binding = config.farp.gateway.as_ref().map(|g| {
                 octopus_farp::GatewayBinding::new(&g.hostname)
                     .with_gateway_id(g.gateway_id.clone())

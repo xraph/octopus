@@ -483,6 +483,9 @@ mod tests {
             route.proxy.as_ref().map(|p| p.path_mode),
             Some(crate::PathMode::Passthrough)
         );
-        assert_eq!(route.proxy.as_ref().map(|p| p.rewrite_redirects), Some(true));
+        assert_eq!(
+            route.proxy.as_ref().map(|p| p.rewrite_redirects),
+            Some(true)
+        );
     }
 }

@@ -1,9 +1,9 @@
 //! HTTP request handler
 
 use crate::admin::AdminHandler;
-use crate::redirect::RedirectRewrite;
 use crate::lifecycle::LifecycleState;
 use crate::probes::{self, ProbeRoutes};
+use crate::redirect::RedirectRewrite;
 use arc_swap::ArcSwap;
 use bytes::Bytes;
 use http::{Request, Response, StatusCode};
@@ -121,7 +121,7 @@ pub struct RequestHandler {
 /// This implements Gateway API `ReplacePrefixMatch` join semantics. A naive
 /// `format!("{prefix}{rest}")` doubles the slash whenever `prefix` ends with `/`
 /// and `rest` begins with `/` — exactly the common `replacePrefixMatch: "/"`
-/// (full prefix strip) case, where `/twinos/public-config` would become
+/// (full prefix strip) case, where `/example/public-config` would become
 /// `//public-config`. Go `net/http` upstreams answer such non-clean paths with a
 /// 301 to the cleaned path, which drops the gateway's external prefix and breaks
 /// every non-root route. Collapsing the seam keeps the upstream path clean
@@ -483,7 +483,11 @@ impl RequestHandler {
 
     /// Idempotently register a single-instance upstream cluster for an external
     /// origin, returning the cluster key. Mirrors `register_convention_upstream`.
-    fn register_origin_upstream(&self, key: &str, origin: &octopus_router::UpstreamOrigin) -> String {
+    fn register_origin_upstream(
+        &self,
+        key: &str,
+        origin: &octopus_router::UpstreamOrigin,
+    ) -> String {
         let host = origin.host.clone();
         let port = origin.port;
         let tls = matches!(origin.scheme, octopus_router::Scheme::Https);
@@ -1724,9 +1728,7 @@ impl RequestHandler {
         // The prefix that was stripped on the inbound request (empty for passthrough).
         let external_prefix = match proxy.path_mode {
             octopus_router::PathMode::Passthrough => String::new(),
-            octopus_router::PathMode::Strip => {
-                route.strip_prefix.clone().unwrap_or_default()
-            }
+            octopus_router::PathMode::Strip => route.strip_prefix.clone().unwrap_or_default(),
         };
 
         // Upstream authority: external origin takes precedence over in-cluster instance.
@@ -1784,13 +1786,10 @@ impl RequestHandler {
                             // Valid UTF-8: attempt a Path= rewrite. If rewrite succeeds
                             // and produces a valid header value, use the rewritten form;
                             // otherwise fall back to the original raw value unchanged.
-                            let appended = rw.rewrite_cookie_path(s).and_then(|new_val| {
-                                http::HeaderValue::from_str(&new_val).ok()
-                            });
-                            headers.append(
-                                http::header::SET_COOKIE,
-                                appended.unwrap_or(raw),
-                            );
+                            let appended = rw
+                                .rewrite_cookie_path(s)
+                                .and_then(|new_val| http::HeaderValue::from_str(&new_val).ok());
+                            headers.append(http::header::SET_COOKIE, appended.unwrap_or(raw));
                         }
                         Err(_) => {
                             // Non-UTF-8 bytes: preserve the raw value without modification.
@@ -1991,7 +1990,7 @@ mod tests {
         use octopus_router::ConventionRouteRule;
         let handler = create_test_handler();
         let conv = octopus_router::Convention {
-            base_suffix: ".twinos.cloud".into(),
+            base_suffix: ".example.cloud".into(),
             roles: vec![octopus_router::LabelRole::Namespace],
             default_service: Some("studio".into()),
             port: 3000,
@@ -2018,7 +2017,7 @@ mod tests {
             .method(http::Method::GET)
             .path("/*rest")
             .upstream_name("placeholder")
-            .host(octopus_router::HostMatch::Wildcard(".twinos.cloud".into()))
+            .host(octopus_router::HostMatch::Wildcard(".example.cloud".into()))
             .gateway_id(Some("tenants")) // W4: convention upstream gets gateway-scoped
             .convention(Some(conv))
             .build()
@@ -2027,7 +2026,7 @@ mod tests {
         // `/api/*` → the tenant API service on :7900, with `/api` stripped. The
         // upstream key is gateway-scoped ("tenants:...").
         let (key, rewrite) = handler
-            .resolve_upstream_with_path(&route, "customer-a.twinos.cloud", "/api/orders")
+            .resolve_upstream_with_path(&route, "customer-a.example.cloud", "/api/orders")
             .await
             .unwrap();
         assert_eq!(key, "tenants:api.customer-a.svc");
@@ -2045,7 +2044,7 @@ mod tests {
 
         // Everything else → the tenant frontend on :3000, no rewrite.
         let (key2, rewrite2) = handler
-            .resolve_upstream_with_path(&route, "customer-a.twinos.cloud", "/dashboard")
+            .resolve_upstream_with_path(&route, "customer-a.example.cloud", "/dashboard")
             .await
             .unwrap();
         assert_eq!(key2, "tenants:studio.customer-a.svc");
@@ -2221,9 +2220,9 @@ mod tests {
         use octopus_router::{PathMode, ProxySpec};
         let route = octopus_router::RouteBuilder::new()
             .method(http::Method::GET)
-            .path("/twinos")
+            .path("/example")
             .upstream_name("u")
-            .strip_prefix("/twinos")
+            .strip_prefix("/example")
             .proxy(Some(ProxySpec {
                 origin: None,
                 path_mode: PathMode::Strip,
@@ -2236,13 +2235,13 @@ mod tests {
         headers.insert(http::header::LOCATION, "/public-config".parse().unwrap());
         RequestHandler::apply_redirect_rewrite(
             &route,
-            "twin.api.muono.cloud",
+            "gw.example.cloud",
             Some("10.0.0.1:7900"),
             &mut headers,
         );
         assert_eq!(
             headers.get(http::header::LOCATION).unwrap(),
-            "/twinos/public-config"
+            "/example/public-config"
         );
     }
 
@@ -2251,16 +2250,16 @@ mod tests {
         use http::HeaderMap;
         let route = octopus_router::RouteBuilder::new()
             .method(http::Method::GET)
-            .path("/twinos")
+            .path("/example")
             .upstream_name("u")
-            .strip_prefix("/twinos")
+            .strip_prefix("/example")
             .build()
             .unwrap();
         let mut headers = HeaderMap::new();
         headers.insert(http::header::LOCATION, "/public-config".parse().unwrap());
         RequestHandler::apply_redirect_rewrite(
             &route,
-            "twin.api.muono.cloud",
+            "gw.example.cloud",
             Some("10.0.0.1:7900"),
             &mut headers,
         );
@@ -2276,9 +2275,9 @@ mod tests {
         use octopus_router::{PathMode, ProxySpec};
         let route = octopus_router::RouteBuilder::new()
             .method(http::Method::GET)
-            .path("/twinos")
+            .path("/example")
             .upstream_name("u")
-            .strip_prefix("/twinos")
+            .strip_prefix("/example")
             .proxy(Some(ProxySpec {
                 origin: None,
                 path_mode: PathMode::Passthrough,
@@ -2287,20 +2286,20 @@ mod tests {
             }))
             .build()
             .unwrap();
-        let out = RequestHandler::compute_upstream_path(&route, "/twinos/public-config", &None);
-        assert_eq!(out, "/twinos/public-config");
+        let out = RequestHandler::compute_upstream_path(&route, "/example/public-config", &None);
+        assert_eq!(out, "/example/public-config");
     }
 
     #[test]
     fn strip_mode_strips_prefix() {
         let route = octopus_router::RouteBuilder::new()
             .method(http::Method::GET)
-            .path("/twinos")
+            .path("/example")
             .upstream_name("u")
-            .strip_prefix("/twinos")
+            .strip_prefix("/example")
             .build()
             .unwrap();
-        let out = RequestHandler::compute_upstream_path(&route, "/twinos/public-config", &None);
+        let out = RequestHandler::compute_upstream_path(&route, "/example/public-config", &None);
         assert_eq!(out, "/public-config");
     }
 
@@ -2312,9 +2311,9 @@ mod tests {
 
         let route = octopus_router::RouteBuilder::new()
             .method(http::Method::GET)
-            .path("/twinos")
+            .path("/example")
             .upstream_name("u")
-            .strip_prefix("/twinos")
+            .strip_prefix("/example")
             .proxy(Some(ProxySpec {
                 origin: None,
                 path_mode: PathMode::Strip,
@@ -2335,7 +2334,7 @@ mod tests {
 
         RequestHandler::apply_redirect_rewrite(
             &route,
-            "twin.api.muono.cloud",
+            "gw.example.cloud",
             Some("10.0.0.1:7900"),
             &mut headers,
         );
@@ -2356,7 +2355,7 @@ mod tests {
             headers
                 .get_all(SET_COOKIE)
                 .iter()
-                .any(|v| v.as_bytes() == b"a=b; Path=/twinos/"),
+                .any(|v| v.as_bytes() == b"a=b; Path=/example/"),
             "normal cookie path rewritten"
         );
     }
@@ -2368,9 +2367,9 @@ mod tests {
 
         let route = octopus_router::RouteBuilder::new()
             .method(http::Method::GET)
-            .path("/twinos")
+            .path("/example")
             .upstream_name("u")
-            .strip_prefix("/twinos")
+            .strip_prefix("/example")
             .proxy(Some(ProxySpec {
                 origin: None,
                 path_mode: PathMode::Strip,
@@ -2381,14 +2380,11 @@ mod tests {
             .unwrap();
 
         let mut headers = HeaderMap::new();
-        headers.insert(
-            http::header::LOCATION,
-            "/public-config".parse().unwrap(),
-        );
+        headers.insert(http::header::LOCATION, "/public-config".parse().unwrap());
 
         RequestHandler::apply_redirect_rewrite(
             &route,
-            "twin.api.muono.cloud",
+            "gw.example.cloud",
             Some("10.0.0.1:7900"),
             &mut headers,
         );
@@ -2518,7 +2514,10 @@ mod tests {
         assert!(rewrite.is_none(), "origin routes carry no path rewrite");
         // The synthetic upstream must be registered in the router.
         assert!(
-            handler.router.get_upstream("__origin__:api.example.com:443").is_some(),
+            handler
+                .router
+                .get_upstream("__origin__:api.example.com:443")
+                .is_some(),
             "synthetic origin upstream registered"
         );
     }

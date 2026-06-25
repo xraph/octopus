@@ -111,7 +111,7 @@ impl Cors {
 
     /// Check if origin is allowed. Supports "*", exact match, and a single
     /// wildcard label — "<scheme>://*.suffix" matches any subdomain of suffix
-    /// (e.g. "https://*.twinos.cloud" → "https://acme.twinos.cloud"), so a
+    /// (e.g. "https://*.example.cloud" → "https://acme.example.cloud"), so a
     /// multi-tenant deployment can allow every tenant subdomain with one entry
     /// while still reflecting the specific origin for credentialed requests.
     fn is_origin_allowed(config: &CorsConfig, origin: &str) -> bool {
@@ -129,7 +129,7 @@ impl Cors {
         // Wildcard subdomain: "<scheme>://*.suffix".
         if let Some(star) = pattern.find("://*.") {
             let scheme_prefix = &pattern[..star + 3]; // e.g. "https://"
-            let suffix = &pattern[star + 4..]; // e.g. ".twinos.cloud"
+            let suffix = &pattern[star + 4..]; // e.g. ".example.cloud"
             if let Some(host) = origin.strip_prefix(scheme_prefix) {
                 // Require a non-empty label before the suffix.
                 return host.len() > suffix.len() && host.ends_with(suffix);
@@ -275,34 +275,34 @@ mod tests {
     #[test]
     fn wildcard_subdomain_origin_matching() {
         let config = CorsConfig {
-            allowed_origins: vec!["https://*.twinos.cloud".to_string()],
+            allowed_origins: vec!["https://*.example.cloud".to_string()],
             allow_credentials: true,
             ..Default::default()
         };
         // Any tenant subdomain matches.
         assert!(Cors::is_origin_allowed(
             &config,
-            "https://acme.twinos.cloud"
+            "https://acme.example.cloud"
         ));
         assert!(Cors::is_origin_allowed(
             &config,
-            "https://acme.api.twinos.cloud"
+            "https://acme.api.example.cloud"
         ));
         // Spoofed / non-matching origins are rejected.
         assert!(!Cors::is_origin_allowed(&config, "https://evil.com"));
-        assert!(!Cors::is_origin_allowed(&config, "https://twinos.cloud")); // apex needs its own entry
+        assert!(!Cors::is_origin_allowed(&config, "https://example.cloud")); // apex needs its own entry
         assert!(!Cors::is_origin_allowed(
             &config,
-            "http://acme.twinos.cloud"
+            "http://acme.example.cloud"
         )); // scheme mismatch
         assert!(!Cors::is_origin_allowed(
             &config,
-            "https://acmetwinos.cloud"
+            "https://acmeexample.cloud"
         )); // missing separator
             // The specific origin is reflected (required with credentials).
         assert_eq!(
-            Cors::get_allow_origin(&config, Some("https://acme.twinos.cloud")),
-            Some("https://acme.twinos.cloud".to_string())
+            Cors::get_allow_origin(&config, Some("https://acme.example.cloud")),
+            Some("https://acme.example.cloud".to_string())
         );
     }
 

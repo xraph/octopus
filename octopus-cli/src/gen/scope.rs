@@ -1,6 +1,6 @@
 //! Scope resolution — maps routes to dot-separated namespace paths
 //!
-//! Scopes like `twinos.users.list` are resolved from:
+//! Scopes like `example.users.list` are resolved from:
 //! 1. Manual mappings in octopus-gen.yaml (highest priority)
 //! 2. OpenAPI operationId (e.g., "listUsers" → "users.list")
 //! 3. Path + method heuristics (e.g., GET /api/v1/users → "users.list")

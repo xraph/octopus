@@ -46,14 +46,14 @@ metadata:
 spec:
   listen: "0.0.0.0:8080"
   gatewayClassName: octopus
-  hostnames: ["api.twinos.cloud"]
+  hostnames: ["api.example.cloud"]
   isolation: shared
   farpBinding: true
   defaultPolicy:
     authProvider: jwt
     timeoutSeconds: 30
     cors:
-      allowedOrigins: ["https://app.twinos.cloud"]
+      allowedOrigins: ["https://app.example.cloud"]
       allowedMethods: ["GET", "POST"]
       allowCredentials: true
       maxAge: 600

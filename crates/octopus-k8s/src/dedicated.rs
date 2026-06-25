@@ -287,12 +287,12 @@ mod tests {
         let cm = render_configmap(
             "big",
             "octopus-system",
-            &spec(&["big.twinos.cloud"], "0.0.0.0:8080"),
+            &spec(&["big.example.cloud"], "0.0.0.0:8080"),
         );
         assert_eq!(cm.metadata.name.as_deref(), Some("octopus-vgw-big"));
         let yaml = cm.data.unwrap().remove(CONFIG_FILE).unwrap();
         assert!(yaml.contains("0.0.0.0:8080"), "listen address present");
-        assert!(yaml.contains("big.twinos.cloud"), "hostname present");
+        assert!(yaml.contains("big.example.cloud"), "hostname present");
         assert!(yaml.contains("enabled: true"), "kubernetes mode enabled");
         assert!(
             yaml.contains("serve_only_gateway: \"big\""),

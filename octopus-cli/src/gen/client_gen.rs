@@ -1,7 +1,7 @@
 //! TypeScript client SDK generation
 //!
 //! Generates:
-//! - Namespace-chained REST client (client.twinos.users.list())
+//! - Namespace-chained REST client (client.example.users.list())
 //! - Fully typed DTOs from Octopus Schema
 //! - TanStack Query hooks
 //! - Per-service standalone packages
@@ -709,7 +709,7 @@ fn build_namespace_tree(
     let prefix = format!("{service_name}.");
 
     for (scope, op) in operations {
-        // Strip service prefix: "twinos.users.list" → "users.list"
+        // Strip service prefix: "example.users.list" → "users.list"
         let relative = if scope.starts_with(&prefix) {
             &scope[prefix.len()..]
         } else {
