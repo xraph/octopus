@@ -41,6 +41,10 @@ use octopus_tls::SwappableTlsAcceptor;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
 
+/// HTTPRoute spec + its metadata annotations, stored together so re-translation
+/// on a Gateway change can reproduce the same proxy-mode config from annotations.
+type HttpRouteEntry = (HTTPRouteSpec, BTreeMap<String, String>);
+
 /// Reconciles routing resources into the live [`Router`].
 pub struct RouteReconciler {
     store: Mutex<RouteStore>,
@@ -63,9 +67,9 @@ pub struct RouteReconciler {
     /// Names of GatewayClasses whose `controllerName` is ours — Gateways
     /// referencing them get `Accepted`/`Programmed` status.
     owned_gateway_classes: Mutex<HashSet<String>>,
-    /// Raw HTTPRoute/GRPCRoute specs retained for re-translation when a parent
-    /// Gateway's listener hostnames change.
-    httproutes: Mutex<HashMap<String, HTTPRouteSpec>>,
+    /// Raw HTTPRoute specs and their annotations (`ns/name` → (spec, annotations)),
+    /// retained for re-translation when a parent Gateway's listener hostnames change.
+    httproutes: Mutex<HashMap<String, HttpRouteEntry>>,
     grpcroutes: Mutex<HashMap<String, GRPCRouteSpec>>,
     /// Raw `OctopusGateway` specs (`ns/name` → spec), retained so the virtual
     /// gateway index can be rebuilt whenever any gateway changes.
@@ -250,17 +254,29 @@ impl RouteReconciler {
     }
 
     /// Upsert an `HTTPRoute` and re-apply the merged routing table.
-    pub fn upsert_httproute(&self, name: &str, namespace: &str, spec: &HTTPRouteSpec) {
+    pub fn upsert_httproute(
+        &self,
+        name: &str,
+        namespace: &str,
+        spec: &HTTPRouteSpec,
+        annotations: &BTreeMap<String, String>,
+    ) {
         if let Ok(mut m) = self.httproutes.lock() {
-            m.insert(format!("{namespace}/{name}"), spec.clone());
+            m.insert(format!("{namespace}/{name}"), (spec.clone(), annotations.clone()));
         }
-        self.translate_httproute(name, namespace, spec);
+        self.translate_httproute(name, namespace, spec, annotations);
         self.reapply();
     }
 
-    fn translate_httproute(&self, name: &str, namespace: &str, spec: &HTTPRouteSpec) {
+    fn translate_httproute(
+        &self,
+        name: &str,
+        namespace: &str,
+        spec: &HTTPRouteSpec,
+        annotations: &BTreeMap<String, String>,
+    ) {
         let listeners = self.listener_hostnames_for(&spec.parent_refs, namespace);
-        let (routes, upstreams) = httproute_to_route(name, namespace, spec, &listeners);
+        let (routes, upstreams) = httproute_to_route(name, namespace, spec, &listeners, annotations);
         if let Ok(mut store) = self.store.lock() {
             store.insert(
                 SourceKey::new(RouteSource::GatewayApi, format!("{namespace}/{name}")),
@@ -559,13 +575,13 @@ impl RouteReconciler {
             .map(|m| m.keys().filter_map(|k| split_key(k)).collect())
             .unwrap_or_default();
         for (ns, name) in https {
-            let spec = self
+            let entry = self
                 .httproutes
                 .lock()
                 .ok()
                 .and_then(|m| m.get(&format!("{ns}/{name}")).cloned());
-            if let Some(spec) = spec {
-                self.translate_httproute(&name, &ns, &spec);
+            if let Some((spec, annotations)) = entry {
+                self.translate_httproute(&name, &ns, &spec, &annotations);
             }
         }
         let grpcs: Vec<(String, String)> = self
@@ -1163,7 +1179,8 @@ fn on_http_route(rec: &RouteReconciler, event: watcher::Event<HTTPRoute>) {
     match event {
         watcher::Event::Apply(o) | watcher::Event::InitApply(o) => {
             if let Some((name, ns)) = ident(&o) {
-                rec.upsert_httproute(&name, &ns, &o.spec);
+                let annotations = o.metadata.annotations.clone().unwrap_or_default();
+                rec.upsert_httproute(&name, &ns, &o.spec, &annotations);
             }
         }
         watcher::Event::Delete(o) => {
@@ -1412,7 +1429,7 @@ mod tests {
             section_name: None,
         }];
         spec.hostnames = vec!["api.acme.com".into(), "evil.com".into()];
-        rec.upsert_httproute("r", "default", &spec);
+        rec.upsert_httproute("r", "default", &spec, &BTreeMap::new());
 
         // Only the host within the listener's wildcard attaches.
         assert!(router
@@ -1470,7 +1487,7 @@ mod tests {
             section_name: None,
         }];
         spec.hostnames = vec!["api.acme.com".into()];
-        rec.upsert_httproute("r", "default", &spec);
+        rec.upsert_httproute("r", "default", &spec, &BTreeMap::new());
 
         // The route auto-attached to the gateway and inherited its auth provider.
         let m = router
@@ -1727,6 +1744,7 @@ mod tests {
             "api-route",
             "default",
             &httproute_spec("/api", "api-svc", 8080),
+            &BTreeMap::new(),
         );
         assert!(
             router
@@ -1772,6 +1790,7 @@ mod tests {
             "api-route",
             "default",
             &httproute_spec("/api", "api-svc", 8080),
+            &BTreeMap::new(),
         );
         assert!(
             router

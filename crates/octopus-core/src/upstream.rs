@@ -62,6 +62,10 @@ impl UpstreamCluster {
     }
 }
 
+fn default_tls_verify() -> bool {
+    true
+}
+
 /// Upstream service instance
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UpstreamInstance {
@@ -76,6 +80,18 @@ pub struct UpstreamInstance {
 
     /// Instance weight for load balancing
     pub weight: u32,
+
+    /// Connect to this instance over TLS (https).
+    #[serde(default)]
+    pub tls: bool,
+
+    /// TLS SNI override; defaults to `address` when None.
+    #[serde(default)]
+    pub sni: Option<String>,
+
+    /// Verify the server certificate when `tls` is true.
+    #[serde(default = "default_tls_verify")]
+    pub tls_verify: bool,
 
     /// Is instance healthy
     #[serde(skip)]
@@ -97,6 +113,9 @@ impl Clone for UpstreamInstance {
             address: self.address.clone(),
             port: self.port,
             weight: self.weight,
+            tls: self.tls,
+            sni: self.sni.clone(),
+            tls_verify: self.tls_verify,
             healthy: self.healthy,
             active_connections: AtomicU32::new(self.active_connections.load(Ordering::Relaxed)),
             metadata: self.metadata.clone(),
@@ -112,6 +131,9 @@ impl UpstreamInstance {
             address: address.into(),
             port,
             weight: 1,
+            tls: false,
+            sni: None,
+            tls_verify: true,
             healthy: true,
             active_connections: AtomicU32::new(0),
             metadata: Default::default(),
@@ -125,7 +147,20 @@ impl UpstreamInstance {
 
     /// Get base URL
     pub fn base_url(&self) -> String {
-        format!("http://{}:{}", self.address, self.port)
+        let scheme = if self.tls { "https" } else { "http" };
+        format!("{}://{}:{}", scheme, self.address, self.port)
+    }
+
+    /// Enable/disable TLS for this instance.
+    pub fn set_tls(&mut self, tls: bool, sni: Option<String>, verify: bool) {
+        self.tls = tls;
+        self.sni = sni;
+        self.tls_verify = verify;
+    }
+
+    /// Whether this instance speaks TLS.
+    pub fn is_tls(&self) -> bool {
+        self.tls
     }
 
     /// Check if instance is healthy
@@ -193,5 +228,20 @@ mod tests {
 
         instance.decrement_connections();
         assert_eq!(instance.active_connections(), 1);
+    }
+
+    #[test]
+    fn tls_instance_base_url_is_https() {
+        let mut i = UpstreamInstance::new("o", "api.example.com", 443);
+        i.set_tls(true, Some("api.example.com".to_string()), true);
+        assert_eq!(i.base_url(), "https://api.example.com:443");
+        assert!(i.is_tls());
+    }
+
+    #[test]
+    fn plain_instance_base_url_is_http() {
+        let i = UpstreamInstance::new("o", "127.0.0.1", 8080);
+        assert_eq!(i.base_url(), "http://127.0.0.1:8080");
+        assert!(!i.is_tls());
     }
 }

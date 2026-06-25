@@ -2,6 +2,7 @@
 
 use crate::convention::Convention;
 use crate::host::HostMatch;
+use crate::proxy_spec::ProxySpec;
 use http::Method;
 use octopus_core::{Error, Result};
 use std::collections::HashMap;
@@ -68,6 +69,9 @@ pub struct Route {
     /// `default` gateway (legacy host-agnostic behavior). Routes inherit their
     /// gateway's [`GatewayPolicy`](crate::virtual_gateway::GatewayPolicy) defaults.
     pub gateway_id: Option<Arc<str>>,
+
+    /// Reverse-proxy configuration. `None` = legacy in-cluster strip-only route.
+    pub proxy: Option<ProxySpec>,
 }
 
 /// Per-route CORS override configuration
@@ -113,6 +117,7 @@ pub struct RouteBuilder {
     cors: Option<RouteCorsOverride>,
     convention: Option<Convention>,
     gateway_id: Option<Arc<str>>,
+    proxy: Option<ProxySpec>,
 }
 
 impl RouteBuilder {
@@ -229,6 +234,12 @@ impl RouteBuilder {
         self
     }
 
+    /// Set the reverse-proxy spec (`None` = legacy behavior).
+    pub fn proxy(mut self, proxy: Option<ProxySpec>) -> Self {
+        self.proxy = proxy;
+        self
+    }
+
     /// Build the route
     pub fn build(self) -> Result<Route> {
         let method = self
@@ -267,6 +278,7 @@ impl RouteBuilder {
             cors: self.cors,
             convention: self.convention,
             gateway_id: self.gateway_id,
+            proxy: self.proxy,
         })
     }
 }
@@ -439,5 +451,38 @@ mod tests {
 
         assert!(route.skip_auth);
         assert!(route.auth_provider.is_none());
+    }
+
+    #[test]
+    fn route_defaults_to_no_proxy() {
+        let route = RouteBuilder::new()
+            .method(Method::GET)
+            .path("/x")
+            .upstream_name("u")
+            .build()
+            .unwrap();
+        assert!(route.proxy.is_none());
+    }
+
+    #[test]
+    fn route_builder_sets_proxy() {
+        let spec = crate::ProxySpec {
+            origin: None,
+            path_mode: crate::PathMode::Passthrough,
+            rewrite_redirects: true,
+            rewrite_cookie_path: false,
+        };
+        let route = RouteBuilder::new()
+            .method(Method::GET)
+            .path("/x")
+            .upstream_name("u")
+            .proxy(Some(spec.clone()))
+            .build()
+            .unwrap();
+        assert_eq!(
+            route.proxy.as_ref().map(|p| p.path_mode),
+            Some(crate::PathMode::Passthrough)
+        );
+        assert_eq!(route.proxy.as_ref().map(|p| p.rewrite_redirects), Some(true));
     }
 }

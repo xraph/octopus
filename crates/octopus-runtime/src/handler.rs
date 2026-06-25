@@ -1,6 +1,7 @@
 //! HTTP request handler
 
 use crate::admin::AdminHandler;
+use crate::redirect::RedirectRewrite;
 use crate::lifecycle::LifecycleState;
 use crate::probes::{self, ProbeRoutes};
 use arc_swap::ArcSwap;
@@ -112,6 +113,31 @@ pub struct RequestHandler {
     /// gateway by host — e.g. to answer gateway-level CORS preflight when no route
     /// matches. Empty unless wired from the k8s operator via [`Self::set_gateway_index`].
     gateway_index: Arc<ArcSwap<VirtualGatewayIndex>>,
+}
+
+/// Join a rewrite `prefix` onto the already prefix-stripped `rest` of a request
+/// path, collapsing the seam to exactly one `/`.
+///
+/// This implements Gateway API `ReplacePrefixMatch` join semantics. A naive
+/// `format!("{prefix}{rest}")` doubles the slash whenever `prefix` ends with `/`
+/// and `rest` begins with `/` — exactly the common `replacePrefixMatch: "/"`
+/// (full prefix strip) case, where `/twinos/public-config` would become
+/// `//public-config`. Go `net/http` upstreams answer such non-clean paths with a
+/// 301 to the cleaned path, which drops the gateway's external prefix and breaks
+/// every non-root route. Collapsing the seam keeps the upstream path clean
+/// (`/public-config`) and never yields an empty path.
+fn join_prefix(prefix: &str, rest: &str) -> String {
+    let base = prefix.trim_end_matches('/');
+    let joined = match rest.strip_prefix('/') {
+        Some(tail) => format!("{base}/{tail}"),
+        None if rest.is_empty() => base.to_string(),
+        None => format!("{base}/{rest}"),
+    };
+    if joined.is_empty() {
+        "/".to_string()
+    } else {
+        joined
+    }
 }
 
 impl std::fmt::Debug for RequestHandler {
@@ -439,13 +465,41 @@ impl RequestHandler {
         key.to_string()
     }
 
-    /// Resolve the upstream cluster name for a matched route and request host.
-    ///
-    /// For convention routes the `{namespace, service}` target is derived from
-    /// the host — first via the optional Rhai `script` (which may decline by
-    /// returning `()`), then falling back to the label `layout` — and a
-    /// Service-DNS upstream is lazily registered. Other routes use their declared
-    /// upstream name unchanged.
+    /// Format a stable synthetic upstream key from an origin's host and port.
+    fn origin_key(origin: &octopus_router::UpstreamOrigin) -> String {
+        format!("__origin__:{}:{}", origin.host, origin.port)
+    }
+
+    /// Returns a stable synthetic upstream key for an external-origin route,
+    /// or `None` when the route has no `proxy.origin`.
+    #[cfg(test)]
+    fn origin_upstream_key(route: &Route) -> Option<String> {
+        route
+            .proxy
+            .as_ref()
+            .and_then(|p| p.origin.as_ref())
+            .map(Self::origin_key)
+    }
+
+    /// Idempotently register a single-instance upstream cluster for an external
+    /// origin, returning the cluster key. Mirrors `register_convention_upstream`.
+    fn register_origin_upstream(&self, key: &str, origin: &octopus_router::UpstreamOrigin) -> String {
+        let host = origin.host.clone();
+        let port = origin.port;
+        let tls = matches!(origin.scheme, octopus_router::Scheme::Https);
+        let sni = origin.sni.clone();
+        let verify = origin.tls_verify;
+        let key_owned = key.to_string();
+        self.router.ensure_upstream(key, move || {
+            let mut cluster = UpstreamCluster::new(&key_owned);
+            let mut instance = UpstreamInstance::new(&key_owned, host.clone(), port);
+            instance.set_tls(tls, sni, verify);
+            cluster.add_instance(instance);
+            cluster
+        });
+        key.to_string()
+    }
+
     /// Resolve the upstream cluster name and any path rewrite for a matched route.
     ///
     /// For convention routes the `{namespace, service}` target is derived from the
@@ -460,6 +514,14 @@ impl RequestHandler {
         host: &str,
         path: &str,
     ) -> Result<(String, Option<PathRewrite>)> {
+        // External-origin routes bypass cluster resolution entirely: build a
+        // synthetic single-instance cluster keyed by host:port and return it.
+        if let Some(origin) = route.proxy.as_ref().and_then(|p| p.origin.as_ref()) {
+            let key = Self::origin_key(origin);
+            self.register_origin_upstream(&key, origin);
+            return Ok((key, None));
+        }
+
         let Some(conv) = &route.convention else {
             return Ok((route.upstream_name.clone(), None));
         };
@@ -515,9 +577,35 @@ impl RequestHandler {
             }
         }
         if let Some(add) = &rw.add {
-            out = format!("{add}{out}");
+            out = join_prefix(add, &out);
         }
         out
+    }
+
+    /// Build the upstream request path for `route`. In `PathMode::Passthrough`
+    /// the original path is forwarded verbatim; otherwise the existing
+    /// strip/add/convention rewrite is applied.
+    fn compute_upstream_path(
+        route: &Route,
+        path: &str,
+        conv_rewrite: &Option<PathRewrite>,
+    ) -> String {
+        if matches!(
+            route.proxy.as_ref().map(|p| p.path_mode),
+            Some(octopus_router::PathMode::Passthrough)
+        ) {
+            return path.to_string();
+        }
+        let mut upstream_path = path.to_string();
+        if let Some(ref prefix) = route.strip_prefix {
+            if let Some(stripped) = upstream_path.strip_prefix(prefix.as_str()) {
+                upstream_path = stripped.to_string();
+            }
+        }
+        if let Some(ref prefix) = route.add_prefix {
+            upstream_path = join_prefix(prefix, &upstream_path);
+        }
+        Self::apply_convention_rewrite(upstream_path, conv_rewrite)
     }
 
     /// Test helper: resolve only the upstream key (path-less), kept so existing
@@ -984,17 +1072,7 @@ impl RequestHandler {
 
         // Build upstream WebSocket URL with path rewriting
         let upstream_base = instance.base_url();
-        let mut upstream_path = path.clone();
-        if let Some(ref prefix) = route.strip_prefix {
-            if let Some(stripped) = upstream_path.strip_prefix(prefix.as_str()) {
-                upstream_path = stripped.to_string();
-            }
-        }
-        if let Some(ref prefix) = route.add_prefix {
-            upstream_path = format!("{prefix}{upstream_path}");
-        }
-        // Convention path-split rewrite (e.g. strip `/api` for the tenant API).
-        upstream_path = Self::apply_convention_rewrite(upstream_path, &conv_rewrite);
+        let upstream_path = Self::compute_upstream_path(&route, &path, &conv_rewrite);
         let upstream_ws_url = upstream_base
             .replace("http://", "ws://")
             .replace("https://", "wss://");
@@ -1135,17 +1213,7 @@ impl RequestHandler {
         })?;
 
         // Build upstream URL with path rewriting + query string
-        let mut upstream_path = path.clone();
-        if let Some(ref prefix) = route.strip_prefix {
-            if let Some(stripped) = upstream_path.strip_prefix(prefix.as_str()) {
-                upstream_path = stripped.to_string();
-            }
-        }
-        if let Some(ref prefix) = route.add_prefix {
-            upstream_path = format!("{prefix}{upstream_path}");
-        }
-        // Convention path-split rewrite (e.g. strip `/api` for the tenant API).
-        upstream_path = Self::apply_convention_rewrite(upstream_path, &conv_rewrite);
+        let upstream_path = Self::compute_upstream_path(&route, &path, &conv_rewrite);
         let mut upstream_url = format!("{}{}", instance.base_url(), upstream_path);
         if let Some(ref qs) = query {
             upstream_url = format!("{upstream_url}?{qs}");
@@ -1260,6 +1328,14 @@ impl RequestHandler {
             headers.insert(http::header::CACHE_CONTROL, "no-cache".parse().unwrap());
         }
 
+        // Rewrite redirect headers for proxy-mode routes.
+        Self::apply_redirect_rewrite(
+            &route,
+            &host,
+            Some(&format!("{}:{}", instance.address, instance.port)),
+            headers,
+        );
+
         // Record the SSE connection start
         self.metrics_collector.record_request(
             &route_key,
@@ -1342,17 +1418,7 @@ impl RequestHandler {
 
         // Build upstream URL
         let upstream_base = instance.base_url();
-        let mut upstream_path = path.clone();
-        if let Some(ref prefix) = route.strip_prefix {
-            if let Some(stripped) = upstream_path.strip_prefix(prefix.as_str()) {
-                upstream_path = stripped.to_string();
-            }
-        }
-        if let Some(ref prefix) = route.add_prefix {
-            upstream_path = format!("{prefix}{upstream_path}");
-        }
-        // Convention path-split rewrite (e.g. strip `/api` for the tenant API).
-        upstream_path = Self::apply_convention_rewrite(upstream_path, &conv_rewrite);
+        let upstream_path = Self::compute_upstream_path(&route, &path, &conv_rewrite);
 
         // Parse deadline from grpc-timeout header
         let deadline = req
@@ -1423,7 +1489,16 @@ impl RequestHandler {
                 );
 
                 // Stream response back — convert Incoming to streaming Body
-                let (parts, body) = resp.into_parts();
+                let (mut parts, body) = resp.into_parts();
+
+                // Rewrite redirect headers for proxy-mode routes.
+                Self::apply_redirect_rewrite(
+                    &route,
+                    &host,
+                    Some(&format!("{}:{}", instance.address, instance.port)),
+                    &mut parts.headers,
+                );
+
                 let response = Response::from_parts(parts, streaming(body));
                 Ok(response)
             }
@@ -1536,17 +1611,7 @@ impl RequestHandler {
         );
 
         // Apply path rewriting (strip_prefix / add_prefix) before proxying
-        let mut upstream_path = path.clone();
-        if let Some(ref prefix) = route.strip_prefix {
-            if let Some(stripped) = upstream_path.strip_prefix(prefix.as_str()) {
-                upstream_path = stripped.to_string();
-            }
-        }
-        if let Some(ref prefix) = route.add_prefix {
-            upstream_path = format!("{prefix}{upstream_path}");
-        }
-        // Convention path-split rewrite (e.g. strip `/api` for the tenant API).
-        upstream_path = Self::apply_convention_rewrite(upstream_path, &conv_rewrite);
+        let upstream_path = Self::compute_upstream_path(&route, &path, &conv_rewrite);
         if upstream_path != path {
             // Rebuild the URI with the rewritten path
             let mut parts = req.uri().clone().into_parts();
@@ -1600,7 +1665,15 @@ impl RequestHandler {
                     "Request completed"
                 );
 
-                // Response is already Full<Bytes> from proxy_with_retry
+                // Rewrite redirect headers for proxy-mode routes before returning.
+                let mut response = response;
+                Self::apply_redirect_rewrite(
+                    &route,
+                    &host,
+                    Some(&format!("{}:{}", instance.address, instance.port)),
+                    response.headers_mut(),
+                );
+
                 Ok(response)
             }
             Err(e) => {
@@ -1623,6 +1696,108 @@ impl RequestHandler {
                     "Proxy error"
                 );
                 self.error_response(StatusCode::BAD_GATEWAY, "Upstream error")
+            }
+        }
+    }
+
+    /// Rewrite redirect-bearing response headers for proxy-mode routes.
+    ///
+    /// For routes with `proxy.rewrite_redirects == true` this re-adds the
+    /// external prefix that was stripped on the request to `Location`,
+    /// `Content-Location`, and `Refresh` headers, and optionally rewrites the
+    /// `Path=` attribute of all `Set-Cookie` headers when
+    /// `proxy.rewrite_cookie_path == true`. No-op for routes without a
+    /// `ProxySpec` or when the flag is off.
+    fn apply_redirect_rewrite(
+        route: &Route,
+        gateway_host: &str,
+        instance_authority: Option<&str>,
+        headers: &mut http::HeaderMap,
+    ) {
+        let Some(proxy) = route.proxy.as_ref() else {
+            return;
+        };
+        if !proxy.rewrite_redirects && !proxy.rewrite_cookie_path {
+            return;
+        }
+
+        // The prefix that was stripped on the inbound request (empty for passthrough).
+        let external_prefix = match proxy.path_mode {
+            octopus_router::PathMode::Passthrough => String::new(),
+            octopus_router::PathMode::Strip => {
+                route.strip_prefix.clone().unwrap_or_default()
+            }
+        };
+
+        // Upstream authority: external origin takes precedence over in-cluster instance.
+        let upstream_authority = proxy
+            .origin
+            .as_ref()
+            .map(|o| format!("{}:{}", o.host, o.port))
+            .or_else(|| instance_authority.map(str::to_string));
+
+        let rw = RedirectRewrite {
+            external_prefix,
+            upstream_authority,
+            gateway_scheme: "https".to_string(),
+            gateway_authority: gateway_host.to_string(),
+        };
+
+        if proxy.rewrite_redirects {
+            // Rewrite Location and Content-Location.
+            for name in [http::header::LOCATION, http::header::CONTENT_LOCATION] {
+                if let Some(val) = headers.get(&name).and_then(|v| v.to_str().ok()) {
+                    if let Some(new_val) = rw.rewrite_location(val) {
+                        if let Ok(hv) = http::HeaderValue::from_str(&new_val) {
+                            headers.insert(name, hv);
+                        }
+                    }
+                }
+            }
+
+            // Rewrite Refresh header.
+            let refresh_name = http::header::HeaderName::from_static("refresh");
+            if let Some(val) = headers.get(&refresh_name).and_then(|v| v.to_str().ok()) {
+                if let Some(new_val) = rw.rewrite_refresh(val) {
+                    if let Ok(hv) = http::HeaderValue::from_str(&new_val) {
+                        headers.insert(refresh_name, hv);
+                    }
+                }
+            }
+        }
+
+        if proxy.rewrite_cookie_path {
+            // Collect raw HeaderValues first — before remove — so non-UTF-8 cookies
+            // are never lost. After remove we re-append each value, rewriting only
+            // those that are valid UTF-8 and carry a Path= attribute.
+            let raw_cookies: Vec<http::HeaderValue> = headers
+                .get_all(http::header::SET_COOKIE)
+                .iter()
+                .cloned()
+                .collect();
+
+            if !raw_cookies.is_empty() {
+                headers.remove(http::header::SET_COOKIE);
+                for raw in raw_cookies {
+                    match raw.to_str() {
+                        Ok(s) => {
+                            // Valid UTF-8: attempt a Path= rewrite. If rewrite succeeds
+                            // and produces a valid header value, use the rewritten form;
+                            // otherwise fall back to the original raw value unchanged.
+                            let appended = rw.rewrite_cookie_path(s).and_then(|new_val| {
+                                http::HeaderValue::from_str(&new_val).ok()
+                            });
+                            headers.append(
+                                http::header::SET_COOKIE,
+                                appended.unwrap_or(raw),
+                            );
+                        }
+                        Err(_) => {
+                            // Non-UTF-8 bytes: preserve the raw value without modification.
+                            headers.append(http::header::SET_COOKIE, raw);
+                        }
+                    }
+                }
             }
         }
     }
@@ -1883,6 +2058,23 @@ mod tests {
         );
     }
 
+    #[test]
+    fn join_prefix_collapses_replace_prefix_match_slash() {
+        // `replacePrefixMatch: "/"` full strip — must NOT become `//public-config`.
+        // A Go `net/http` upstream answers `//public-config` with a 301 to the
+        // cleaned path, which drops the gateway's external prefix and 404s.
+        assert_eq!(super::join_prefix("/", "/public-config"), "/public-config");
+        // Exact match of the external prefix strips to empty; root stays `/`.
+        assert_eq!(super::join_prefix("/", ""), "/");
+        // A real replacement prefix keeps a single seam slash.
+        assert_eq!(super::join_prefix("/v2", "/orders"), "/v2/orders");
+        assert_eq!(super::join_prefix("/v2", ""), "/v2");
+        // A trailing-slash request remainder is preserved.
+        assert_eq!(super::join_prefix("/v2", "/"), "/v2/");
+        // Empty replacement (pure strip) keeps a single leading slash.
+        assert_eq!(super::join_prefix("", "/orders"), "/orders");
+    }
+
     fn convention_route_with_script(script: &str) -> octopus_router::Route {
         let conv = octopus_router::Convention {
             base_suffix: ".platform.com".into(),
@@ -2021,5 +2213,313 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(key, "orders.acme.svc");
+    }
+
+    #[test]
+    fn rewrites_location_for_proxy_route() {
+        use http::HeaderMap;
+        use octopus_router::{PathMode, ProxySpec};
+        let route = octopus_router::RouteBuilder::new()
+            .method(http::Method::GET)
+            .path("/twinos")
+            .upstream_name("u")
+            .strip_prefix("/twinos")
+            .proxy(Some(ProxySpec {
+                origin: None,
+                path_mode: PathMode::Strip,
+                rewrite_redirects: true,
+                rewrite_cookie_path: false,
+            }))
+            .build()
+            .unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert(http::header::LOCATION, "/public-config".parse().unwrap());
+        RequestHandler::apply_redirect_rewrite(
+            &route,
+            "twin.api.muono.cloud",
+            Some("10.0.0.1:7900"),
+            &mut headers,
+        );
+        assert_eq!(
+            headers.get(http::header::LOCATION).unwrap(),
+            "/twinos/public-config"
+        );
+    }
+
+    #[test]
+    fn does_not_rewrite_when_flag_off() {
+        use http::HeaderMap;
+        let route = octopus_router::RouteBuilder::new()
+            .method(http::Method::GET)
+            .path("/twinos")
+            .upstream_name("u")
+            .strip_prefix("/twinos")
+            .build()
+            .unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert(http::header::LOCATION, "/public-config".parse().unwrap());
+        RequestHandler::apply_redirect_rewrite(
+            &route,
+            "twin.api.muono.cloud",
+            Some("10.0.0.1:7900"),
+            &mut headers,
+        );
+        // No proxy spec → no rewrite.
+        assert_eq!(
+            headers.get(http::header::LOCATION).unwrap(),
+            "/public-config"
+        );
+    }
+
+    #[test]
+    fn passthrough_keeps_full_path() {
+        use octopus_router::{PathMode, ProxySpec};
+        let route = octopus_router::RouteBuilder::new()
+            .method(http::Method::GET)
+            .path("/twinos")
+            .upstream_name("u")
+            .strip_prefix("/twinos")
+            .proxy(Some(ProxySpec {
+                origin: None,
+                path_mode: PathMode::Passthrough,
+                rewrite_redirects: true,
+                rewrite_cookie_path: false,
+            }))
+            .build()
+            .unwrap();
+        let out = RequestHandler::compute_upstream_path(&route, "/twinos/public-config", &None);
+        assert_eq!(out, "/twinos/public-config");
+    }
+
+    #[test]
+    fn strip_mode_strips_prefix() {
+        let route = octopus_router::RouteBuilder::new()
+            .method(http::Method::GET)
+            .path("/twinos")
+            .upstream_name("u")
+            .strip_prefix("/twinos")
+            .build()
+            .unwrap();
+        let out = RequestHandler::compute_upstream_path(&route, "/twinos/public-config", &None);
+        assert_eq!(out, "/public-config");
+    }
+
+    #[test]
+    fn set_cookie_non_utf8_preserved() {
+        use http::header::SET_COOKIE;
+        use http::HeaderMap;
+        use octopus_router::{PathMode, ProxySpec};
+
+        let route = octopus_router::RouteBuilder::new()
+            .method(http::Method::GET)
+            .path("/twinos")
+            .upstream_name("u")
+            .strip_prefix("/twinos")
+            .proxy(Some(ProxySpec {
+                origin: None,
+                path_mode: PathMode::Strip,
+                rewrite_redirects: true,
+                rewrite_cookie_path: true,
+            }))
+            .build()
+            .unwrap();
+
+        let mut headers = HeaderMap::new();
+        // Non-UTF-8 cookie — HeaderValue::from_bytes allows arbitrary bytes.
+        headers.append(
+            SET_COOKIE,
+            http::HeaderValue::from_bytes(b"sid=\xff\xfe; Path=/").unwrap(),
+        );
+        // Normal UTF-8 cookie whose Path= should be rewritten.
+        headers.append(SET_COOKIE, http::HeaderValue::from_static("a=b; Path=/"));
+
+        RequestHandler::apply_redirect_rewrite(
+            &route,
+            "twin.api.muono.cloud",
+            Some("10.0.0.1:7900"),
+            &mut headers,
+        );
+
+        let cookies: Vec<&http::HeaderValue> = headers.get_all(SET_COOKIE).iter().collect();
+        // (a) Both cookies must still be present.
+        assert_eq!(cookies.len(), 2, "both cookies preserved");
+        // (b) Non-UTF-8 bytes are unchanged.
+        assert!(
+            headers
+                .get_all(SET_COOKIE)
+                .iter()
+                .any(|v| v.as_bytes() == b"sid=\xff\xfe; Path=/"),
+            "non-UTF-8 cookie bytes unchanged"
+        );
+        // (c) Normal cookie Path= gets the external prefix prepended.
+        assert!(
+            headers
+                .get_all(SET_COOKIE)
+                .iter()
+                .any(|v| v.as_bytes() == b"a=b; Path=/twinos/"),
+            "normal cookie path rewritten"
+        );
+    }
+
+    #[test]
+    fn proxy_some_but_flags_off_does_not_rewrite() {
+        use http::HeaderMap;
+        use octopus_router::{PathMode, ProxySpec};
+
+        let route = octopus_router::RouteBuilder::new()
+            .method(http::Method::GET)
+            .path("/twinos")
+            .upstream_name("u")
+            .strip_prefix("/twinos")
+            .proxy(Some(ProxySpec {
+                origin: None,
+                path_mode: PathMode::Strip,
+                rewrite_redirects: false,
+                rewrite_cookie_path: false,
+            }))
+            .build()
+            .unwrap();
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            http::header::LOCATION,
+            "/public-config".parse().unwrap(),
+        );
+
+        RequestHandler::apply_redirect_rewrite(
+            &route,
+            "twin.api.muono.cloud",
+            Some("10.0.0.1:7900"),
+            &mut headers,
+        );
+
+        // Both flags are off → Location must be unchanged.
+        assert_eq!(
+            headers.get(http::header::LOCATION).unwrap(),
+            "/public-config",
+            "Location unchanged when both proxy flags are off"
+        );
+    }
+
+    #[test]
+    fn origin_route_produces_origin_upstream_key() {
+        use octopus_router::{PathMode, ProxySpec, Scheme, UpstreamOrigin};
+        let route = octopus_router::RouteBuilder::new()
+            .method(http::Method::GET)
+            .path("/ext")
+            .upstream_name("u")
+            .proxy(Some(ProxySpec {
+                origin: Some(UpstreamOrigin {
+                    scheme: Scheme::Https,
+                    host: "api.example.com".into(),
+                    port: 443,
+                    sni: None,
+                    tls_verify: true,
+                }),
+                path_mode: PathMode::Strip,
+                rewrite_redirects: true,
+                rewrite_cookie_path: false,
+            }))
+            .build()
+            .unwrap();
+        assert_eq!(
+            RequestHandler::origin_upstream_key(&route).as_deref(),
+            Some("__origin__:api.example.com:443")
+        );
+    }
+
+    #[test]
+    fn no_origin_returns_none_for_origin_upstream_key() {
+        use octopus_router::{PathMode, ProxySpec};
+        // Route without proxy.origin → None.
+        let route_no_proxy = octopus_router::RouteBuilder::new()
+            .method(http::Method::GET)
+            .path("/ext")
+            .upstream_name("u")
+            .build()
+            .unwrap();
+        assert_eq!(RequestHandler::origin_upstream_key(&route_no_proxy), None);
+
+        // Route with proxy but origin == None → None.
+        let route_no_origin = octopus_router::RouteBuilder::new()
+            .method(http::Method::GET)
+            .path("/ext")
+            .upstream_name("u")
+            .proxy(Some(ProxySpec {
+                origin: None,
+                path_mode: PathMode::Strip,
+                rewrite_redirects: false,
+                rewrite_cookie_path: false,
+            }))
+            .build()
+            .unwrap();
+        assert_eq!(RequestHandler::origin_upstream_key(&route_no_origin), None);
+    }
+
+    #[test]
+    fn origin_key_format_is_stable() {
+        use octopus_router::{Scheme, UpstreamOrigin};
+        // Http scheme: key must encode host and port; scheme is not part of the key.
+        let http_origin = UpstreamOrigin {
+            scheme: Scheme::Http,
+            host: "example.com".into(),
+            port: 80,
+            sni: None,
+            tls_verify: true,
+        };
+        assert_eq!(
+            RequestHandler::origin_upstream_key(
+                &octopus_router::RouteBuilder::new()
+                    .method(http::Method::GET)
+                    .path("/ext")
+                    .upstream_name("u")
+                    .proxy(Some(octopus_router::ProxySpec {
+                        origin: Some(http_origin),
+                        path_mode: octopus_router::PathMode::Strip,
+                        rewrite_redirects: false,
+                        rewrite_cookie_path: false,
+                    }))
+                    .build()
+                    .unwrap()
+            )
+            .as_deref(),
+            Some("__origin__:example.com:80")
+        );
+    }
+
+    #[tokio::test]
+    async fn origin_route_short_circuits_resolve_upstream_with_path() {
+        use octopus_router::{PathMode, ProxySpec, Scheme, UpstreamOrigin};
+        let handler = create_test_handler();
+        let route = octopus_router::RouteBuilder::new()
+            .method(http::Method::GET)
+            .path("/ext")
+            .upstream_name("u")
+            .proxy(Some(ProxySpec {
+                origin: Some(UpstreamOrigin {
+                    scheme: Scheme::Https,
+                    host: "api.example.com".into(),
+                    port: 443,
+                    sni: None,
+                    tls_verify: true,
+                }),
+                path_mode: PathMode::Strip,
+                rewrite_redirects: true,
+                rewrite_cookie_path: false,
+            }))
+            .build()
+            .unwrap();
+
+        let (key, rewrite) = handler
+            .resolve_upstream_with_path(&route, "any.host.com", "/ext/path")
+            .await
+            .unwrap();
+        assert_eq!(key, "__origin__:api.example.com:443");
+        assert!(rewrite.is_none(), "origin routes carry no path rewrite");
+        // The synthetic upstream must be registered in the router.
+        assert!(
+            handler.router.get_upstream("__origin__:api.example.com:443").is_some(),
+            "synthetic origin upstream registered"
+        );
     }
 }

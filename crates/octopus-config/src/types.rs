@@ -675,6 +675,64 @@ pub struct RouteConfig {
     /// Per-route CORS override
     #[serde(default)]
     pub cors: Option<RouteCorsConfig>,
+
+    // ── Proxy-mode fields ────────────────────────────────────────────────────
+    /// How the request path is forwarded to the upstream.
+    /// `"strip"` (default) applies the strip/add-prefix rewrite;
+    /// `"passthrough"` forwards the original path untouched.
+    #[serde(default)]
+    pub path_mode: Option<String>,
+
+    /// External upstream origin, e.g. `https://api.example.com:443`.
+    /// When set, the route acts as a reverse proxy to this origin instead of
+    /// the in-cluster upstream named by `upstream`.
+    #[serde(default)]
+    pub upstream_origin: Option<String>,
+
+    /// Rewrite `Location` / `Content-Location` / `Refresh` response headers
+    /// so that the client sees the gateway URL, not the upstream origin URL.
+    #[serde(default)]
+    pub rewrite_redirects: Option<bool>,
+
+    /// Also rewrite the `Path=` attribute of `Set-Cookie` response headers.
+    #[serde(default)]
+    pub rewrite_cookie_path: Option<bool>,
+
+    /// Verify the upstream TLS certificate (defaults to `true`).
+    /// Set to `false` for self-signed or internal-CA certs.
+    #[serde(default)]
+    pub tls_verify: Option<bool>,
+}
+
+impl RouteConfig {
+    /// Build a [`octopus_router::ProxySpec`] if any proxy field is set;
+    /// returns `None` when no proxy fields are present so legacy routes are
+    /// unaffected.
+    pub fn proxy_spec(&self) -> Option<octopus_router::ProxySpec> {
+        let any = self.path_mode.is_some()
+            || self.upstream_origin.is_some()
+            || self.rewrite_redirects.is_some()
+            || self.rewrite_cookie_path.is_some();
+        if !any {
+            return None;
+        }
+        let origin = self.upstream_origin.as_ref().and_then(|u| {
+            octopus_router::UpstreamOrigin::parse(u, self.tls_verify.unwrap_or(true))
+        });
+        Some(octopus_router::ProxySpec {
+            origin,
+            path_mode: match self.path_mode.as_deref() {
+                Some("passthrough") => octopus_router::PathMode::Passthrough,
+                Some("strip") | None => octopus_router::PathMode::Strip,
+                Some(other) => {
+                    tracing::warn!(path_mode = %other, "unrecognized path-mode; defaulting to strip");
+                    octopus_router::PathMode::Strip
+                }
+            },
+            rewrite_redirects: self.rewrite_redirects.unwrap_or(false),
+            rewrite_cookie_path: self.rewrite_cookie_path.unwrap_or(false),
+        })
+    }
 }
 
 /// Plugin configuration
@@ -1428,6 +1486,26 @@ impl Default for GraphQLConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn route_config_parses_proxy_fields() {
+        let yaml = r#"
+path: /twinos
+upstream: twinos
+strip_prefix: /twinos
+path_mode: strip
+rewrite_redirects: true
+upstream_origin: https://api.example.com:443
+"#;
+        let rc: RouteConfig = serde_yaml::from_str(yaml).unwrap();
+        let spec = rc.proxy_spec().unwrap();
+        assert_eq!(spec.path_mode, octopus_router::PathMode::Strip);
+        assert!(spec.rewrite_redirects);
+        let o = spec.origin.unwrap();
+        assert_eq!(o.host, "api.example.com");
+        assert_eq!(o.port, 443);
+        assert_eq!(o.scheme, octopus_router::Scheme::Https);
+    }
 
     #[test]
     fn graphql_config_defaults() {

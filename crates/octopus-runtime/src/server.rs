@@ -654,6 +654,9 @@ impl Server {
                                     max_age: cors_cfg.max_age,
                                 }));
                             }
+                            if let Some(spec) = route_config.proxy_spec() {
+                                builder = builder.proxy(Some(spec));
+                            }
 
                             match builder.build() {
                                 Ok(route) => {
@@ -920,6 +923,9 @@ impl ServerBuilder {
                         allow_credentials: cors_cfg.allow_credentials,
                         max_age: cors_cfg.max_age,
                     }));
+                }
+                if let Some(spec) = route_config.proxy_spec() {
+                    builder = builder.proxy(Some(spec));
                 }
 
                 router.add_route(builder.build()?)?;
@@ -1276,6 +1282,7 @@ impl ServerBuilder {
                 r.require_scopes = rc.require_scopes.clone();
                 r.authz_rule = rc.authz_rule.clone();
                 r.timeout = rc.timeout;
+                r.proxy = rc.proxy_spec();
                 if let Some(rl) = &rc.rate_limit {
                     r.rate_limit = Some(RateLimit {
                         requests: rl.requests_per_window,

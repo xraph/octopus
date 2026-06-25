@@ -110,6 +110,9 @@ pub struct IntermediateRoute {
     /// Virtual gateway this route attaches to (`None` = implicit `default`).
     /// Routes inherit their gateway's policy defaults during apply.
     pub gateway_id: Option<String>,
+    /// Reverse-proxy behavior (origin override, path mode, header rewrites).
+    /// `None` preserves the legacy in-cluster, strip-only, no-rewrite behavior.
+    pub proxy: Option<octopus_router::ProxySpec>,
 }
 
 impl IntermediateRoute {
@@ -139,6 +142,7 @@ impl IntermediateRoute {
             rate_limit: None,
             convention: None,
             gateway_id: None,
+            proxy: None,
         }
     }
 
