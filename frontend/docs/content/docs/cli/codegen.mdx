@@ -140,10 +140,10 @@ client:
 
 # ── Services ─────────────────────────────────────────────────────────────
 services:
-  - name: twinos
+  - name: example
     type: openapi
     spec: "http://localhost:7900/openapi.json"   # file path or URL
-    prefix: "/twinos"                             # route prefix in the gateway
+    prefix: "/example"                             # route prefix in the gateway
     upstream:
       host: localhost
       port: 7900
@@ -161,12 +161,12 @@ services:
     # Manual scope overrides: path -> { METHOD -> scope }. Falls back to auto-derivation.
     scopes:
       "/api/v1/users":
-        GET: "twinos.users.list"
-        POST: "twinos.users.create"
+        GET: "example.users.list"
+        POST: "example.users.create"
       "/api/v1/users/{id}":
-        GET: "twinos.users.get"
-        PUT: "twinos.users.update"
-        DELETE: "twinos.users.delete"
+        GET: "example.users.get"
+        PUT: "example.users.update"
+        DELETE: "example.users.delete"
 
   - name: portal
     type: openapi
@@ -192,7 +192,7 @@ A live, fuller version of this file (with commented AsyncAPI and FARP examples) 
 | `type` | yes | `openapi`, `asyncapi`, or `farp`. |
 | `spec` | one of `spec`/`endpoint` | File path or URL of the spec/manifest. |
 | `endpoint` | one of `spec`/`endpoint` | Alternative HTTP endpoint for the spec; used if `spec` is unset. |
-| `prefix` | no | Route prefix (e.g. `/twinos`). Becomes the service `base_path` and a `strip_prefix` on routes. |
+| `prefix` | no | Route prefix (e.g. `/example`). Becomes the service `base_path` and a `strip_prefix` on routes. |
 | `upstream.host` / `upstream.port` | yes | Backend target. |
 | `upstream.lb_policy` | no | Defaults to `round_robin`. |
 | `auth.provider` | no | Auth provider name attached to generated routes. |
@@ -216,8 +216,8 @@ With `split: true` (the default) it writes two files **per service**, named from
 
 ```bash
 generated/
-  twinos.routes.yaml      # { routes: [...] }
-  twinos.upstream.yaml    # { upstreams: [...] }
+  example.routes.yaml      # { routes: [...] }
+  example.upstream.yaml    # { upstreams: [...] }
   portal.routes.yaml
   portal.upstream.yaml
 ```
@@ -230,25 +230,25 @@ A generated route carries the prefixed path, the HTTP method, the upstream name,
 operation as having no `security` while the service declares auth, that route gets `skip_auth: true`.
 
 ```yaml
-# twinos.routes.yaml (excerpt)
+# example.routes.yaml (excerpt)
 routes:
-  - path: /twinos/api/v1/users
+  - path: /example/api/v1/users
     methods:
       - GET
-    upstream: twinos
-    strip_prefix: /twinos
+    upstream: example
+    strip_prefix: /example
     auth_provider: internal-jwt
     require_roles:
       - user
 ```
 
 ```yaml
-# twinos.upstream.yaml
+# example.upstream.yaml
 upstreams:
-  - name: twinos
+  - name: example
     lb_policy: round_robin
     instances:
-      - id: twinos-1
+      - id: example-1
         host: localhost
         port: 7900
 ```
@@ -284,11 +284,11 @@ are recorded as `#/types/User[]`.
 <Step>
 ### Scopes
 
-Every operation is assigned a dot-separated **scope** like `twinos.users.list`. The scope determines
+Every operation is assigned a dot-separated **scope** like `example.users.list`. The scope determines
 where the operation lands in the client's namespace chain. Scopes resolve in priority order:
 
 1. **Manual mapping** from the service's `scopes:` block (exact `path` + `METHOD`).
-2. **`operationId`** from the spec — `listUsers` → `twinos.users.list`, `users_list` → `twinos.users.list`.
+2. **`operationId`** from the spec — `listUsers` → `example.users.list`, `users_list` → `example.users.list`.
 3. **Path + method heuristics** — the resource segments of the path plus a verb derived from the method.
 
 The path heuristic skips `api` and version segments (`v1`, `v2`, …) and path parameters, then chooses a
@@ -302,8 +302,8 @@ verb based on whether the path ends in a parameter:
 | PATCH | `updateAll` | `patch` |
 | DELETE | `deleteAll` | `delete` |
 
-So `GET /api/v1/users` → `twinos.users.list`, `GET /api/v1/users/{id}` → `twinos.users.get`, and
-`GET /api/v1/users/{userId}/posts` → `twinos.users.posts.list`. Use the `scopes:` block to override
+So `GET /api/v1/users` → `example.users.list`, `GET /api/v1/users/{id}` → `example.users.get`, and
+`GET /api/v1/users/{userId}/posts` → `example.users.posts.list`. Use the `scopes:` block to override
 any of these explicitly.
 </Step>
 
@@ -311,8 +311,8 @@ any of these explicitly.
 ### TypeScript client SDK
 
 When `client.enabled: true`, the generator writes a TypeScript package into `client.output_dir`.
-The client is **namespace-chained**: the scope path becomes the call path. `twinos.users.list`
-becomes `client.twinos.users.list()`.
+The client is **namespace-chained**: the scope path becomes the call path. `example.users.list`
+becomes `client.example.users.list()`.
 
 ```ts
 import { createClient } from '@myapp/api-client';
@@ -322,12 +322,12 @@ const client = createClient({
   auth: { token: process.env.API_TOKEN },
 });
 
-// Namespace chain mirrors the scope: twinos.users.list
-const users = await client.twinos.users.list();
+// Namespace chain mirrors the scope: example.users.list
+const users = await client.example.users.list();
 
 // Path/query/body params are passed as a typed options object
-const user = await client.twinos.users.get({ path: { id: '123' } });
-const created = await client.twinos.users.create({ body: { name: 'Ada' } });
+const user = await client.example.users.get({ path: { id: '123' } });
+const created = await client.example.users.create({ body: { name: 'Ada' } });
 ```
 
 The emitted package layout is:
@@ -343,14 +343,14 @@ generated/client/
     ws.ts                       # WebSocket runtime (only if a service has WS channels)
     sse.ts                      # SSE runtime (only if a service has SSE channels)
   services/
-    twinos/                     # one folder per service: index.ts + per-namespace files
+    example/                     # one folder per service: index.ts + per-namespace files
     portal/
   tanstack/                     # only if tanstack_query.enabled
-    twinos.hooks.ts
+    example.hooks.ts
     portal.hooks.ts
     index.ts
   per-service/                  # only if per_service_packages: true
-    twinos/{package.json,index.ts}
+    example/{package.json,index.ts}
     portal/{package.json,index.ts}
 ```
 
@@ -371,14 +371,14 @@ consumed in-tree by a TypeScript toolchain, not published as-is.
 With `client.tanstack_query.enabled`, the generator emits a hook per operation under `tanstack/`,
 one file per service plus a barrel `index.ts`. Read operations (`GET`) become `useQuery` hooks;
 write operations (`POST/PUT/DELETE/PATCH`) become `…Mutation` hooks built on `useMutation`. Hook
-names are derived from the service name and the relative scope (e.g. `twinos.users.list` →
-`useTwinosUsersList`), and the full scope is used as the query key.
+names are derived from the service name and the relative scope (e.g. `example.users.list` →
+`useExampleUsersList`), and the full scope is used as the query key.
 
 ```ts
-import { useTwinosUsersList } from '@myapp/api-client/tanstack';
+import { useExampleUsersList } from '@myapp/api-client/tanstack';
 
 function UserList(config) {
-  const { data, isLoading } = useTwinosUsersList(config);
+  const { data, isLoading } = useExampleUsersList(config);
   // ...
 }
 ```
@@ -393,7 +393,7 @@ the legacy `react-query` package.
 With `client.per_service_packages: true`, the generator also emits a standalone re-export package
 per service under `per-service/<service>/`. Each is a small `package.json` (named
 `<package_name-without-/api-client>-<service>`, `private`, `0.0.0`) plus an `index.ts` that
-re-exports that service's factory (e.g. `createTwinosService` as `createTwinosClient`) and the shared
+re-exports that service's factory (e.g. `createExampleService` as `createExampleClient`) and the shared
 types from the main package. This lets a frontend depend on just the slice of the API it uses.
 </Step>
 

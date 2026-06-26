@@ -29,7 +29,7 @@ pub struct FarpApiHandler {
     /// Optional router for supplementing the federated spec with registered routes
     router: Option<Arc<Router>>,
     /// Hot-swappable virtual-gateway binding: scope all FARP routes to a hostname
-    /// (e.g. `api.twinos.cloud`) and attach them to that gateway. Shared cell so
+    /// (e.g. `api.example.cloud`) and attach them to that gateway. Shared cell so
     /// the k8s controller can update it from the `OctopusGateway` CRD at runtime.
     binding: crate::binding::BindingCell,
 }

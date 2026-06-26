@@ -265,7 +265,7 @@ pub struct ServiceGenConfig {
     /// Local file path or URL for spec
     #[serde(default)]
     pub spec: Option<String>,
-    /// Route prefix (e.g., "/twinos")
+    /// Route prefix (e.g., "/example")
     #[serde(default)]
     pub prefix: Option<String>,
     /// Upstream configuration
@@ -349,7 +349,7 @@ pub struct GenRoute {
 /// An operation with its scope path resolved
 #[derive(Debug, Clone, Serialize)]
 pub struct ScopedOperation {
-    /// Dot-separated scope (e.g., "twinos.users.list")
+    /// Dot-separated scope (e.g., "example.users.list")
     pub scope: String,
     /// HTTP method
     pub method: String,

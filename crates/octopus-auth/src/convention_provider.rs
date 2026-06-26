@@ -154,7 +154,7 @@ mod tests {
 
     fn tenants_convention() -> Convention {
         Convention {
-            base_suffix: ".twinos.cloud".into(),
+            base_suffix: ".example.cloud".into(),
             roles: vec![LabelRole::Namespace],
             default_service: Some("studio".into()),
             port: 3000,
@@ -260,7 +260,7 @@ mod tests {
         let mut headers = http::HeaderMap::new();
         headers.insert(
             http::header::HOST,
-            "customer-a.twinos.cloud".parse().unwrap(),
+            "customer-a.example.cloud".parse().unwrap(),
         );
         let method = http::Method::GET;
         let uri: http::Uri = "/api/orders".parse().unwrap();
@@ -287,7 +287,7 @@ mod tests {
         convention.script = Some(r#"#{ namespace: "scripted-ns", service: "api" }"#.into());
         let p = provider_with(convention);
         assert_eq!(
-            p.resolve_namespace("customer-a.twinos.cloud")
+            p.resolve_namespace("customer-a.example.cloud")
                 .await
                 .as_deref(),
             Some("scripted-ns")
@@ -301,7 +301,7 @@ mod tests {
         convention.script = Some("()".into());
         let p = provider_with(convention);
         assert_eq!(
-            p.resolve_namespace("customer-a.twinos.cloud")
+            p.resolve_namespace("customer-a.example.cloud")
                 .await
                 .as_deref(),
             Some("customer-a")

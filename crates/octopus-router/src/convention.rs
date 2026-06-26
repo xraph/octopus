@@ -253,7 +253,7 @@ mod tests {
 
     fn tenants_convention() -> Convention {
         Convention {
-            base_suffix: ".twinos.cloud".into(),
+            base_suffix: ".example.cloud".into(),
             roles: vec![LabelRole::Namespace],
             default_service: Some("studio".into()),
             port: 3000,
@@ -281,7 +281,7 @@ mod tests {
     #[test]
     fn path_split_routes_api_prefix_to_api_service() {
         let (target, rewrite) = tenants_convention()
-            .resolve_with_path("customer-a.twinos.cloud", "/api/orders")
+            .resolve_with_path("customer-a.example.cloud", "/api/orders")
             .unwrap();
         assert_eq!(target.namespace, "customer-a");
         assert_eq!(target.service, "api");
@@ -298,7 +298,7 @@ mod tests {
     #[test]
     fn path_split_routes_other_paths_to_frontend() {
         let (target, rewrite) = tenants_convention()
-            .resolve_with_path("customer-a.twinos.cloud", "/dashboard")
+            .resolve_with_path("customer-a.example.cloud", "/dashboard")
             .unwrap();
         assert_eq!(target.namespace, "customer-a");
         assert_eq!(target.service, "studio");

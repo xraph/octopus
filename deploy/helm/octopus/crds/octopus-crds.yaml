@@ -306,6 +306,10 @@ spec:
               path:
                 description: Match path (supports `:param` and `*wildcard`).
                 type: string
+              pathMode:
+                description: 'How the request path is forwarded to the upstream: `"strip"` (default) applies the strip/add-prefix rewrite; `"passthrough"` forwards the original path untouched.'
+                nullable: true
+                type: string
               plugins:
                 default: []
                 description: Ordered plugin chain (plugin ids).
@@ -347,6 +351,14 @@ spec:
                 items:
                   type: string
                 type: array
+              rewriteCookiePath:
+                description: Also rewrite the `Path=` attribute of `Set-Cookie` response headers.
+                nullable: true
+                type: boolean
+              rewriteRedirects:
+                description: Rewrite `Location`/`Content-Location`/`Refresh` response headers so the client sees the gateway URL, not the upstream origin URL.
+                nullable: true
+                type: boolean
               scriptRef:
                 description: Reference to a Rhai script (e.g. a ConfigMap name).
                 nullable: true
@@ -365,8 +377,16 @@ spec:
                 minimum: 0.0
                 nullable: true
                 type: integer
+              tlsVerify:
+                description: Verify the upstream TLS certificate (defaults to `true`). Set `false` for self-signed or internal-CA certs.
+                nullable: true
+                type: boolean
               upstream:
                 description: Target upstream cluster (an `OctopusUpstream` name or discovered service).
+                type: string
+              upstreamOrigin:
+                description: External upstream origin, e.g. `https://api.example.com:443`. When set, the route reverse-proxies to this origin instead of the in-cluster `upstream`.
+                nullable: true
                 type: string
             required:
             - path

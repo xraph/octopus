@@ -369,7 +369,7 @@ pub struct FarpConfig {
     pub discovery: Option<FarpDiscoveryConfig>,
 
     /// Bind all FARP-discovered routes to a virtual gateway: scope them to a
-    /// hostname (e.g. `api.twinos.cloud`) with service-scoped prefixes and attach
+    /// hostname (e.g. `api.example.cloud`) with service-scoped prefixes and attach
     /// them for policy inheritance. When unset, FARP routes are host-agnostic.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gateway: Option<FarpGatewayConfig>,
@@ -391,7 +391,7 @@ impl Default for FarpConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FarpGatewayConfig {
     /// Hostname all FARP routes are scoped to (Gateway API syntax: exact
-    /// `api.twinos.cloud` or wildcard `*.twinos.cloud`).
+    /// `api.example.cloud` or wildcard `*.example.cloud`).
     pub hostname: String,
     /// Virtual gateway id attached to each FARP route (attribution / policy).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1068,10 +1068,10 @@ fn default_scope_field() -> String {
 /// `octopus_auth::ConventionAuthProvider`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ConventionAuthProviderConfig {
-    /// Base domain, e.g. `twinos.cloud` (matches `*.twinos.cloud`).
+    /// Base domain, e.g. `example.cloud` (matches `*.example.cloud`).
     pub base_domain: String,
     /// Label layout left-to-right: `service`, `namespace` (alias `tenant`), or
-    /// `ignore`. E.g. `["namespace"]` maps `acme.twinos.cloud` → namespace `acme`.
+    /// `ignore`. E.g. `["namespace"]` maps `acme.example.cloud` → namespace `acme`.
     pub layout: Vec<String>,
     /// Introspection endpoint template; `{namespace}` is replaced with the
     /// resolved namespace, e.g. `http://authsome.{namespace}.svc/v1/introspect`.
@@ -1490,9 +1490,9 @@ mod tests {
     #[test]
     fn route_config_parses_proxy_fields() {
         let yaml = r#"
-path: /twinos
-upstream: twinos
-strip_prefix: /twinos
+path: /example
+upstream: example
+strip_prefix: /example
 path_mode: strip
 rewrite_redirects: true
 upstream_origin: https://api.example.com:443

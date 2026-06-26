@@ -4,7 +4,7 @@
 //! pushes inherited [`GatewayPolicy`] defaults onto its child routes. The
 //! [`VirtualGatewayIndex`] maps an incoming request host to the virtual gateway
 //! that owns it, reusing [`HostMatch`] specificity so an exact gateway
-//! (`api.twinos.cloud`) and a wildcard tenant gateway (`*.twinos.cloud`) can
+//! (`api.example.cloud`) and a wildcard tenant gateway (`*.example.cloud`) can
 //! coexist and the most specific one wins.
 //!
 //! The index is consulted on the request hot path before route matching, so it
@@ -181,37 +181,37 @@ mod tests {
         }
     }
 
-    fn twinos_index() -> VirtualGatewayIndex {
+    fn example_index() -> VirtualGatewayIndex {
         VirtualGatewayIndex::new(vec![
             // declared wildcard-first on purpose to prove specificity wins over order
-            entry("tenants", vec![HostMatch::parse("*.twinos.cloud")]),
-            entry("platform-api", vec![HostMatch::parse("api.twinos.cloud")]),
-            entry("platform-apps", vec![HostMatch::parse("app.twinos.cloud")]),
+            entry("tenants", vec![HostMatch::parse("*.example.cloud")]),
+            entry("platform-api", vec![HostMatch::parse("api.example.cloud")]),
+            entry("platform-apps", vec![HostMatch::parse("app.example.cloud")]),
         ])
     }
 
     #[test]
     fn exact_gateway_wins_over_wildcard_for_its_host() {
-        let idx = twinos_index();
+        let idx = example_index();
         assert_eq!(
-            &*idx.resolve("api.twinos.cloud").unwrap().id,
+            &*idx.resolve("api.example.cloud").unwrap().id,
             "platform-api"
         );
         assert_eq!(
-            &*idx.resolve("app.twinos.cloud").unwrap().id,
+            &*idx.resolve("app.example.cloud").unwrap().id,
             "platform-apps"
         );
     }
 
     #[test]
     fn wildcard_gateway_owns_tenant_subdomains() {
-        let idx = twinos_index();
+        let idx = example_index();
         assert_eq!(
-            &*idx.resolve("customer-a.twinos.cloud").unwrap().id,
+            &*idx.resolve("customer-a.example.cloud").unwrap().id,
             "tenants"
         );
         assert_eq!(
-            &*idx.resolve("customer-b.twinos.cloud").unwrap().id,
+            &*idx.resolve("customer-b.example.cloud").unwrap().id,
             "tenants"
         );
     }
@@ -219,11 +219,11 @@ mod tests {
     #[test]
     fn any_gateway_is_the_fallback() {
         let idx = VirtualGatewayIndex::new(vec![
-            entry("platform-api", vec![HostMatch::parse("api.twinos.cloud")]),
+            entry("platform-api", vec![HostMatch::parse("api.example.cloud")]),
             entry("default", vec![HostMatch::Any]),
         ]);
         assert_eq!(
-            &*idx.resolve("api.twinos.cloud").unwrap().id,
+            &*idx.resolve("api.example.cloud").unwrap().id,
             "platform-api"
         );
         // unrelated host falls through to the Any gateway
@@ -234,17 +234,17 @@ mod tests {
     fn no_match_without_a_fallback_returns_none() {
         let idx = VirtualGatewayIndex::new(vec![entry(
             "platform-api",
-            vec![HostMatch::parse("api.twinos.cloud")],
+            vec![HostMatch::parse("api.example.cloud")],
         )]);
         assert!(idx.resolve("nope.example.com").is_none());
     }
 
     #[test]
     fn resolved_gateway_carries_its_policy() {
-        let mut gw = entry("platform-api", vec![HostMatch::parse("api.twinos.cloud")]);
+        let mut gw = entry("platform-api", vec![HostMatch::parse("api.example.cloud")]);
         gw.policy.auth_provider = Some("jwt".to_string());
         let idx = VirtualGatewayIndex::new(vec![gw]);
-        let resolved = idx.resolve("api.twinos.cloud").unwrap();
+        let resolved = idx.resolve("api.example.cloud").unwrap();
         assert_eq!(resolved.policy.auth_provider.as_deref(), Some("jwt"));
     }
 
@@ -259,7 +259,7 @@ mod tests {
 
     #[test]
     fn by_id_looks_up_gateway_by_identifier() {
-        let idx = twinos_index();
+        let idx = example_index();
         assert_eq!(&*idx.by_id("platform-api").unwrap().id, "platform-api");
         assert_eq!(&*idx.by_id("tenants").unwrap().id, "tenants");
         assert!(idx.by_id("does-not-exist").is_none());
@@ -267,29 +267,29 @@ mod tests {
 
     #[test]
     fn attach_binds_exact_host_route_to_its_gateway() {
-        let idx = twinos_index();
+        let idx = example_index();
         let gw = idx
-            .attach(&HostMatch::Exact("api.twinos.cloud".into()))
+            .attach(&HostMatch::Exact("api.example.cloud".into()))
             .unwrap();
         assert_eq!(&*gw.id, "platform-api");
     }
 
     #[test]
     fn attach_binds_wildcard_route_to_owning_wildcard_gateway() {
-        let idx = twinos_index();
-        // a route scoped to *.twinos.cloud belongs to the tenants gateway
+        let idx = example_index();
+        // a route scoped to *.example.cloud belongs to the tenants gateway
         let gw = idx
-            .attach(&HostMatch::Wildcard(".twinos.cloud".into()))
+            .attach(&HostMatch::Wildcard(".example.cloud".into()))
             .unwrap();
         assert_eq!(&*gw.id, "tenants");
     }
 
     #[test]
     fn attach_binds_subdomain_wildcard_to_broader_gateway() {
-        let idx = twinos_index();
+        let idx = example_index();
         // a more-specific wildcard route still attaches to the broader gateway
         let gw = idx
-            .attach(&HostMatch::Wildcard(".eu.twinos.cloud".into()))
+            .attach(&HostMatch::Wildcard(".eu.example.cloud".into()))
             .unwrap();
         assert_eq!(&*gw.id, "tenants");
     }
@@ -298,12 +298,12 @@ mod tests {
     fn attach_any_route_needs_an_any_gateway() {
         let only_exact = VirtualGatewayIndex::new(vec![entry(
             "platform-api",
-            vec![HostMatch::parse("api.twinos.cloud")],
+            vec![HostMatch::parse("api.example.cloud")],
         )]);
         assert!(only_exact.attach(&HostMatch::Any).is_none());
 
         let with_default = VirtualGatewayIndex::new(vec![
-            entry("platform-api", vec![HostMatch::parse("api.twinos.cloud")]),
+            entry("platform-api", vec![HostMatch::parse("api.example.cloud")]),
             entry("default", vec![HostMatch::Any]),
         ]);
         assert_eq!(
@@ -316,11 +316,11 @@ mod tests {
     fn attach_wildcard_route_not_owned_by_exact_gateway() {
         let only_exact = VirtualGatewayIndex::new(vec![entry(
             "platform-api",
-            vec![HostMatch::parse("api.twinos.cloud")],
+            vec![HostMatch::parse("api.example.cloud")],
         )]);
         // an exact gateway does not own a wildcard route
         assert!(only_exact
-            .attach(&HostMatch::Wildcard(".twinos.cloud".into()))
+            .attach(&HostMatch::Wildcard(".example.cloud".into()))
             .is_none());
     }
 }

@@ -550,7 +550,13 @@ mod tests {
             backend_refs: vec![backend("api-svc", 8080, None)],
         }]);
 
-        let (routes, upstreams) = httproute_to_route("api-route", "default", &s, &[], &std::collections::BTreeMap::new());
+        let (routes, upstreams) = httproute_to_route(
+            "api-route",
+            "default",
+            &s,
+            &[],
+            &std::collections::BTreeMap::new(),
+        );
 
         assert_eq!(upstreams.len(), 1, "one upstream cluster for the rule");
         let cluster = &upstreams[0];
@@ -580,7 +586,13 @@ mod tests {
         }]);
         s.hostnames = vec!["api.example.com".into(), "*.acme.com".into()];
 
-        let (routes, _) = httproute_to_route("api-route", "default", &s, &[], &std::collections::BTreeMap::new());
+        let (routes, _) = httproute_to_route(
+            "api-route",
+            "default",
+            &s,
+            &[],
+            &std::collections::BTreeMap::new(),
+        );
 
         let hosts: std::collections::HashSet<_> = routes.iter().map(|r| r.host.clone()).collect();
         assert!(
@@ -604,7 +616,13 @@ mod tests {
             filters: vec![],
             backend_refs: vec![backend("api-svc", 8080, None)],
         }]);
-        let (routes, _) = httproute_to_route("api-route", "default", &s, &[], &std::collections::BTreeMap::new());
+        let (routes, _) = httproute_to_route(
+            "api-route",
+            "default",
+            &s,
+            &[],
+            &std::collections::BTreeMap::new(),
+        );
         assert!(
             routes.iter().all(|r| r.host == HostMatch::Any),
             "no hostnames → any-host routes (legacy behavior)"
@@ -730,7 +748,13 @@ mod tests {
             backend_refs: vec![backend("api-svc", 8080, None)],
         }]);
 
-        let (routes, _) = httproute_to_route("api-route", "default", &s, &[], &std::collections::BTreeMap::new());
+        let (routes, _) = httproute_to_route(
+            "api-route",
+            "default",
+            &s,
+            &[],
+            &std::collections::BTreeMap::new(),
+        );
         assert!(!routes.is_empty());
         for r in &routes {
             assert_eq!(r.strip_prefix.as_deref(), Some("/api"));
@@ -746,7 +770,8 @@ mod tests {
             backend_refs: vec![backend("v1", 80, Some(80)), backend("v2", 80, Some(20))],
         }]);
 
-        let (_, upstreams) = httproute_to_route("split", "prod", &s, &[], &std::collections::BTreeMap::new());
+        let (_, upstreams) =
+            httproute_to_route("split", "prod", &s, &[], &std::collections::BTreeMap::new());
         assert_eq!(upstreams.len(), 1);
         let cluster = &upstreams[0];
         assert_eq!(cluster.instances.len(), 2, "one instance per backend");
@@ -783,7 +808,8 @@ mod tests {
             backend_refs: vec![backend("svc", 80, None)],
         }]);
 
-        let (routes, _) = httproute_to_route("r", "default", &s, &[], &std::collections::BTreeMap::new());
+        let (routes, _) =
+            httproute_to_route("r", "default", &s, &[], &std::collections::BTreeMap::new());
         let methods: std::collections::HashSet<String> =
             routes.iter().map(|r| r.method.to_string()).collect();
         assert!(methods.contains("GET") && methods.contains("POST") && methods.contains("DELETE"));
@@ -799,7 +825,8 @@ mod tests {
             backend_refs: vec![backend("svc", 80, None)],
         }]);
 
-        let (routes, _) = httproute_to_route("r", "default", &s, &[], &std::collections::BTreeMap::new());
+        let (routes, _) =
+            httproute_to_route("r", "default", &s, &[], &std::collections::BTreeMap::new());
         let paths: std::collections::HashSet<&str> =
             routes.iter().map(|r| r.path.as_str()).collect();
         assert!(paths.contains("/"), "catch-all root");
@@ -853,10 +880,10 @@ mod tests {
         use crate::crds::OctopusRouteSpec;
         let spec = OctopusRouteSpec {
             parent_refs: vec!["gw".into()],
-            path: "/twinos".into(),
+            path: "/example".into(),
             methods: vec!["GET".into()],
-            upstream: "twinos".into(),
-            strip_prefix: Some("/twinos".into()),
+            upstream: "example".into(),
+            strip_prefix: Some("/example".into()),
             path_mode: Some("strip".into()),
             rewrite_redirects: Some(true),
             upstream_origin: None,
@@ -927,7 +954,7 @@ mod tests {
             listen: "0.0.0.0:8080".into(),
             gateway_class_name: None,
             default_auth_provider: None,
-            hostnames: vec!["api.twinos.cloud".into()],
+            hostnames: vec!["api.example.cloud".into()],
             default_policy: Some(GatewayDefaultPolicy {
                 auth_provider: Some("jwt".into()),
                 timeout_seconds: Some(5),
@@ -945,7 +972,7 @@ mod tests {
         assert_eq!(&*entry.id, "platform-api");
         assert_eq!(
             entry.domains,
-            vec![HostMatch::Exact("api.twinos.cloud".into())]
+            vec![HostMatch::Exact("api.example.cloud".into())]
         );
         assert_eq!(entry.policy.auth_provider.as_deref(), Some("jwt"));
         assert_eq!(entry.policy.timeout, Some(Duration::from_secs(5)));
@@ -962,13 +989,13 @@ mod tests {
             listen: "0.0.0.0:8080".into(),
             gateway_class_name: None,
             default_auth_provider: None,
-            hostnames: vec!["api.twinos.cloud".into()],
+            hostnames: vec!["api.example.cloud".into()],
             default_policy: Some(GatewayDefaultPolicy {
                 auth_provider: None,
                 timeout_seconds: None,
                 rate_limit: None,
                 cors: Some(GatewayCorsSpec {
-                    allowed_origins: vec!["https://app.twinos.cloud".into()],
+                    allowed_origins: vec!["https://app.example.cloud".into()],
                     allowed_methods: vec!["GET".into(), "POST".into()],
                     allowed_headers: vec!["authorization".into()],
                     allow_credentials: true,
@@ -980,7 +1007,7 @@ mod tests {
         };
         let entry = octopus_gateway_to_entry("platform-api", &spec);
         let cors = entry.policy.cors.expect("cors mapped onto gateway policy");
-        assert_eq!(cors.allowed_origins, vec!["https://app.twinos.cloud"]);
+        assert_eq!(cors.allowed_origins, vec!["https://app.example.cloud"]);
         assert_eq!(cors.allowed_methods, vec!["GET", "POST"]);
         assert!(cors.allow_credentials);
         assert_eq!(cors.max_age, 600);
@@ -1006,7 +1033,7 @@ mod tests {
     fn convention_route_rules_are_mapped_and_resolve() {
         use crate::crds::ConventionRouteRuleSpec;
         let spec = ConventionSpec {
-            base_domain: "twinos.cloud".into(),
+            base_domain: "example.cloud".into(),
             layout: vec!["namespace".into()],
             default_service: Some("studio".into()),
             port: Some(3000),
@@ -1024,7 +1051,7 @@ mod tests {
         let conv = convention_from_spec(&spec);
         assert_eq!(conv.route_rules.len(), 1);
         let (target, rewrite) = conv
-            .resolve_with_path("customer-a.twinos.cloud", "/api/orders")
+            .resolve_with_path("customer-a.example.cloud", "/api/orders")
             .unwrap();
         assert_eq!(target.namespace, "customer-a");
         assert_eq!(target.service, "api");
@@ -1038,7 +1065,7 @@ mod tests {
             listen: "0.0.0.0:8080".into(),
             gateway_class_name: None,
             default_auth_provider: Some("legacy".into()),
-            hostnames: vec!["api.twinos.cloud".into()],
+            hostnames: vec!["api.example.cloud".into()],
             default_policy: None,
             isolation: Default::default(),
             farp_binding: false,
@@ -1114,7 +1141,10 @@ mod tests {
         use std::collections::BTreeMap;
         let mut ann = BTreeMap::new();
         ann.insert("octopus.io/path-mode".to_string(), "strip".to_string());
-        ann.insert("octopus.io/rewrite-redirects".to_string(), "true".to_string());
+        ann.insert(
+            "octopus.io/rewrite-redirects".to_string(),
+            "true".to_string(),
+        );
         let spec = proxy_spec_from_annotations(&ann);
         let p = spec.unwrap();
         assert!(p.rewrite_redirects);

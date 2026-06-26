@@ -83,12 +83,12 @@ client:
 # ============================================================================
 services:
   # ─── OpenAPI Service (HTTP endpoint) ──────────────────────────────────────
-  - name: twinos
+  - name: example
     type: openapi
     # Fetch OpenAPI spec from live service
     spec: "http://localhost:7900/openapi.json"
-    # All routes are prefixed with /twinos in the gateway
-    prefix: "/twinos"
+    # All routes are prefixed with /example in the gateway
+    prefix: "/example"
     upstream:
       host: localhost
       port: 7900
@@ -110,22 +110,22 @@ services:
     # If not specified, scopes are auto-derived from operationId or path+method
     scopes:
       "/api/v1/users":
-        GET: "twinos.users.list"
-        POST: "twinos.users.create"
+        GET: "example.users.list"
+        POST: "example.users.create"
       "/api/v1/users/{id}":
-        GET: "twinos.users.get"
-        PUT: "twinos.users.update"
-        DELETE: "twinos.users.delete"
+        GET: "example.users.get"
+        PUT: "example.users.update"
+        DELETE: "example.users.delete"
       "/api/v1/users/{userId}/posts":
-        GET: "twinos.users.posts.list"
-        POST: "twinos.users.posts.create"
+        GET: "example.users.posts.list"
+        POST: "example.users.posts.create"
       "/api/v1/comments":
-        GET: "twinos.comments.list"
-        POST: "twinos.comments.create"
+        GET: "example.comments.list"
+        POST: "example.comments.create"
       "/api/v1/comments/{id}":
-        GET: "twinos.comments.get"
-        PUT: "twinos.comments.update"
-        DELETE: "twinos.comments.delete"
+        GET: "example.comments.get"
+        PUT: "example.comments.update"
+        DELETE: "example.comments.delete"
 
   # ─── OpenAPI Service (local file) ────────────────────────────────────────
   - name: portal
