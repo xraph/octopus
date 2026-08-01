@@ -56,10 +56,10 @@ impl UpstreamOrigin {
     pub fn parse(s: &str, tls_verify: bool) -> Option<Self> {
         let (scheme, rest) = if let Some(r) = s.strip_prefix("https://") {
             (Scheme::Https, r)
-        } else if let Some(r) = s.strip_prefix("http://") {
-            (Scheme::Http, r)
         } else {
-            return None;
+            // `?` yields None for any non-http(s) scheme, matching the doc comment.
+            let r = s.strip_prefix("http://")?;
+            (Scheme::Http, r)
         };
         let (host, port) = match rest.split_once(':') {
             Some((h, p)) => (h.to_string(), p.parse().ok()?),
