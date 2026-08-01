@@ -22,90 +22,49 @@ env:
 
 jobs:
   # ===========================================================================
-  # Code Quality Checks  (required gate — runs on every push/PR)
+  # Shared Rust CI  (lint, audit, build+test — required gate; test-extended and
+  # docs are opt-in and gated on main pushes / the nightly cron below)
   # ===========================================================================
 
-  lint:
-    name: Lint (rustfmt + clippy)
+  ci:
+    uses: xraph/workflows/.github/workflows/rust-ci.yml@v1
+    with:
+      run-extended: ${{ github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+      build-docs: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      system-deps-ubuntu: 'pkg-config libssl-dev protobuf-compiler'
+      system-deps-macos: 'protobuf'
+
+  # ===========================================================================
+  # Octopus-specific checks  (required gate — not shared concerns: vendored
+  # Helm CRD staleness and the examples build)
+  # ===========================================================================
+
+  octopus-checks:
+    name: Octopus-specific checks
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
-          components: rustfmt, clippy
+          toolchain: stable
 
-      # Swatinem/rust-cache caches the registry index, downloaded crates, git
-      # deps and the target dir, so no separate actions/cache steps are needed.
       - name: Cache build artifacts
         uses: Swatinem/rust-cache@v2
+        with:
+          key: octopus-checks
 
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y pkg-config libssl-dev protobuf-compiler
 
-      - name: Check formatting
-        run: make fmt
-
-      - name: Run clippy
-        run: make clippy
-
-  # ===========================================================================
-  # Security Audit  (required gate)
-  # ===========================================================================
-
-  audit:
-    name: Security Audit
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      # Prebuilt binary (seconds) instead of `cargo install` from source (mins).
-      - name: Install cargo-audit
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-audit
-
-      - name: Run security audit
-        run: make audit
-
-  # ===========================================================================
-  # Build & Test  (required gate — fast PR path: ubuntu + stable only)
-  # ===========================================================================
-
-  test:
-    name: Test (ubuntu / stable)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache build artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: ubuntu-stable
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config libssl-dev protobuf-compiler
-
-      - name: Build
-        run: make build
-
-      - name: Run tests
-        run: make test
-
+      # The protocol's CRDs are vendored into the Helm chart. A drift here ships
+      # a chart that does not match the binary, so this is a build gate.
       - name: Check vendored Helm CRDs are up to date
         run: |
           cargo run -q --all-features --bin octopus -- crd > /tmp/octopus-crds.yaml
@@ -116,52 +75,6 @@ jobs:
 
       - name: Build examples
         run: cargo build --examples --all-features
-
-  # ===========================================================================
-  # Extended Test Matrix  (macOS + nightly — main pushes & nightly cron only)
-  # ===========================================================================
-
-  test-extended:
-    name: Test Extended (${{ matrix.os }} / ${{ matrix.rust }})
-    if: github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-latest
-            rust: stable
-          - os: ubuntu-latest
-            rust: nightly
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ matrix.rust }}
-
-      - name: Cache build artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.os }}-${{ matrix.rust }}
-
-      - name: Install system dependencies (Ubuntu)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config libssl-dev protobuf-compiler
-
-      - name: Install system dependencies (macOS)
-        if: matrix.os == 'macos-latest'
-        run: brew install protobuf
-
-      - name: Build
-        run: make build
-
-      - name: Run tests
-        run: make test
 
   # ===========================================================================
   # Test Coverage  (main pushes & nightly cron only — non-blocking)
@@ -343,38 +256,6 @@ jobs:
             BUILD_DATE=${{ github.event.head_commit.timestamp }}
 
   # ===========================================================================
-  # Documentation  (main pushes only)
-  # ===========================================================================
-
-  docs:
-    name: Documentation
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config libssl-dev protobuf-compiler
-
-      - name: Cache build artifacts
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build documentation
-        run: make docs
-
-      - name: Upload documentation
-        uses: actions/upload-artifact@v4
-        with:
-          name: documentation
-          path: target/doc
-
-  # ===========================================================================
   # Required Check Gate
   #
   # Only the fast jobs gate merges. The heavy jobs (coverage, build-release,
@@ -384,20 +265,23 @@ jobs:
 
   ci-success:
     name: CI Success
-    needs: [lint, audit, test]
+    needs: [ci, octopus-checks]
     runs-on: ubuntu-latest
     if: always()
     steps:
       - name: Verify required jobs succeeded
+        env:
+          CI_RESULT: ${{ needs.ci.result }}
+          CHECKS_RESULT: ${{ needs.octopus-checks.result }}
         run: |
-          for result in \
-            "lint:${{ needs.lint.result }}" \
-            "audit:${{ needs.audit.result }}" \
-            "test:${{ needs.test.result }}"; do
-            name="${result%%:*}"; status="${result##*:}"
-            if [[ "$status" != "success" ]]; then
+          set -euo pipefail
+          failed=0
+          for entry in "ci:${CI_RESULT}" "octopus-checks:${CHECKS_RESULT}"; do
+            name="${entry%%:*}"; status="${entry##*:}"
+            if [ "$status" != "success" ]; then
               echo "::error::Required CI job '$name' did not succeed (result: $status)"
-              exit 1
+              failed=1
             fi
           done
-          echo "All required CI jobs passed!"
+          [ "$failed" -eq 0 ] || exit 1
+          echo "All required CI jobs passed."
