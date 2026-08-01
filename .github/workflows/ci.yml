@@ -26,9 +26,20 @@ jobs:
   # docs are opt-in and gated on main pushes / the nightly cron below)
   # ===========================================================================
 
+  # Gating jobs only: lint, audit, test. These are what `ci-success` requires.
   ci:
     uses: xraph/workflows/.github/workflows/rust-ci.yml@v1
     with:
+      system-deps-ubuntu: 'pkg-config libssl-dev protobuf-compiler'
+      system-deps-macos: 'protobuf'
+
+  # The expensive legs, split into a separate call so a nightly-toolchain or
+  # rustdoc failure cannot redden the required check. Deliberately absent from
+  # `ci-success`'s needs, matching the pre-migration policy.
+  ci-extended:
+    uses: xraph/workflows/.github/workflows/rust-ci.yml@v1
+    with:
+      only-extended: true
       run-extended: ${{ github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
       build-docs: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       system-deps-ubuntu: 'pkg-config libssl-dev protobuf-compiler'
