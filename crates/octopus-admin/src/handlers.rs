@@ -552,7 +552,7 @@ pub(crate) fn build_routes_from_state(state: &AppState) -> Vec<RouteInfo> {
             let is_healthy = state
                 .health_tracker
                 .as_ref()
-                .map_or(true, |ht| ht.is_healthy(&route.upstream_name, 0.5));
+                .is_none_or(|ht| ht.is_healthy(&route.upstream_name, 0.5));
 
             route_to_info(
                 format!("route-{i}"),
