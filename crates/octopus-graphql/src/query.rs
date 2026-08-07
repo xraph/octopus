@@ -223,10 +223,9 @@ mod tests {
 
     #[test]
     fn mutually_recursive_fragments_are_rejected() {
-        let err = analyze_query(
-            "query { a { ...f } } fragment f on T { ...g } fragment g on T { ...f }",
-        )
-        .unwrap_err();
+        let err =
+            analyze_query("query { a { ...f } } fragment f on T { ...g } fragment g on T { ...f }")
+                .unwrap_err();
         assert!(matches!(err, Error::InvalidRequest(_)));
     }
 }
