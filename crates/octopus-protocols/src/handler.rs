@@ -18,8 +18,6 @@ pub enum ProtocolType {
     WebSocket,
     /// Server-Sent Events
     Sse,
-    /// GraphQL
-    GraphQL,
 }
 
 impl fmt::Display for ProtocolType {
@@ -29,7 +27,6 @@ impl fmt::Display for ProtocolType {
             Self::Grpc => write!(f, "grpc"),
             Self::WebSocket => write!(f, "websocket"),
             Self::Sse => write!(f, "sse"),
-            Self::GraphQL => write!(f, "graphql"),
         }
     }
 }
@@ -56,6 +53,7 @@ mod tests {
         assert_eq!(ProtocolType::Http.to_string(), "http");
         assert_eq!(ProtocolType::WebSocket.to_string(), "websocket");
         assert_eq!(ProtocolType::Grpc.to_string(), "grpc");
+        assert_eq!(ProtocolType::Sse.to_string(), "sse");
     }
 
     #[test]

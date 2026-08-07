@@ -71,6 +71,15 @@ config.json
 .DS_Store
 Thumbs.db
 
+# Markdown is ignored by default, so AI working notes and scratch design specs
+# (docs/superpowers/specs/, PROJECT_STATUS.md) stay out of the repo.
+#
+# This blanket pattern MUST stay above the allowlist below. gitignore resolves
+# last-match-wins, so a broad pattern placed *after* a negation silently
+# overrides it -- which is what previously left CHANGELOG.md, SECURITY.md and
+# the rest untracked despite being explicitly negated.
+**/*.md
+
 !README.md
 !LICENSE
 !CODE_OF_CONDUCT.md
@@ -83,7 +92,3 @@ Thumbs.db
 !CRITICAL_SECURITY_FEATURES.md
 !config.example.yaml
 !config.security.example.yaml
-**/*.md
-
-
-PROJECT_STATUS.md

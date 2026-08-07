@@ -48,7 +48,6 @@
     clippy::cargo_common_metadata
 )]
 
-pub mod graphql;
 pub mod grpc;
 pub mod handler;
 pub mod http;
@@ -56,7 +55,6 @@ pub mod sse;
 pub mod websocket;
 pub mod ws_proxy;
 
-pub use graphql::{GraphQLHandler, GraphQLRequest, GraphQLResponse};
 pub use grpc::GrpcHandler;
 pub use handler::{ProtocolHandler, ProtocolType};
 pub use sse::{format_comment, format_data, format_event, is_sse_request};
@@ -67,7 +65,6 @@ pub use ws_proxy::{
 
 /// Re-export commonly used types
 pub mod prelude {
-    pub use crate::graphql::{GraphQLHandler, GraphQLRequest, GraphQLResponse};
     pub use crate::grpc::GrpcHandler;
     pub use crate::handler::{ProtocolHandler, ProtocolType};
     pub use crate::http::HttpHandler;

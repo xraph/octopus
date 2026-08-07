@@ -14,12 +14,17 @@ embeds a [Rhai](https://rhai.rs) scripting engine for lightweight, config-driven
 
 <Callout type="warn">
 **Implementation status.** The plugin SDK, lifecycle runtime, and dynamic loader are all
-implemented and tested. However, the gateway server does **not yet load plugins from your
-configuration** — the `plugins:` array is parsed and validated but never wired into the request
-path. Treat the plugin system as a stable foundation for authoring plugins, not as a feature you
-can enable end-to-end in production today. The one scripting integration that *is* wired live is
-convention host-resolution (see [Scripting](/docs/plugins/scripting)). Each page below is explicit
-about what is real versus planned.
+implemented and tested. The `plugins:` array is **partially wired**: entries with
+`plugin_type: script` are loaded into the request chain as middleware, ordered by `priority`.
+Entries with `plugin_type: static` or `dynamic` are parsed and validated, then skipped with a
+warning — there is no registry mapping a plugin name to an implementation, so no compiled plugin
+can be enabled from config (see [Built-in Plugins](/docs/plugins/built-in)).
+
+Rhai also runs on a second, separate path: convention host-resolution in the router (see
+[Scripting](/docs/plugins/scripting)).
+
+Treat the trait-based plugin system as a stable foundation for authoring plugins, not as a feature
+you can enable end-to-end today. Each page below is explicit about what is real versus planned.
 </Callout>
 
 <Cards>
@@ -30,7 +35,7 @@ about what is real versus planned.
   />
   <Card
     title="Built-in Plugins"
-    description="What ships in the box today (spoiler: no bundled plugins yet) and what to expect."
+    description="The plugin crates in the repo — one implemented, three examples, three stubs — and why none load from config yet."
     href="/docs/plugins/built-in"
   />
   <Card
@@ -158,8 +163,8 @@ plugins:
 **Script plugins are loaded** (`plugin_type: script`): each enabled entry's `config` is deserialized
 into a [`ScriptMiddlewareConfig`](/docs/plugins/scripting) and added to the request chain.
 **`static` and `dynamic` plugins are not yet loaded** — those entries are skipped with a warning
-(there are no built-in plugins, and dynamic library loading from config is not wired). The schema is
-stable.
+(no registry resolves a plugin name to a compiled implementation, and dynamic library loading from
+config is not wired). The schema is stable.
 </Callout>
 
 ### Priority ordering
