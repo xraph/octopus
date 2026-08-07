@@ -2,7 +2,6 @@
 //!
 //! Plugins can extend the dashboard by registering views, stats cards, and nav items.
 
-use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -76,8 +75,8 @@ pub trait DashboardPlugin: Send + Sync {
 }
 
 /// Global plugin registry
-static PLUGIN_REGISTRY: Lazy<RwLock<PluginRegistry>> =
-    Lazy::new(|| RwLock::new(PluginRegistry::new()));
+static PLUGIN_REGISTRY: std::sync::LazyLock<RwLock<PluginRegistry>> =
+    std::sync::LazyLock::new(|| RwLock::new(PluginRegistry::new()));
 
 /// Plugin registry
 #[derive(Default)]

@@ -16,6 +16,7 @@
     unreachable_pub
 )]
 
+pub mod alt_svc;
 pub mod audit_logger;
 pub mod auth_gateway;
 pub mod body_transform;
@@ -42,6 +43,7 @@ pub mod security_headers;
 pub mod timeout;
 pub mod waf;
 
+pub use alt_svc::AltSvc;
 pub use audit_logger::{
     AuditEvent, AuditEventType, AuditHandler, AuditLogger, AuditLoggerConfig, AuditOutput,
 };

@@ -24,3 +24,9 @@ spec:
       port: {{ .Values.service.adminPort }}
       targetPort: admin
       protocol: TCP
+    {{- if .Values.http3.enabled }}
+    - name: http3
+      port: {{ .Values.http3.port | default .Values.service.port }}
+      targetPort: http3
+      protocol: UDP
+    {{- end }}

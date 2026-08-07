@@ -86,6 +86,7 @@ fn merge_gateway_config(base: GatewayConfig, overlay: GatewayConfig) -> GatewayC
         probes: overlay.probes,
         enforce_sni_check: overlay.enforce_sni_check,
         security_headers: overlay.security_headers,
+        http3: overlay.http3,
     }
 }
 
@@ -155,6 +156,7 @@ mod tests {
                 probes: crate::types::ProbeConfig::default(),
                 enforce_sni_check: true,
                 security_headers: Default::default(),
+                http3: Default::default(),
             },
             upstreams: vec![],
             routes: vec![],

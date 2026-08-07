@@ -37,6 +37,38 @@ pub fn build_server_config_from_pem(cert_pem: &[u8], key_pem: &[u8]) -> Result<S
     Ok(config)
 }
 
+/// Build a rustls [`ServerConfig`] for QUIC from in-memory PEM bytes.
+///
+/// Differs from [`build_server_config_from_pem`] in two ways that QUIC
+/// mandates rather than prefers:
+///
+/// - **TLS 1.3 only.** QUIC carries TLS 1.3 handshake messages directly in
+///   its own frames; there is no QUIC-over-1.2. A config that still permits
+///   1.2 is rejected by quinn, so the version set is pinned here.
+/// - **`h3` ALPN only.** Offering `h2`/`http/1.1` on a QUIC listener would
+///   advertise protocols that cannot be spoken over it.
+pub fn build_quic_server_config_from_pem(cert_pem: &[u8], key_pem: &[u8]) -> Result<ServerConfig> {
+    crate::ensure_crypto_provider();
+
+    let certs = rustls_pemfile::certs(&mut Cursor::new(cert_pem))
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| Error::Config(format!("invalid certificate PEM: {e}")))?;
+    if certs.is_empty() {
+        return Err(Error::Config("no certificates found in PEM".into()));
+    }
+
+    let key = rustls_pemfile::private_key(&mut Cursor::new(key_pem))
+        .map_err(|e| Error::Config(format!("invalid private key PEM: {e}")))?
+        .ok_or_else(|| Error::Config("no private key found in PEM".into()))?;
+
+    let mut config = ServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .map_err(|e| Error::Config(format!("failed to build QUIC TLS config: {e}")))?;
+    config.alpn_protocols = vec![b"h3".to_vec()];
+    Ok(config)
+}
+
 /// A TLS acceptor whose certificate/config can be swapped at runtime.
 ///
 /// Reads are lock-free; a connection builds its acceptor from the current
@@ -115,6 +147,26 @@ MZJwLhzCrGHJXk0exP7K73agVp3RiDz7w/rmMBCmhSCppD+vpl7vMnZ9
     #[test]
     fn rejects_garbage_pem() {
         assert!(build_server_config_from_pem(b"not a cert", b"not a key").is_err());
+    }
+
+    /// QUIC needs its own rustls config: ALPN must offer `h3` rather than
+    /// `h2`/`http/1.1`, and the version set must be TLS 1.3 only — quinn
+    /// refuses a config that still permits 1.2.
+    #[test]
+    fn quic_config_offers_h3_alpn_only() {
+        let config =
+            build_quic_server_config_from_pem(TEST_CERT.as_bytes(), TEST_KEY.as_bytes()).unwrap();
+
+        assert_eq!(
+            config.alpn_protocols,
+            vec![b"h3".to_vec()],
+            "QUIC must offer h3 and must not offer the TCP protocols"
+        );
+    }
+
+    #[test]
+    fn quic_config_rejects_garbage_pem() {
+        assert!(build_quic_server_config_from_pem(b"not a cert", b"not a key").is_err());
     }
 
     #[test]

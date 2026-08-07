@@ -28,6 +28,7 @@ octopus-middleware = { path = "../octopus-middleware", features = ["distributed"
 octopus-state = { path = "../octopus-state" }
 octopus-auth = { path = "../octopus-auth" }
 octopus-graphql = { path = "../octopus-graphql" }
+octopus-http3 = { path = "../octopus-http3" }
 
 # Async
 tokio.workspace = true
@@ -39,6 +40,7 @@ futures.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
 http.workspace = true
+http-body.workspace = true
 http-body-util.workspace = true
 tower.workspace = true
 axum.workspace = true

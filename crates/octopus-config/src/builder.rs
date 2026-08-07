@@ -36,6 +36,7 @@ impl ConfigBuilder {
             probes: crate::types::ProbeConfig::default(),
             enforce_sni_check: true,
             security_headers: Default::default(),
+            http3: Default::default(),
         });
         gateway.listen = addr;
         self

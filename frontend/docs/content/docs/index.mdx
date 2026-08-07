@@ -52,8 +52,8 @@ Octopus is maintained by [Xraph](https://github.com/xraph) and is part of the
 | gRPC | ✅ | Transparent HTTP/2 (h2c) proxy; no reflection or transcoding |
 | WebSocket | ✅ | Bidirectional upgrade proxying |
 | Server-Sent Events | ✅ | Streaming responses |
-| GraphQL | 🚧 | Endpoint stub — not yet proxied or federated |
-| HTTP/3 (QUIC) | 🚧 | Planned |
+| GraphQL | ✅ | Single-graph: parsing, depth/complexity limits, introspection control, GraphiQL IDE; federation planned |
+| HTTP/3 (QUIC) | ✅ | Opt-in UDP listener alongside TCP; Alt-Svc advertised. No WebTransport |
 
 ## Quick example
 
@@ -111,7 +111,7 @@ docker run --rm \
   ghcr.io/xraph/octopus:latest
 ```
 
-Or build from source (Rust 1.75+) — the binary is written to `target/release/octopus`:
+Or build from source (Rust 1.85+) — the binary is written to `target/release/octopus`:
 
 ```bash
 git clone https://github.com/xraph/octopus.git

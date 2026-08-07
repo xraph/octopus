@@ -37,7 +37,7 @@ impl GraphQlMiddleware {
 
     fn is_playground_request(req: &Request<Body>) -> bool {
         req.method() == Method::GET
-            && req.uri().query().map_or(true, |q| !q.contains("query="))
+            && req.uri().query().is_none_or(|q| !q.contains("query="))
             && req
                 .headers()
                 .get(header::ACCEPT)

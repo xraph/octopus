@@ -24,11 +24,12 @@ handler code. Where support is partial, it says so.
 | WebSocket | Supported | RFC 6455 upgrade handshake (version 13), then a full bidirectional frame proxy with keepalive pings and a close handshake. |
 | Server-Sent Events (SSE) | Supported | Streaming proxy — the upstream response body is forwarded to the client without buffering. Triggered by `Accept: text/event-stream`. |
 | gRPC | Partial | Transparent proxy over HTTP/2 to a plaintext (h2c) upstream. Metadata and `grpc-timeout` deadlines are forwarded. The request body is **buffered**, so true client/bidirectional streaming RPCs are not streamed. No reflection proxy or transcoding. |
-| GraphQL | Stub only | The built-in `/graphql` handler parses the request and serves a minimal placeholder; it does **not** proxy to a GraphQL upstream or federate. To proxy GraphQL today, route `/graphql` as a normal HTTP route. See [GraphQL](/docs/protocols/graphql). |
+| GraphQL | Supported (single-graph) | Opt-in middleware on the configured endpoint. Parses each operation, enforces depth/complexity/introspection policy, serves a GraphiQL IDE, then proxies valid operations to the route's upstream. **No federation** — schema composition, query planning, and cross-subgraph entity resolution are not implemented. See [GraphQL](/docs/protocols/graphql). |
 
 <Callout type="warn">
-  There is no WebTransport or HTTP/3 module in the codebase. HTTP/3 is not implemented
-  and is not exposed in configuration.
+  There is no WebTransport module in the codebase. HTTP/3 **is** implemented, but on a
+  separate UDP listener rather than through the TCP detection order below — see
+  [HTTP/3](/docs/protocols/http3).
 </Callout>
 
 ## How protocol routing works
@@ -45,8 +46,12 @@ request body. The first match wins:
    `application/grpc-web` / `application/grpc-web-text`), the request is handled by the
    gRPC proxy.
 4. **Everything else** — the body is buffered and the request flows through the normal
-   HTTP path: registered protocol handlers (the GraphQL stub and a fallback gRPC
-   handler), then the middleware chain, then the reverse proxy.
+   HTTP path: registered protocol handlers (a fallback gRPC handler), then the
+   middleware chain, then the reverse proxy.
+
+GraphQL is **not** part of this detection order. It runs as a middleware inside the
+chain in step 4 — after authentication and rate limiting, before the proxy — and only
+intercepts the exact path configured in `graphql.endpoint`.
 
 In all cases the upstream is selected by the **router** using the request host, method,
 and path — the same matching described in [Routing](/docs/concepts/routing). Detection
@@ -67,6 +72,11 @@ or gRPC request to a path with no matching route is rejected.
     title="HTTP/1.1 & HTTP/2"
     description="The default reverse-proxy path with connection pooling."
     href="/docs/protocols/http"
+  />
+  <Card
+    title="HTTP/3"
+    description="QUIC on a UDP listener, advertised with Alt-Svc."
+    href="/docs/protocols/http3"
   />
   <Card
     title="gRPC"

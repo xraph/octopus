@@ -35,6 +35,27 @@ fn validate_gateway(config: &Config) -> Result<()> {
         return Err(Error::Config("max_body_size must be > 0".to_string()));
     }
 
+    // QUIC has no plaintext mode — it mandates TLS 1.3. Without a TLS config
+    // the UDP listener could only fail at bind time, long after the operator
+    // has stopped reading logs, so reject it here.
+    if config.gateway.http3.enabled {
+        if config.gateway.tls.is_none() {
+            return Err(Error::Config(
+                "HTTP/3 requires TLS: QUIC mandates TLS 1.3 and has no plaintext mode. \
+                 Configure gateway.tls or set gateway.http3.enabled to false."
+                    .to_string(),
+            ));
+        }
+
+        if config.gateway.http3.alt_svc && config.gateway.http3.alt_svc_max_age == 0 {
+            return Err(Error::Config(
+                "gateway.http3.alt_svc_max_age must be > 0 when alt_svc is enabled: \
+                 ma=0 instructs clients to discard the HTTP/3 advertisement immediately."
+                    .to_string(),
+            ));
+        }
+    }
+
     // Validate TLS configuration if present
     if let Some(ref tls) = config.gateway.tls {
         if tls.cert_file.is_empty() {
@@ -150,6 +171,7 @@ mod tests {
                 probes: ProbeConfig::default(),
                 enforce_sni_check: true,
                 security_headers: Default::default(),
+                http3: Default::default(),
             },
             upstreams: vec![],
             routes: vec![],
@@ -169,6 +191,75 @@ mod tests {
     #[test]
     fn test_valid_minimal_config() {
         let config = minimal_config();
+        assert!(validate_config(&config).is_ok());
+    }
+
+    /// QUIC mandates TLS 1.3 — there is no plaintext HTTP/3. Enabling the
+    /// listener without TLS can only ever fail at bind time, so it must be
+    /// rejected while the operator is still looking at the error.
+    #[test]
+    fn http3_without_tls_is_rejected() {
+        let mut config = minimal_config();
+        config.gateway.tls = None;
+        config.gateway.http3.enabled = true;
+
+        let err = validate_config(&config).expect_err("HTTP/3 without TLS must fail");
+        let msg = err.to_string().to_lowercase();
+        assert!(
+            msg.contains("http/3") && msg.contains("tls"),
+            "error should name both HTTP/3 and TLS, got: {err}"
+        );
+    }
+
+    /// `min_tls_version` is a floor, not an exact version — a floor of 1.2
+    /// still permits 1.3, which is all QUIC needs. Serving TLS 1.2 to legacy
+    /// TCP clients while offering HTTP/3 to modern ones is a legitimate
+    /// deployment, so it must not be rejected.
+    #[test]
+    fn http3_accepts_a_tls_1_2_floor() {
+        let mut config = minimal_config();
+        config.gateway.tls = Some(crate::types::TlsConfig {
+            cert_file: "cert.pem".to_string(),
+            key_file: "key.pem".to_string(),
+            client_ca_file: None,
+            require_client_cert: false,
+            min_tls_version: "1.2".to_string(),
+            enable_cert_reload: false,
+            reload_interval_secs: 0,
+        });
+        config.gateway.http3.enabled = true;
+
+        assert!(validate_config(&config).is_ok());
+    }
+
+    #[test]
+    fn http3_rejects_a_zero_alt_svc_max_age_while_advertising() {
+        let mut config = minimal_config();
+        config.gateway.tls = Some(crate::types::TlsConfig {
+            cert_file: "cert.pem".to_string(),
+            key_file: "key.pem".to_string(),
+            client_ca_file: None,
+            require_client_cert: false,
+            min_tls_version: "1.3".to_string(),
+            enable_cert_reload: false,
+            reload_interval_secs: 0,
+        });
+        config.gateway.http3.enabled = true;
+        config.gateway.http3.alt_svc = true;
+        config.gateway.http3.alt_svc_max_age = 0;
+
+        assert!(
+            validate_config(&config).is_err(),
+            "ma=0 tells clients to forget h3 immediately, defeating advertisement"
+        );
+    }
+
+    #[test]
+    fn http3_disabled_ignores_tls_requirements() {
+        let mut config = minimal_config();
+        config.gateway.tls = None;
+        config.gateway.http3.enabled = false;
+
         assert!(validate_config(&config).is_ok());
     }
 

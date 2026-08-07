@@ -30,7 +30,9 @@ pub use acceptor::{
 pub use config::TlsConfig;
 pub use loader::{load_certificates, load_private_key, CertificateReloader};
 pub use mtls::{MtlsConfig, TargetTlsConfig};
-pub use reloadable::{build_server_config_from_pem, SwappableTlsAcceptor};
+pub use reloadable::{
+    build_quic_server_config_from_pem, build_server_config_from_pem, SwappableTlsAcceptor,
+};
 pub use sni::SniCertResolver;
 
 /// Ensure a process-wide rustls [`CryptoProvider`] is installed.

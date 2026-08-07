@@ -14,7 +14,7 @@ Octopus is designed as a high-performance, modular, and extensible API gateway b
 ```
 ┌────────────────────────────────────────────────────────────────────┐
 │                         Client Layer                                │
-│  HTTP/HTTPS │ gRPC │ WebSocket │ SSE │ GraphQL │ WebTransport     │
+│  HTTP/HTTPS │ gRPC │ WebSocket │ SSE │ GraphQL                    │
 └────────────────────────────────┬───────────────────────────────────┘
                                  │
 ┌────────────────────────────────▼───────────────────────────────────┐
@@ -25,7 +25,7 @@ Octopus is designed as a high-performance, modular, and extensible API gateway b
 │  │                    Protocol Layer                             │ │
 │  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────┐   │ │
 │  │  │   HTTP   │ │   gRPC   │ │    WS    │ │   GraphQL    │   │ │
-│  │  │  Handler │ │  Handler │ │  Handler │ │  Federation  │   │ │
+│  │  │  Handler │ │  Handler │ │  Handler │ │  Middleware  │   │ │
 │  │  └─────┬────┘ └─────┬────┘ └─────┬────┘ └──────┬───────┘   │ │
 │  └────────┼────────────┼────────────┼──────────────┼───────────┘ │
 │           │            │            │              │               │
@@ -211,12 +211,22 @@ Service discovery backends:
 
 Protocol-specific handlers:
 
-- **HTTP**: HTTP/1.1, HTTP/2, HTTP/3
-- **gRPC**: gRPC proxying and reflection
+- **HTTP**: HTTP/1.1 and HTTP/2 (HTTP/3 lives in `octopus-http3`)
+- **gRPC**: gRPC proxying over h2c — no reflection proxy or transcoding
 - **WebSocket**: Bidirectional WebSocket proxy
 - **SSE**: Server-Sent Events
-- **GraphQL**: GraphQL federation
-- **WebTransport**: QUIC-based transport
+
+#### octopus-graphql
+
+The GraphQL-aware layer, wired into the middleware chain when `graphql.enabled` is set:
+
+- **Parsing**: spec-compliant operation parsing via `apollo-compiler`
+- **Policy**: query-depth, complexity, and introspection limits
+- **GraphiQL**: optional built-in IDE (`graphql.playground`)
+- **Delegation**: valid operations are proxied to the matching route's upstream
+
+Single-graph only — federation is planned, not implemented. See
+[GraphQL](/docs/protocols/graphql).
 
 #### octopus-middleware
 

@@ -63,6 +63,13 @@ spec:
             - name: admin
               containerPort: 9090
               protocol: TCP
+            {{- if .Values.http3.enabled }}
+            # HTTP/3 is UDP on the same port number as the TCP listener.
+            # Without this the QUIC socket is unreachable from outside the pod.
+            - name: http3
+              containerPort: {{ .Values.http3.port | default 8080 }}
+              protocol: UDP
+            {{- end }}
           startupProbe:
             httpGet:
               path: {{ .Values.probes.startup.path }}

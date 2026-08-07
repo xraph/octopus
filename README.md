@@ -6,7 +6,7 @@ Registration Protocol.
 
 [![CI](https://github.com/xraph/octopus/workflows/CI/badge.svg)](https://github.com/xraph/octopus/actions)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org/)
 
 Octopus is maintained by Xraph and is part of the [FARP](https://github.com/xraph/farp)
 ecosystem. Most gateways expect you to declare every route by hand. Services that speak FARP
@@ -45,7 +45,7 @@ docker run --rm \
 
 ### From source
 
-Requires Rust 1.75 or newer.
+Requires Rust 1.85 or newer.
 
 ```bash
 git clone https://github.com/xraph/octopus.git
@@ -130,7 +130,7 @@ See [design/FARP_INTEGRATION.md](design/FARP_INTEGRATION.md) for the protocol de
 
 Prerequisites:
 
-- Rust 1.75+
+- Rust 1.85+
 - `protoc` (Protocol Buffers compiler), used by the gRPC code paths
 - On Linux: `pkg-config` and `libssl-dev`
 

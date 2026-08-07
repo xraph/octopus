@@ -1,0 +1,121 @@
+---
+title: HTTP/3
+description: Serve HTTP/3 over QUIC on a UDP listener alongside the existing TCP listener, advertised to clients with Alt-Svc.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+# HTTP/3 (QUIC)
+
+Octopus can serve **HTTP/3** on a UDP socket **alongside** the TCP listener — it does not
+replace it. An HTTP/3 request traverses the same routing, authentication, rate-limiting and
+proxy pipeline as an HTTP/2 one; the transport is the only difference.
+
+<Callout type="warn">
+  HTTP/3 requires TLS. QUIC mandates TLS 1.3 and has no plaintext mode, so
+  `gateway.http3.enabled: true` without `gateway.tls` is rejected at config validation.
+</Callout>
+
+## Enabling it
+
+```yaml
+gateway:
+  listen: "0.0.0.0:8443"
+
+  tls:
+    cert_file: /etc/octopus/tls/cert.pem
+    key_file: /etc/octopus/tls/key.pem
+
+  http3:
+    enabled: true
+    # port: 8443            # omit to reuse the TCP listener's port
+    alt_svc: true
+    alt_svc_max_age: 86400
+    enable_0rtt: false
+    max_concurrent_bidi_streams: 256
+    max_idle_timeout: 30s
+```
+
+### Configuration reference
+
+| Field | Default | Description |
+| --- | --- | --- |
+| `enabled` | `false` | Serve HTTP/3 on a UDP socket. Requires `gateway.tls`. |
+| `port` | *(listener port)* | UDP port. Omit to reuse the TCP listener's port, which is what clients expect. |
+| `alt_svc` | `true` | Advertise the listener via `Alt-Svc` on TCP responses. |
+| `alt_svc_max_age` | `86400` | Seconds a client may cache the advertisement. Must be > 0 when `alt_svc` is on. |
+| `enable_0rtt` | `false` | Accept 0-RTT early data. See the warning below. |
+| `max_concurrent_bidi_streams` | `256` | Max concurrent bidirectional streams per QUIC connection. |
+| `max_idle_timeout` | `30s` | Idle timeout before an unused QUIC connection is dropped. |
+
+## How clients discover it
+
+HTTP/3 is **not** negotiated in-band. A client arriving over TCP has no way to know the origin
+also speaks QUIC, so the gateway advertises it with an `Alt-Svc` header on every TCP response:
+
+```http
+Alt-Svc: h3=":8443"; ma=86400
+```
+
+The client caches that and races a QUIC connection against its existing one on a later request.
+The header is suppressed for requests that already arrived over HTTP/3.
+
+<Callout type="warn">
+  Turning `alt_svc` off effectively hides the listener: no browser will attempt HTTP/3 without
+  the advertisement. Only disable it if something in front of the gateway advertises for you.
+</Callout>
+
+Because `Alt-Svc` is advertised **per origin, not per path**, enabling HTTP/3 applies to every
+route on that origin. You cannot offer HTTP/3 for some paths and not others.
+
+## Opening the UDP port
+
+This is the step most easily missed. The gateway will start cleanly, advertise `Alt-Svc`, and
+every HTTP/3 attempt will then silently time out if UDP is not reachable.
+
+The Helm chart adds the UDP port to both the Deployment and the Service when you set:
+
+```yaml
+http3:
+  enabled: true
+```
+
+Elsewhere you must open the port yourself — `docker run -p 8443:8443/udp`, the security group
+or firewall rule, and any load balancer in front. A `LoadBalancer` Service needs a cloud
+provider that supports mixed TCP/UDP listeners.
+
+## 0-RTT
+
+`enable_0rtt` is **off by default**. Early-data requests can be replayed by an on-path attacker,
+so only enable it when every route reachable over the origin is idempotent. There is no
+per-route control — the setting applies to the whole listener.
+
+## Limitations
+
+- **Request bodies are buffered.** An `h3` body arrives as a stream of QUIC frames with no
+  `http_body::Body` implementation, so it is collected before dispatch. This matches the TCP
+  path, which already buffers every request body, so nothing is lost relative to HTTP/2.
+  Response bodies **are** streamed frame by frame.
+- **No WebSocket over HTTP/3.** That requires Extended CONNECT (RFC 9220), which is not
+  implemented. Browsers fall back to TCP for WebSocket, so it degrades rather than breaks.
+- **No WebTransport.**
+- **Certificate hot-reload does not extend to the QUIC listener.** The TCP acceptor swaps its
+  config when a certificate rotates; the QUIC endpoint keeps the certificate it started with
+  until the process restarts.
+- **A failed UDP bind is not fatal.** If the socket cannot be bound the gateway logs an error
+  and continues serving TCP only, on the grounds that HTTP/3 is an optimisation and every
+  client can still reach it over TCP. Check the startup logs to confirm it actually came up.
+
+## Verifying
+
+```bash
+curl --http3 -sSI https://localhost:8443/ | head -1
+```
+
+Or confirm the advertisement is present on the TCP path:
+
+```bash
+curl -sSI https://localhost:8443/ | grep -i alt-svc
+```
+
+See also [HTTP/1.1 & HTTP/2](/docs/protocols/http) and [Protocols](/docs/protocols).

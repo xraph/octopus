@@ -5,6 +5,7 @@
   "pages": [
     "index",
     "http",
+    "http3",
     "grpc",
     "websocket",
     "sse",

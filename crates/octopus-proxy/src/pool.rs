@@ -451,14 +451,12 @@ impl ConnectionPool {
                 .unwrap_or_else(|| instance.address.clone());
             handshake_tls(stream, &domain, instance.tls_verify)
                 .await
-                .map_err(|e| {
+                .inspect_err(|_| {
                     pool.metrics.record_error();
-                    e
                 })?
         } else {
-            handshake_plain(stream).await.map_err(|e| {
+            handshake_plain(stream).await.inspect_err(|_| {
                 pool.metrics.record_error();
-                e
             })?
         };
 

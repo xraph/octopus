@@ -78,7 +78,7 @@ pub fn is_permitted(grants_in_target_ns: &[ReferenceGrantSpec], req: &RefRequest
         let to_ok = grant.to.iter().any(|t| {
             t.group == req.to_group
                 && t.kind == req.to_kind
-                && t.name.as_deref().map_or(true, |n| n == req.to_name)
+                && t.name.as_deref().is_none_or(|n| n == req.to_name)
         });
         from_ok && to_ok
     })

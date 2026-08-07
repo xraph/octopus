@@ -79,6 +79,14 @@ service:
   type: ClusterIP
   port: 8080
   adminPort: 9090
+
+# HTTP/3 (QUIC). Adds a UDP port to the Service and Deployment; the gateway
+# config must also set gateway.http3.enabled. A LoadBalancer Service needs a
+# cloud provider that supports mixed TCP/UDP listeners.
+http3:
+  enabled: false
+  # Defaults to service.port when unset — clients expect h3 on the same port.
+  port: null
   annotations: {}
 
 # ── Pod / container ──────────────────────────────────────────────────────────
