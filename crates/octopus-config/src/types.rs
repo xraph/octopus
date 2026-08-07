@@ -175,10 +175,104 @@ pub struct GatewayConfig {
     /// set `enabled: true` to add HSTS, CSP, `X-Frame-Options`, etc.
     #[serde(default)]
     pub security_headers: SecurityHeadersConfig,
+
+    /// HTTP/3 (QUIC) listener. Disabled by default; requires TLS.
+    #[serde(default)]
+    pub http3: Http3Config,
 }
 
 fn default_sni_check() -> bool {
     true
+}
+
+/// HTTP/3 (QUIC) listener configuration.
+///
+/// HTTP/3 runs on UDP alongside the TCP listener — it does not replace it.
+/// Clients discover it through the `Alt-Svc` header advertised on TCP
+/// responses, then race a QUIC connection against the existing one.
+///
+/// QUIC mandates TLS 1.3, so this requires `gateway.tls` to be configured;
+/// enabling it without TLS is a configuration error.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Http3Config {
+    /// Serve HTTP/3 on a UDP socket.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// UDP port. `None` (the default) reuses the TCP listener's port, which is
+    /// what clients expect and what makes `Alt-Svc` advertisement trivial.
+    #[serde(default)]
+    pub port: Option<u16>,
+
+    /// Advertise `Alt-Svc` on HTTP/1.1 and HTTP/2 responses. Without this no
+    /// browser will ever attempt HTTP/3, so turning it off effectively hides
+    /// the listener from web clients.
+    #[serde(default = "default_true")]
+    pub alt_svc: bool,
+
+    /// `ma=` (max-age) seconds in the advertised `Alt-Svc` header — how long a
+    /// client may cache the fact that this origin speaks HTTP/3.
+    #[serde(default = "default_alt_svc_max_age")]
+    pub alt_svc_max_age: u64,
+
+    /// Accept 0-RTT early data. Off by default: early-data requests are
+    /// replayable by an on-path attacker, so this is only safe when every
+    /// route reachable over it is idempotent.
+    #[serde(default)]
+    pub enable_0rtt: bool,
+
+    /// Maximum concurrent bidirectional streams per QUIC connection.
+    #[serde(default = "default_max_concurrent_streams")]
+    pub max_concurrent_bidi_streams: u32,
+
+    /// Idle timeout before an unused QUIC connection is dropped.
+    #[serde(default = "default_h3_idle_timeout", with = "humantime_serde")]
+    pub max_idle_timeout: Duration,
+}
+
+fn default_alt_svc_max_age() -> u64 {
+    86400
+}
+
+fn default_max_concurrent_streams() -> u32 {
+    256
+}
+
+fn default_h3_idle_timeout() -> Duration {
+    Duration::from_secs(30)
+}
+
+impl Default for Http3Config {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: None,
+            alt_svc: true,
+            alt_svc_max_age: default_alt_svc_max_age(),
+            enable_0rtt: false,
+            max_concurrent_bidi_streams: default_max_concurrent_streams(),
+            max_idle_timeout: default_h3_idle_timeout(),
+        }
+    }
+}
+
+impl Http3Config {
+    /// The UDP port to bind, falling back to the TCP listener's port.
+    #[must_use]
+    pub fn udp_port(&self, listen: SocketAddr) -> u16 {
+        self.port.unwrap_or_else(|| listen.port())
+    }
+
+    /// The `Alt-Svc` header value advertising this listener, e.g.
+    /// `h3=":8443"; ma=86400`.
+    #[must_use]
+    pub fn alt_svc_value(&self, listen: SocketAddr) -> String {
+        format!(
+            "h3=\":{}\"; ma={}",
+            self.udp_port(listen),
+            self.alt_svc_max_age
+        )
+    }
 }
 
 fn default_internal_prefix() -> Option<String> {
@@ -1505,6 +1599,50 @@ upstream_origin: https://api.example.com:443
         assert_eq!(o.host, "api.example.com");
         assert_eq!(o.port, 443);
         assert_eq!(o.scheme, octopus_router::Scheme::Https);
+    }
+
+    #[test]
+    fn http3_config_defaults_are_off_and_replay_safe() {
+        let cfg = Http3Config::default();
+        assert!(!cfg.enabled, "HTTP/3 must be opt-in");
+        assert_eq!(cfg.port, None, "None means reuse the TCP listener port");
+        assert!(cfg.alt_svc, "clients need Alt-Svc to discover h3");
+        assert_eq!(cfg.alt_svc_max_age, 86400);
+        assert!(
+            !cfg.enable_0rtt,
+            "0-RTT early data is replayable and must be opt-in"
+        );
+    }
+
+    #[test]
+    fn gateway_config_parses_http3_block() {
+        let yaml = r#"
+listen: "0.0.0.0:8080"
+http3:
+  enabled: true
+  port: 8443
+  alt_svc_max_age: 3600
+  enable_0rtt: true
+"#;
+        let cfg: GatewayConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(cfg.http3.enabled);
+        assert_eq!(cfg.http3.port, Some(8443));
+        assert_eq!(cfg.http3.alt_svc_max_age, 3600);
+        assert!(cfg.http3.enable_0rtt);
+    }
+
+    #[test]
+    fn http3_advertised_port_falls_back_to_the_listener_port() {
+        let listen: SocketAddr = "0.0.0.0:8080".parse().unwrap();
+
+        let default_port = Http3Config::default();
+        assert_eq!(default_port.udp_port(listen), 8080);
+
+        let explicit = Http3Config {
+            port: Some(8443),
+            ..Http3Config::default()
+        };
+        assert_eq!(explicit.udp_port(listen), 8443);
     }
 
     #[test]
