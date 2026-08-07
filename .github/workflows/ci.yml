@@ -117,7 +117,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run tests with coverage
-        run: cargo tarpaulin --out Xml --all-features
+        run: cargo tarpaulin --engine llvm --out Xml --all-features
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
