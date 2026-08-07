@@ -17,7 +17,7 @@ runs the in-process operator.
 ## Prerequisites
 
 <Callout title="Requirements">
-  - **Docker** (for the container image), or **Rust 1.75+** and a C toolchain (to build from source).
+  - **Docker** (for the container image), or **Rust 1.85+** and a C toolchain (to build from source).
   - **Operating system**: Linux or macOS. The container image targets `linux/amd64` and `linux/arm64`.
   - For Kubernetes, a cluster with `kubectl` configured and Helm 3.8+.
 </Callout>
@@ -75,7 +75,7 @@ container health check, and Compose examples.
 <Step>
 ### Install Rust
 
-Octopus requires Rust 1.75 or later. If you don't have it:
+Octopus requires Rust 1.85 or later. If you don't have it:
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
