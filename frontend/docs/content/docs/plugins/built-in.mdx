@@ -1,6 +1,6 @@
 ---
 title: Built-in Plugins
-description: The honest inventory of plugins that ship with Octopus today — there are no bundled plugin implementations yet, and the capabilities you might expect as plugins exist as first-class middleware and auth providers instead.
+description: The honest inventory of plugin crates that ship in the Octopus repository — what is implemented, what is a stub, and why none of them can be enabled through configuration yet.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -9,29 +9,82 @@ import { Cards, Card } from 'fumadocs-ui/components/card';
 # Built-in Plugins
 
 <Callout type="warn">
-**There are no bundled plugins in Octopus today.** Neither the plugin SDK crate
-(`octopus-plugin-api`), the plugin runtime (`octopus-plugin-runtime`), nor the dynamic-loading crate
-(`octopus-plugins`) contains any concrete `Plugin` implementations beyond test fixtures. There is no
-registry of ready-to-enable plugins, and the `plugins:` configuration array is not consumed by the
-gateway (see the [overview](/docs/plugins)).
+**No plugin can be enabled through configuration today.** The repository does contain plugin
+crates — some fully implemented — but nothing registers them with the gateway, and the `plugins:`
+array only loads `plugin_type: script` entries (see the [overview](/docs/plugins)). Entries with
+`plugin_type: static` or `dynamic` are skipped with a warning.
 
-Any older documentation or example YAML referencing plugins like `jwt-auth`, `redis-cache`,
-`rate-limiter`, or `kafka-producer` as built-in plugins is **inaccurate** — those names do not exist
-as plugins in the codebase.
+Treat everything on this page as **source to read and build on**, not as features you can switch on.
 </Callout>
 
-## What the crates actually contain
+## What ships in `plugins/`
+
+Seven crates live under the repository's `plugins/` directory. They fall into three groups.
+
+### Implemented, targeting `octopus-plugins`
+
+| Crate | Registers as | What it does |
+| --- | --- | --- |
+| `auth-jwt` | `jwt-auth` (`PluginType::Static`) | Complete JWT authentication: token extraction, HS256/RS256 validation, scope checks, and configurable skip-paths. Implements both the `octopus-plugins` `Plugin` trait and `octopus_core::Middleware`. An optional `dashboard` feature adds a Leptos/WASM admin panel (gated to `wasm32`). |
+
+This is a workspace member, so it builds and is type-checked in CI. Two things still stop it from
+being usable: nothing constructs or registers `JwtAuthPlugin` at startup, and the crate is a plain
+`rlib` — it emits no `cdylib`, so the dynamic loader cannot pick it up either.
+
+<Callout type="info">
+If you want JWT authentication in production **today**, use the JWT provider in `octopus-auth`
+instead. It is wired into the request path through the auth gateway middleware. See
+[Security](/docs/security).
+</Callout>
+
+### Implemented reference examples, targeting `octopus-plugin-api`
+
+| Crate | Capability traits | What it demonstrates |
+| --- | --- | --- |
+| `example-auth` | `RequestInterceptor` | JWT validation with a configurable secret, skip-routes, and custom error responses. |
+| `example-logging` | `RequestInterceptor` + `ResponseInterceptor` | Structured request/response logging, selective field logging, and timing metrics. |
+| `example-transform` | `TransformPlugin` | Header add/remove/rename, regex path rewriting, query-parameter manipulation, and conditional rules. |
+
+These are the best starting point for authoring your own plugin — they target the richer
+`octopus-plugin-api` SDK that [Writing a Plugin](/docs/plugins/writing-plugins) documents.
+
+<Callout type="warn">
+The three `example-*` crates are **not workspace members**. `cargo build --workspace` and CI never
+compile them, so they can drift out of sync with the SDK. Build one directly
+(`cargo build -p example-auth --manifest-path plugins/example-auth/Cargo.toml`) before relying on it.
+</Callout>
+
+### Stubs — name only, no implementation
+
+| Crate | State |
+| --- | --- |
+| `rate-limiter` | Single-line placeholder: `// Plugin stub - implementation will be added later` |
+| `cache-redis` | Same placeholder |
+| `kafka-producer` | Same placeholder |
+
+All three are `crate-type = ["cdylib"]` workspace members, so they compile — into empty shared
+libraries. Their names appear in older examples and screenshots; there is no behaviour behind them.
+
+<Callout type="warn">
+The admin UI's plugin page currently renders a **hardcoded demo list** containing `auth-jwt` and
+`rate-limiter` marked as enabled. That is fixture data in `octopus-admin`, not a live registry
+readout — it does not reflect any plugin actually running in your gateway.
+</Callout>
+
+## What the SDK crates contain
+
+None of the three SDK/runtime crates ship a concrete `Plugin` implementation beyond test fixtures.
 
 | Crate | Concrete plugins | What's there instead |
 | --- | --- | --- |
-| `octopus-plugin-api` | None | The `Plugin` trait and capability traits (`RequestInterceptor`, `AuthProvider`, `TransformPlugin`, `ProtocolHandler`, `ScriptInterceptorPlugin`), context, and error types. |
+| `octopus-plugin-api` | None | The `Plugin` trait and capability traits (`RequestInterceptor`, `ResponseInterceptor`, `AuthProvider`, `TransformPlugin`, `ProtocolHandler`, `ScriptInterceptorPlugin`), context, and error types. |
 | `octopus-plugin-runtime` | None | Lifecycle management (`PluginRegistry`, `PluginManager`) and the `HotReloadWatcher`. |
 | `octopus-plugins` | None | The dynamic shared-library `PluginLoader` and the `octopus_declare_plugin!` ABI macro. |
 
-The traits, lifecycle, and loader are real and tested. What is missing is a set of shipped plugin
-*implementations* and the wiring to register them.
+The traits, lifecycle, and loader are real and tested. What is missing is the registration wiring
+that would let a configured plugin name resolve to an implementation.
 
-## Where those capabilities live today
+## Where these capabilities live today
 
 The features you might expect as "built-in plugins" are implemented elsewhere in the gateway as
 **first-class middleware** and **auth providers** — and those *are* wired into the request path.
@@ -61,10 +114,11 @@ So if you were looking for "JWT authentication" or "rate limiting": they exist a
 
 ## Roadmap
 
-Bundled plugins (and the wiring to load them from the `plugins:` array) are not yet present. When
-that work lands, this page will enumerate each shipped plugin and its configuration keys. Until
-then, this page intentionally lists nothing as "available" to avoid implying support that does not
-exist.
+Two pieces of work stand between the crates above and a usable built-in plugin set: filling in the
+three stubs, and adding the registry that maps a `plugins:` entry to a registered implementation.
+The two SDK layers (`octopus-plugins` and `octopus-plugin-api`) also need to converge — `auth-jwt`
+targets one, the `example-*` crates the other. When that lands, this page will document each shipped
+plugin's configuration keys.
 
 ## Related
 
