@@ -560,6 +560,28 @@ impl Server {
         // Anti host-spoofing (Host == TLS SNI), gated by config.
         handler.set_enforce_sni_check(self.config.gateway.enforce_sni_check);
 
+        // Gateway-wide request limits, enforced before the body is buffered.
+        // Must be set on the handler rather than added to the middleware chain:
+        // the chain runs on an already-collected Full<Bytes> body.
+        let limits_config = &self.config.gateway.request_limits;
+        if limits_config.enabled {
+            let limits = octopus_middleware::RequestLimits::from_config(
+                limits_config,
+                self.config.gateway.max_body_size,
+            );
+            tracing::info!(
+                max_body_size = limits.max_body_size(),
+                max_header_size = ?limits_config.max_header_size,
+                max_uri_length = ?limits_config.max_uri_length,
+                "Request limits enabled"
+            );
+            handler.set_request_limits(Some(limits));
+        } else {
+            tracing::warn!(
+                "Request limits disabled: request bodies are buffered without a size cap"
+            );
+        }
+
         // Share the operator's virtual gateway index so the handler can resolve a
         // request's gateway by host (e.g. gateway-level CORS preflight).
         if let Some(ref gateway_index) = self.gateway_index {
@@ -1472,6 +1494,7 @@ mod tests {
                 shutdown_timeout: Duration::from_secs(30),
                 pre_stop_delay: Duration::from_secs(5),
                 max_body_size: 10 * 1024 * 1024,
+                request_limits: Default::default(),
                 tls: None,
                 compression: CompressionConfig::default(),
                 internal_route_prefix: Some("__".to_string()),
