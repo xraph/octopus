@@ -27,7 +27,9 @@ impl AltSvc {
     /// malformed port or max-age cannot inject a second header line.
     #[must_use]
     pub fn new(value: &str) -> Option<Self> {
-        HeaderValue::from_str(value).ok().map(|value| Self { value })
+        HeaderValue::from_str(value)
+            .ok()
+            .map(|value| Self { value })
     }
 }
 
@@ -109,7 +111,10 @@ mod tests {
 
         let resp = mw.call(request(Version::HTTP_11), next()).await.unwrap();
 
-        assert_eq!(resp.headers().get("alt-svc").unwrap(), "h3=\":443\"; ma=3600");
+        assert_eq!(
+            resp.headers().get("alt-svc").unwrap(),
+            "h3=\":443\"; ma=3600"
+        );
     }
 
     #[test]

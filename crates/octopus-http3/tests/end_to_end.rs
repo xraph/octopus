@@ -109,10 +109,11 @@ impl rustls::client::danger::ServerCertVerifier for AcceptFixtureCert {
 fn client_endpoint() -> quinn::Endpoint {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
 
-    let mut crypto = rustls::ClientConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(AcceptFixtureCert(provider)))
-        .with_no_client_auth();
+    let mut crypto =
+        rustls::ClientConfig::builder_with_protocol_versions(&[&rustls::version::TLS13])
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(AcceptFixtureCert(provider)))
+            .with_no_client_auth();
     crypto.alpn_protocols = vec![b"h3".to_vec()];
 
     let client_config = quinn::ClientConfig::new(Arc::new(
@@ -129,18 +130,12 @@ fn client_endpoint() -> quinn::Endpoint {
 async fn serves_a_request_over_quic() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 
-    let tls = octopus_tls::build_quic_server_config_from_pem(
-        TEST_CERT.as_bytes(),
-        TEST_KEY.as_bytes(),
-    )
-    .unwrap();
+    let tls =
+        octopus_tls::build_quic_server_config_from_pem(TEST_CERT.as_bytes(), TEST_KEY.as_bytes())
+            .unwrap();
 
-    let listener = Http3Listener::bind(
-        "127.0.0.1:0".parse().unwrap(),
-        tls,
-        &Http3Config::default(),
-    )
-    .unwrap();
+    let listener =
+        Http3Listener::bind("127.0.0.1:0".parse().unwrap(), tls, &Http3Config::default()).unwrap();
     let addr = listener.local_addr().unwrap();
 
     tokio::spawn(listener.serve(Arc::new(EchoPathHandler)));

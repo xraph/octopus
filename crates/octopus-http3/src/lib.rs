@@ -79,7 +79,9 @@ impl Http3Listener {
             .ok_or_else(|| Error::Internal("QUIC transport config is shared".to_string()))?;
         transport.max_concurrent_bidi_streams(config.max_concurrent_bidi_streams.into());
         let idle: quinn::IdleTimeout = config.max_idle_timeout.try_into().map_err(|e| {
-            Error::Config(format!("http3.max_idle_timeout is out of range for QUIC: {e}"))
+            Error::Config(format!(
+                "http3.max_idle_timeout is out of range for QUIC: {e}"
+            ))
         })?;
         transport.max_idle_timeout(Some(idle));
 
@@ -179,7 +181,11 @@ where
                 }
             }
             Ok(None) => break,
-            Err(e) => return Err(Error::InvalidRequest(format!("HTTP/3 body read failed: {e}"))),
+            Err(e) => {
+                return Err(Error::InvalidRequest(format!(
+                    "HTTP/3 body read failed: {e}"
+                )))
+            }
         }
     }
 
@@ -266,9 +272,11 @@ MZJwLhzCrGHJXk0exP7K73agVp3RiDz7w/rmMBCmhSCppD+vpl7vMnZ9
     /// assigned, so the caller can advertise it in `Alt-Svc`.
     #[tokio::test]
     async fn bind_opens_a_udp_socket_and_reports_its_port() {
-        let tls =
-            octopus_tls::build_quic_server_config_from_pem(TEST_CERT.as_bytes(), TEST_KEY.as_bytes())
-                .expect("test cert should build a QUIC config");
+        let tls = octopus_tls::build_quic_server_config_from_pem(
+            TEST_CERT.as_bytes(),
+            TEST_KEY.as_bytes(),
+        )
+        .expect("test cert should build a QUIC config");
 
         let listener = Http3Listener::bind(any_port(), tls, &Http3Config::default())
             .expect("binding an ephemeral UDP port should succeed");

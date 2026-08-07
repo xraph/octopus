@@ -549,7 +549,6 @@ impl Server {
         // Wire the admin IP allowlist (independent of admin auth).
         handler.set_admin_allowed_ips(&self.config.admin.allowed_ips);
 
-
         // Wire admin auth if configured
         if let Some(ref registry) = auth_registry {
             handler.set_admin_auth(
