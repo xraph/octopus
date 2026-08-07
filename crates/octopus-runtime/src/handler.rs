@@ -645,7 +645,11 @@ impl RequestHandler {
     }
 
     /// Handle an incoming HTTP request (from Hyper with Incoming body)
-    pub async fn handle(&self, req: Request<Incoming>) -> Result<Response<Body>> {
+    pub async fn handle<B>(&self, req: Request<B>) -> Result<Response<Body>>
+    where
+        B: http_body::Body<Data = Bytes> + Send + 'static,
+        B::Error: std::fmt::Display,
+    {
         // Health probes are answered before request accounting so a readiness
         // poll during drain never inflates the in-flight counter or holds up
         // graceful shutdown.
@@ -1052,7 +1056,11 @@ impl RequestHandler {
     /// 4. Only on success → build 101 response, extract OnUpgrade
     /// 5. Spawn background proxy task with already-connected upstream
     /// 6. Return 101 to client
-    async fn handle_websocket_upgrade(&self, mut req: Request<Incoming>) -> Result<Response<Body>> {
+    async fn handle_websocket_upgrade<B>(&self, mut req: Request<B>) -> Result<Response<Body>>
+    where
+        B: http_body::Body<Data = Bytes> + Send + 'static,
+        B::Error: std::fmt::Display,
+    {
         let method = req.method().clone();
         let path = req.uri().path().to_string();
         let host = Self::request_host(&req);
@@ -1193,7 +1201,11 @@ impl RequestHandler {
     /// - Tracks active SSE connections via `sse_active_count`
     /// - Upstream connect timeout (10s)
     /// - Connection tracking on upstream instance
-    async fn handle_sse_proxy(&self, req: Request<Incoming>) -> Result<Response<Body>> {
+    async fn handle_sse_proxy<B>(&self, req: Request<B>) -> Result<Response<Body>>
+    where
+        B: http_body::Body<Data = Bytes> + Send + 'static,
+        B::Error: std::fmt::Display,
+    {
         let method = req.method().clone();
         let path = req.uri().path().to_string();
         let host = Self::request_host(&req);
@@ -1376,7 +1388,11 @@ impl RequestHandler {
     ///
     /// Called BEFORE body buffering so streaming RPCs work.
     /// Routes gRPC requests to upstream services via HTTP/2 connections.
-    async fn handle_grpc_proxy(&self, req: Request<Incoming>) -> Result<Response<Body>> {
+    async fn handle_grpc_proxy<B>(&self, req: Request<B>) -> Result<Response<Body>>
+    where
+        B: http_body::Body<Data = Bytes> + Send + 'static,
+        B::Error: std::fmt::Display,
+    {
         let method = req.method().clone();
         let path = req.uri().path().to_string();
         let host = Self::request_host(&req);
@@ -1840,6 +1856,28 @@ mod tests {
     async fn test_handler_creation() {
         let handler = create_test_handler();
         assert_eq!(handler.request_count.load(Ordering::Relaxed), 0);
+    }
+
+    /// The entry point must accept any `http_body::Body`, not just hyper's
+    /// `Incoming`. An HTTP/3 request body is an `h3` stream that can never be
+    /// converted into an `Incoming`, so a transport-agnostic `handle` is the
+    /// precondition for serving QUIC. Driving it with `Full<Bytes>` proves the
+    /// body is buffered and routed like any other.
+    #[tokio::test]
+    async fn handle_accepts_a_non_hyper_request_body() {
+        let handler = create_test_handler();
+        let req = Request::builder()
+            .method(http::Method::GET)
+            .uri("/no-such-route")
+            .body(Full::new(Bytes::from_static(b"")))
+            .unwrap();
+
+        let resp = handler
+            .handle(req)
+            .await
+            .expect("a non-hyper body should route like any other");
+
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     #[test]
