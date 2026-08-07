@@ -20,6 +20,7 @@ members = [
     "crates/octopus-state",
     "crates/octopus-k8s",
     "crates/octopus-graphql",
+    "crates/octopus-http3",
     "octopus-cli",
     "examples",
     "plugins/auth-jwt",
@@ -133,6 +134,9 @@ sha2 = "0.10"
 hmac = "0.12"
 ring = "0.17"
 rustls = "0.23"
+quinn = "0.11"
+h3 = "0.0.8"
+h3-quinn = "0.0.10"
 rustls-native-certs = "0.8"
 tokio-rustls = "0.26"
 webpki-roots = "0.26"
