@@ -80,7 +80,7 @@ struct WalkAcc {
 ///
 /// # Errors
 /// Returns [`Error::InvalidRequest`] if a fragment spread re-enters a fragment
-/// already being expanded.
+/// already being expanded, or names a fragment the document does not define.
 fn walk<'a>(
     selections: &'a [Selection],
     depth: usize,
@@ -116,12 +116,13 @@ fn walk<'a>(
                     )));
                 }
 
-                // Unknown spreads are skipped here; rejected in a follow-up.
-                if let Some(frag) = fragments.get(name).copied() {
-                    active.push(name);
-                    walk(&frag.selection_set, depth, fragments, active, acc)?;
-                    active.pop();
-                }
+                let frag = fragments.get(name).copied().ok_or_else(|| {
+                    Error::InvalidRequest(format!("Unknown GraphQL fragment: '{name}'"))
+                })?;
+
+                active.push(name);
+                walk(&frag.selection_set, depth, fragments, active, acc)?;
+                active.pop();
             }
         }
     }
@@ -208,6 +209,15 @@ mod tests {
     #[test]
     fn self_referential_fragment_is_rejected() {
         let err = analyze_query("query { a { ...f } } fragment f on T { ...f }").unwrap_err();
+        assert!(matches!(err, Error::InvalidRequest(_)));
+    }
+
+    #[test]
+    fn unknown_fragment_spread_is_rejected() {
+        // Undefined fragment: a validation error per GraphQL spec 5.5.2.1, so
+        // no conformant upstream could execute it. Rejecting here also avoids
+        // scoring a document we cannot fully measure.
+        let err = analyze_query("query { a { ...nope } }").unwrap_err();
         assert!(matches!(err, Error::InvalidRequest(_)));
     }
 
