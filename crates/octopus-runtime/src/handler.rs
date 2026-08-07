@@ -28,6 +28,20 @@ use tracing::{debug, error, info, warn};
 /// Body type — Left for buffered, Right for streaming (SSE / chunked)
 pub type Body = Either<Full<Bytes>, Incoming>;
 
+/// Dispatch target for the QUIC listener.
+///
+/// An HTTP/3 request body arrives already collected into `Full<Bytes>` (see
+/// `octopus_http3`), so it goes through the same generic `handle` as every
+/// other transport — routing, auth, rate limiting and proxying are identical.
+#[async_trait::async_trait]
+impl octopus_http3::H3Handler for RequestHandler {
+    type Body = Body;
+
+    async fn handle(&self, req: Request<Full<Bytes>>) -> Result<Response<Self::Body>> {
+        RequestHandler::handle(self, req).await
+    }
+}
+
 /// Create a buffered body from data
 fn buffered(data: impl Into<Bytes>) -> Body {
     Either::Left(Full::new(data.into()))
@@ -1856,6 +1870,26 @@ mod tests {
     async fn test_handler_creation() {
         let handler = create_test_handler();
         assert_eq!(handler.request_count.load(Ordering::Relaxed), 0);
+    }
+
+    /// The QUIC listener dispatches through the `H3Handler` trait. Wiring it
+    /// to `RequestHandler` is what makes an HTTP/3 request traverse the same
+    /// routing, auth and proxy pipeline as an HTTP/2 one.
+    #[tokio::test]
+    async fn request_handler_serves_the_http3_listener() {
+        let handler = create_test_handler();
+        let req = Request::builder()
+            .method(http::Method::GET)
+            .uri("/no-such-route")
+            .version(http::Version::HTTP_3)
+            .body(Full::new(Bytes::new()))
+            .unwrap();
+
+        let resp = octopus_http3::H3Handler::handle(&handler, req)
+            .await
+            .expect("an h3 request should route like any other");
+
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 
     /// The entry point must accept any `http_body::Body`, not just hyper's

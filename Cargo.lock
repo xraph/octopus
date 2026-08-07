@@ -4124,6 +4124,7 @@ dependencies = [
  "octopus-farp",
  "octopus-graphql",
  "octopus-health",
+ "octopus-http3",
  "octopus-k8s",
  "octopus-metrics",
  "octopus-middleware",

@@ -210,6 +210,43 @@ impl Server {
         self.lifecycle.clone()
     }
 
+    /// Bind the QUIC socket and spawn the HTTP/3 accept loop.
+    ///
+    /// Returns the bound UDP address. HTTP/3 needs its own rustls config —
+    /// TLS 1.3 with `h3` ALPN — so the certificate is loaded again here rather
+    /// than reusing the TCP acceptor's config, which offers `h2`/`http/1.1`.
+    fn spawn_http3_listener(&self, handler: crate::RequestHandler) -> Result<std::net::SocketAddr> {
+        let tls_config = self.config.gateway.tls.as_ref().ok_or_else(|| {
+            Error::Config("HTTP/3 requires gateway.tls to be configured".to_string())
+        })?;
+
+        let cert_pem = std::fs::read(&tls_config.cert_file).map_err(|e| {
+            Error::Config(format!(
+                "failed to read TLS cert {} for HTTP/3: {e}",
+                tls_config.cert_file
+            ))
+        })?;
+        let key_pem = std::fs::read(&tls_config.key_file).map_err(|e| {
+            Error::Config(format!(
+                "failed to read TLS key {} for HTTP/3: {e}",
+                tls_config.key_file
+            ))
+        })?;
+
+        let quic_tls = octopus_tls::build_quic_server_config_from_pem(&cert_pem, &key_pem)?;
+
+        let http3 = &self.config.gateway.http3;
+        let listen = self.config.gateway.listen;
+        let udp_addr = std::net::SocketAddr::new(listen.ip(), http3.udp_port(listen));
+
+        let listener = octopus_http3::Http3Listener::bind(udp_addr, quic_tls, http3)?;
+        let bound = listener.local_addr()?;
+
+        tokio::spawn(listener.serve(Arc::new(handler)));
+
+        Ok(bound)
+    }
+
     /// Run the server
     pub async fn run(&self) -> Result<()> {
         // Set state to running
@@ -455,6 +492,27 @@ impl Server {
             );
         }
 
+        // Alt-Svc goes outermost so every TCP response carries the HTTP/3
+        // advertisement, including those short-circuited by inner middleware.
+        // Without it browsers never discover the QUIC listener at all.
+        if self.config.gateway.http3.enabled && self.config.gateway.http3.alt_svc {
+            let value = self
+                .config
+                .gateway
+                .http3
+                .alt_svc_value(self.config.gateway.listen);
+            match octopus_middleware::AltSvc::new(&value) {
+                Some(mw) => {
+                    middlewares.insert(0, Arc::new(mw));
+                    tracing::info!(alt_svc = %value, "Advertising HTTP/3 via Alt-Svc");
+                }
+                None => tracing::error!(
+                    alt_svc = %value,
+                    "Computed Alt-Svc value is not a valid header; HTTP/3 will not be advertised"
+                ),
+            }
+        }
+
         let middleware_chain: Arc<[Arc<dyn octopus_core::middleware::Middleware>]> =
             Arc::from(middlewares);
 
@@ -490,6 +548,7 @@ impl Server {
 
         // Wire the admin IP allowlist (independent of admin auth).
         handler.set_admin_allowed_ips(&self.config.admin.allowed_ips);
+
 
         // Wire admin auth if configured
         if let Some(ref registry) = auth_registry {
@@ -530,6 +589,20 @@ impl Server {
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "failed to start EndpointSlice backend watcher")
+                }
+            }
+        }
+
+        // Start the HTTP/3 listener on UDP, alongside the TCP listener above.
+        // Config validation has already rejected http3.enabled without TLS.
+        if self.config.gateway.http3.enabled {
+            match self.spawn_http3_listener(handler.clone()) {
+                Ok(addr) => tracing::info!(%addr, "HTTP/3 (QUIC) listener started"),
+                Err(e) => {
+                    // A failed UDP bind must not take the TCP listener down:
+                    // HTTP/3 is an optimisation, and every client can still
+                    // reach the gateway over TCP.
+                    tracing::error!(error = %e, "Failed to start HTTP/3 listener; continuing on TCP only");
                 }
             }
         }
@@ -1406,6 +1479,7 @@ mod tests {
                 probes: ProbeConfig::default(),
                 enforce_sni_check: true,
                 security_headers: Default::default(),
+                http3: Default::default(),
             })
             .build()
             .unwrap()
