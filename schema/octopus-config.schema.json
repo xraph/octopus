@@ -123,6 +123,50 @@
           "description": "Prefix for internal endpoints (admin, metrics, FARP). Endpoints become e.g. /__admin, /__metrics",
           "default": "__",
           "examples": ["__", "_internal", "gateway"]
+        },
+        "http3": {
+          "type": "object",
+          "description": "HTTP/3 (QUIC) listener. Runs on UDP alongside the TCP listener; requires TLS.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Serve HTTP/3 on a UDP socket. Requires gateway.tls.",
+              "default": false
+            },
+            "port": {
+              "type": ["integer", "null"],
+              "description": "UDP port. Omit to reuse the TCP listener's port.",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "alt_svc": {
+              "type": "boolean",
+              "description": "Advertise the listener via Alt-Svc on TCP responses.",
+              "default": true
+            },
+            "alt_svc_max_age": {
+              "type": "integer",
+              "description": "Seconds a client may cache the HTTP/3 advertisement.",
+              "minimum": 1,
+              "default": 86400
+            },
+            "enable_0rtt": {
+              "type": "boolean",
+              "description": "Accept 0-RTT early data. Replayable; only safe when every reachable route is idempotent.",
+              "default": false
+            },
+            "max_concurrent_bidi_streams": {
+              "type": "integer",
+              "description": "Max concurrent bidirectional streams per QUIC connection.",
+              "minimum": 1,
+              "default": 256
+            },
+            "max_idle_timeout": {
+              "type": "string",
+              "description": "Idle timeout before an unused QUIC connection is dropped.",
+              "default": "30s"
+            }
+          }
         }
       },
       "additionalProperties": false

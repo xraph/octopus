@@ -73,6 +73,34 @@ gateway:
   #   # Certificate reload check interval (seconds)
   #   # Default: 300 (5 minutes)
   #   reload_interval_secs: 300
+
+  # HTTP/3 (QUIC) listener. Runs on UDP alongside the TCP listener above —
+  # it does not replace it. Requires `tls` to be configured: QUIC mandates
+  # TLS 1.3 and has no plaintext mode.
+  http3:
+    enabled: false
+
+    # UDP port. Omit (or null) to reuse the TCP listener's port, which is
+    # what clients expect and what makes Alt-Svc advertisement trivial.
+    # port: 8443
+
+    # Advertise the listener via Alt-Svc on HTTP/1.1 and HTTP/2 responses.
+    # Without this no browser will ever attempt HTTP/3.
+    alt_svc: true
+
+    # How long (seconds) a client may cache the HTTP/3 advertisement.
+    alt_svc_max_age: 86400
+
+    # Accept 0-RTT early data. Off by default: early-data requests are
+    # replayable by an on-path attacker, so only enable this when every
+    # route reachable over it is idempotent.
+    enable_0rtt: false
+
+    # Max concurrent bidirectional streams per QUIC connection.
+    max_concurrent_bidi_streams: 256
+
+    # Idle timeout before an unused QUIC connection is dropped.
+    max_idle_timeout: 30s
   
   # Compression configuration
   compression:

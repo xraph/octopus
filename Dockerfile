@@ -64,7 +64,9 @@ LABEL org.opencontainers.image.title="octopus" \
 
 USER octopus
 
+# 8080/tcp gateway, 9090/tcp admin, 8080/udp HTTP/3 (QUIC)
 EXPOSE 8080 9090
+EXPOSE 8080/udp
 
 # HTTP liveness on the gateway's /livez probe (config default 0.0.0.0:8080).
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
