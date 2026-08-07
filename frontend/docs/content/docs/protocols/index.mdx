@@ -27,8 +27,9 @@ handler code. Where support is partial, it says so.
 | GraphQL | Supported (single-graph) | Opt-in middleware on the configured endpoint. Parses each operation, enforces depth/complexity/introspection policy, serves a GraphiQL IDE, then proxies valid operations to the route's upstream. **No federation** — schema composition, query planning, and cross-subgraph entity resolution are not implemented. See [GraphQL](/docs/protocols/graphql). |
 
 <Callout type="warn">
-  There is no WebTransport or HTTP/3 module in the codebase. HTTP/3 is not implemented
-  and is not exposed in configuration.
+  There is no WebTransport module in the codebase. HTTP/3 **is** implemented, but on a
+  separate UDP listener rather than through the TCP detection order below — see
+  [HTTP/3](/docs/protocols/http3).
 </Callout>
 
 ## How protocol routing works
@@ -71,6 +72,11 @@ or gRPC request to a path with no matching route is rejected.
     title="HTTP/1.1 & HTTP/2"
     description="The default reverse-proxy path with connection pooling."
     href="/docs/protocols/http"
+  />
+  <Card
+    title="HTTP/3"
+    description="QUIC on a UDP listener, advertised with Alt-Svc."
+    href="/docs/protocols/http3"
   />
   <Card
     title="gRPC"

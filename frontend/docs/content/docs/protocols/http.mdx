@@ -69,7 +69,8 @@ filtering, prefix rewriting, priority, per-route timeouts, rate limits, and CORS
 
 ## Limitations
 
-- **HTTP/3 / QUIC is not implemented.** Only HTTP/1.1 and HTTP/2 are served.
+- **HTTP/3 is served on a separate UDP listener**, not by this TCP path. It is off by
+  default; see [HTTP/3](/docs/protocols/http3).
 - The HTTP proxy path **buffers** the full request and response body in memory before
   forwarding. Large uploads/downloads are not streamed on this path. Streaming is only
   used for [SSE](/docs/protocols/sse), [WebSocket](/docs/protocols/websocket), and the
