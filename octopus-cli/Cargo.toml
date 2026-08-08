@@ -38,7 +38,7 @@ tracing-subscriber.workspace = true
 
 # Distributed tracing (OTLP export, behind observability.tracing.enabled)
 opentelemetry = { workspace = true }
-opentelemetry_sdk = { version = "0.22", features = ["rt-tokio"] }
+opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"] }
 opentelemetry-otlp = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 
