@@ -117,7 +117,7 @@ libloading = "0.8"
 rhai = { git = "https://github.com/rhaiscript/rhai.git", features = ["sync", "no_std"] }
 
 # Authentication
-jsonwebtoken = "9.2"
+jsonwebtoken = { version = "10.3", features = ["aws_lc_rs"] }
 argon2 = "0.5"
 
 # Rate limiting
