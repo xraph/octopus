@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use http::{Request, Response, StatusCode};
 use octopus_core::{Body, Middleware, Next, Result};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 /// Request limits configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,6 +94,70 @@ pub struct RequestLimits {
     config: RequestLimitsConfig,
 }
 
+/// A request limit that was exceeded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LimitViolation {
+    /// Request URI exceeded the configured length.
+    UriTooLong {
+        /// Observed URI length in bytes.
+        len: usize,
+        /// Configured maximum.
+        max: usize,
+    },
+    /// Total header size exceeded the configured limit.
+    HeadersTooLarge {
+        /// Observed total header size in bytes.
+        size: usize,
+        /// Configured maximum.
+        max: usize,
+    },
+    /// Request body exceeded the configured limit.
+    BodyTooLarge {
+        /// Observed (or declared) body length in bytes.
+        len: usize,
+        /// Configured maximum.
+        max: usize,
+    },
+}
+
+impl LimitViolation {
+    /// The HTTP status this violation should be rejected with.
+    #[must_use]
+    pub const fn status(&self) -> StatusCode {
+        match self {
+            Self::UriTooLong { .. } => StatusCode::URI_TOO_LONG,
+            Self::HeadersTooLarge { .. } => StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE,
+            Self::BodyTooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
+        }
+    }
+
+    /// Client-facing message used when no custom message is configured.
+    #[must_use]
+    pub const fn default_message(&self) -> &'static str {
+        match self {
+            Self::UriTooLong { .. } => "Request URI too long",
+            Self::HeadersTooLarge { .. } => "Request headers too large",
+            Self::BodyTooLarge { .. } => "Request body too large",
+        }
+    }
+}
+
+impl fmt::Display for LimitViolation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::UriTooLong { len, max } => {
+                write!(f, "request URI length {len} exceeds limit {max}")
+            }
+            Self::HeadersTooLarge { size, max } => {
+                write!(f, "request header size {size} exceeds limit {max}")
+            }
+            Self::BodyTooLarge { len, max } => {
+                write!(f, "request body size {len} exceeds limit {max}")
+            }
+        }
+    }
+}
+
 impl RequestLimits {
     /// Create a new request limits middleware with default configuration
     pub fn new() -> Self {
@@ -142,14 +207,107 @@ impl RequestLimits {
         }
     }
 
-    fn calculate_header_size(&self, req: &Request<Body>) -> usize {
-        let mut size = 0;
-        for (name, value) in req.headers() {
-            size += name.as_str().len();
-            size += value.len();
-            size += 4; // ": " and "\r\n"
+    /// Build limits from gateway configuration.
+    ///
+    /// `gateway_max_body_size` is `gateway.max_body_size`, used when
+    /// `config.max_body_size` is unset. Unset header and URI limits are left
+    /// unenforced (`usize::MAX`) rather than defaulted, so enabling this on an
+    /// existing deployment cannot start rejecting traffic that worked before.
+    #[must_use]
+    pub fn from_config(
+        config: &octopus_config::types::RequestLimitsConfig,
+        gateway_max_body_size: usize,
+    ) -> Self {
+        Self {
+            config: RequestLimitsConfig {
+                max_body_size: config.max_body_size.unwrap_or(gateway_max_body_size),
+                max_header_size: config.max_header_size.unwrap_or(usize::MAX),
+                max_uri_length: config.max_uri_length.unwrap_or(usize::MAX),
+                body_size_error_message: config.body_size_error_message.clone(),
+                header_size_error_message: config.header_size_error_message.clone(),
+                uri_length_error_message: config.uri_length_error_message.clone(),
+            },
         }
-        size
+    }
+
+    /// The resolved body-size cap, for wrapping a streaming body.
+    #[must_use]
+    pub const fn max_body_size(&self) -> usize {
+        self.config.max_body_size
+    }
+
+    /// Check everything knowable before the body is read: URI length, total
+    /// header size, and a declared `Content-Length`.
+    ///
+    /// This is the single implementation of the policy — both the [`Middleware`]
+    /// impl and the gateway's pre-buffering path call it.
+    ///
+    /// A request passing this check is **not** proven to be within the body
+    /// limit: `Content-Length` is absent on chunked, HTTP/2 and HTTP/3 requests.
+    /// Callers that can must additionally cap the body stream at
+    /// [`max_body_size`](Self::max_body_size).
+    ///
+    /// # Errors
+    /// Returns the first [`LimitViolation`] found.
+    pub fn check_parts(
+        &self,
+        uri: &http::Uri,
+        headers: &http::HeaderMap,
+    ) -> std::result::Result<(), LimitViolation> {
+        let uri_len = uri.to_string().len();
+        if uri_len > self.config.max_uri_length {
+            return Err(LimitViolation::UriTooLong {
+                len: uri_len,
+                max: self.config.max_uri_length,
+            });
+        }
+
+        let header_size = Self::calculate_header_size(headers);
+        if header_size > self.config.max_header_size {
+            return Err(LimitViolation::HeadersTooLarge {
+                size: header_size,
+                max: self.config.max_header_size,
+            });
+        }
+
+        if let Some(len) = headers
+            .get(http::header::CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<usize>().ok())
+        {
+            if len > self.config.max_body_size {
+                return Err(LimitViolation::BodyTooLarge {
+                    len,
+                    max: self.config.max_body_size,
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Build the rejection response for a violation, applying any configured
+    /// custom message.
+    #[must_use]
+    pub fn violation_response(&self, violation: &LimitViolation) -> Response<Body> {
+        let custom = match violation {
+            LimitViolation::UriTooLong { .. } => self.config.uri_length_error_message.as_deref(),
+            LimitViolation::HeadersTooLarge { .. } => {
+                self.config.header_size_error_message.as_deref()
+            }
+            LimitViolation::BodyTooLarge { .. } => self.config.body_size_error_message.as_deref(),
+        };
+        Self::error_response(
+            violation.status(),
+            custom.unwrap_or_else(|| violation.default_message()),
+        )
+    }
+
+    fn calculate_header_size(headers: &http::HeaderMap) -> usize {
+        headers
+            .iter()
+            .map(|(name, value)| name.as_str().len() + value.len() + 4) // ": " + "\r\n"
+            .sum()
     }
 
     fn error_response(status: StatusCode, message: &str) -> Response<Body> {
@@ -180,70 +338,108 @@ impl Default for RequestLimits {
 #[async_trait]
 impl Middleware for RequestLimits {
     async fn call(&self, req: Request<Body>, next: Next) -> Result<Response<Body>> {
-        // Check URI length
-        let uri_str = req.uri().to_string();
-        if uri_str.len() > self.config.max_uri_length {
-            let message = self
-                .config
-                .uri_length_error_message
-                .as_deref()
-                .unwrap_or("Request URI too long");
-
-            tracing::warn!(
-                uri_length = uri_str.len(),
-                max_length = self.config.max_uri_length,
-                "Request URI length exceeded"
-            );
-
-            return Ok(Self::error_response(StatusCode::URI_TOO_LONG, message));
+        // The chain's Body is already buffered, so this can only enforce the
+        // header-derived limits. The gateway calls check_parts directly before
+        // buffering; this impl exists for embedders building their own chain.
+        if let Err(violation) = self.check_parts(req.uri(), req.headers()) {
+            tracing::warn!(%violation, "Request limit exceeded");
+            return Ok(self.violation_response(&violation));
         }
 
-        // Check header size
-        let header_size = self.calculate_header_size(&req);
-        if header_size > self.config.max_header_size {
-            let message = self
-                .config
-                .header_size_error_message
-                .as_deref()
-                .unwrap_or("Request headers too large");
-
-            tracing::warn!(
-                header_size,
-                max_size = self.config.max_header_size,
-                "Request header size exceeded"
-            );
-
-            return Ok(Self::error_response(
-                StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE,
-                message,
-            ));
-        }
-
-        // Check body size (via Content-Length header)
-        if let Some(content_length) = req.headers().get("content-length") {
-            if let Ok(length_str) = content_length.to_str() {
-                if let Ok(length) = length_str.parse::<usize>() {
-                    if length > self.config.max_body_size {
-                        let message = self
-                            .config
-                            .body_size_error_message
-                            .as_deref()
-                            .unwrap_or("Request body too large");
-
-                        tracing::warn!(
-                            body_size = length,
-                            max_size = self.config.max_body_size,
-                            "Request body size exceeded"
-                        );
-
-                        return Ok(Self::error_response(StatusCode::PAYLOAD_TOO_LARGE, message));
-                    }
-                }
-            }
-        }
-
-        // All checks passed, proceed with request
         next.run(req).await
+    }
+}
+
+#[cfg(test)]
+mod pre_buffer_tests {
+    use super::*;
+    use http::{HeaderMap, HeaderValue, Uri};
+
+    fn limits() -> RequestLimits {
+        RequestLimits::with_config(RequestLimitsConfig {
+            max_body_size: 100,
+            max_header_size: 200,
+            max_uri_length: 50,
+            ..RequestLimitsConfig::default()
+        })
+    }
+
+    #[test]
+    fn within_limits_passes() {
+        let uri: Uri = "/short".parse().unwrap();
+        assert!(limits().check_parts(&uri, &HeaderMap::new()).is_ok());
+    }
+
+    #[test]
+    fn over_long_uri_is_a_violation() {
+        let uri: Uri = format!("/{}", "a".repeat(200)).parse().unwrap();
+        assert!(matches!(
+            limits().check_parts(&uri, &HeaderMap::new()),
+            Err(LimitViolation::UriTooLong { .. })
+        ));
+    }
+
+    #[test]
+    fn oversized_headers_are_a_violation() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-big", HeaderValue::from_str(&"v".repeat(300)).unwrap());
+        let uri: Uri = "/short".parse().unwrap();
+        assert!(matches!(
+            limits().check_parts(&uri, &headers),
+            Err(LimitViolation::HeadersTooLarge { .. })
+        ));
+    }
+
+    #[test]
+    fn content_length_over_limit_is_a_violation() {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-length", HeaderValue::from_static("101"));
+        let uri: Uri = "/short".parse().unwrap();
+        assert!(matches!(
+            limits().check_parts(&uri, &headers),
+            Err(LimitViolation::BodyTooLarge { .. })
+        ));
+    }
+
+    #[test]
+    fn missing_content_length_passes_the_header_check() {
+        // Chunked, HTTP/2 and HTTP/3 requests routinely omit content-length.
+        // The pre-buffer check cannot catch those; the streaming cap at the
+        // collect site is what actually bounds them. This test pins that
+        // division of responsibility so the header check is never mistaken
+        // for complete body enforcement.
+        let uri: Uri = "/short".parse().unwrap();
+        assert!(limits().check_parts(&uri, &HeaderMap::new()).is_ok());
+        assert_eq!(limits().max_body_size(), 100);
+    }
+
+    #[test]
+    fn from_config_falls_back_to_gateway_max_body_size() {
+        let cfg = octopus_config::types::RequestLimitsConfig::default();
+        let limits = RequestLimits::from_config(&cfg, 4096);
+        assert_eq!(limits.max_body_size(), 4096);
+    }
+
+    #[test]
+    fn from_config_prefers_explicit_body_size() {
+        let cfg = octopus_config::types::RequestLimitsConfig {
+            max_body_size: Some(64),
+            ..Default::default()
+        };
+        assert_eq!(RequestLimits::from_config(&cfg, 4096).max_body_size(), 64);
+    }
+
+    #[test]
+    fn from_config_leaves_unset_header_and_uri_limits_unenforced() {
+        let cfg = octopus_config::types::RequestLimitsConfig::default();
+        let limits = RequestLimits::from_config(&cfg, 4096);
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-big", HeaderValue::from_str(&"v".repeat(9000)).unwrap());
+        let uri: Uri = format!("/{}", "a".repeat(9000)).parse().unwrap();
+
+        // Neither limit was configured, so neither rejects.
+        assert!(limits.check_parts(&uri, &headers).is_ok());
     }
 }
 

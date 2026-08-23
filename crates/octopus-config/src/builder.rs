@@ -30,6 +30,7 @@ impl ConfigBuilder {
             shutdown_timeout: std::time::Duration::from_secs(30),
             pre_stop_delay: std::time::Duration::from_secs(5),
             max_body_size: 10 * 1024 * 1024,
+            request_limits: crate::types::RequestLimitsConfig::default(),
             tls: None,
             compression: crate::types::CompressionConfig::default(),
             internal_route_prefix: Some("__".to_string()),

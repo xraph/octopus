@@ -71,7 +71,7 @@ pub use rate_limit::{
 };
 pub use redirect::{Redirect, RedirectConfig, RedirectRule, TrailingSlash};
 pub use request_id::{IdGenerator, RequestId, RequestIdConfig};
-pub use request_limits::{RequestLimits, RequestLimitsConfig};
+pub use request_limits::{LimitViolation, RequestLimits, RequestLimitsConfig};
 pub use retry::{Retry, RetryConfig};
 pub use security_headers::{SecurityHeaders, SecurityHeadersConfig};
 pub use timeout::{Timeout, TimeoutConfig};

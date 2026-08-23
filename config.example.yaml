@@ -37,8 +37,27 @@ gateway:
     # When true, readiness waits for the first service-discovery sync.
     require_discovery_sync: true
 
-  # Max request body size (in bytes)
+  # Max request body size (in bytes). Enforced while the body is read, so it
+  # bounds chunked, HTTP/2 and HTTP/3 requests that carry no Content-Length.
   max_body_size: 10485760  # 10MB
+
+  # Gateway-wide request limits. Enforced before the body is buffered.
+  request_limits:
+    # Set false to disable enforcement entirely (bodies are then buffered
+    # with no size cap).
+    enabled: true
+    # Overrides gateway.max_body_size above when set.
+    # max_body_size: 10485760
+    # Total size of all request headers. Unset = not enforced.
+    # 8192 is a common choice, but large cookies or JWT-bearing Authorization
+    # headers exceed it routinely, so measure your traffic before setting it.
+    # max_header_size: 8192
+    # Request URI length. Unset = not enforced.
+    # max_uri_length: 8192
+    # Optional custom rejection messages.
+    # body_size_error_message: "Request body too large"
+    # header_size_error_message: "Request headers too large"
+    # uri_length_error_message: "Request URI too long"
 
   # Reject requests whose Host/:authority disagrees with the negotiated TLS SNI
   # (anti host-spoofing; also the correct HTTP/2 connection-coalescing response).
