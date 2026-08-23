@@ -100,10 +100,10 @@ thiserror = "1.0"
 # Logging & Tracing
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-tracing-opentelemetry = "0.23"
-opentelemetry = { version = "0.22", features = ["metrics", "trace"] }
-opentelemetry-otlp = { version = "0.15", features = ["grpc-tonic"] }
-opentelemetry-semantic-conventions = "0.14"
+tracing-opentelemetry = "0.33"
+opentelemetry = { version = "0.32", features = ["metrics", "trace"] }
+opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic"] }
+opentelemetry-semantic-conventions = "0.32"
 
 # Metrics
 prometheus = { version = "0.13", features = ["process"] }
@@ -117,7 +117,7 @@ libloading = "0.8"
 rhai = { git = "https://github.com/rhaiscript/rhai.git", features = ["sync", "no_std"] }
 
 # Authentication
-jsonwebtoken = "9.2"
+jsonwebtoken = { version = "10.3", features = ["aws_lc_rs"] }
 argon2 = "0.5"
 
 # Rate limiting
