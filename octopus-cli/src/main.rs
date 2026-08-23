@@ -73,8 +73,7 @@ async fn main() -> Result<()> {
             // Load configuration first so logging can honor observability.logging
             // (level/format). The CLI --log-level still overrides the config level.
             let config = load_config_paths(&config)?;
-            let tracer_provider =
-                init_tracing(log_level.as_deref(), Some(&config.observability))?;
+            let tracer_provider = init_tracing(log_level.as_deref(), Some(&config.observability))?;
 
             tracing::info!("Starting Octopus API Gateway");
             tracing::info!(
