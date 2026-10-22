@@ -194,12 +194,38 @@ fn validate_routes(config: &Config) -> Result<()> {
     Ok(())
 }
 
+/// Check the FARP gateway hostnames while FARP is enabled.
+///
+/// `hostnames` is strict: every entry must pass
+/// [`HostMatch::parse_pattern`](octopus_router::HostMatch::parse_pattern).
+/// The legacy `hostname` keeps loading the way it did in 0.4.1: `""` and `*`
+/// mean host-agnostic routes, and any other value the strict parser rejects
+/// only logs a warning and is matched leniently.
 fn validate_farp(config: &Config) -> Result<()> {
-    if let Some(gateway) = &config.farp.gateway {
-        for hostname in gateway.effective_hostnames() {
-            octopus_router::HostMatch::parse_pattern(&hostname)
-                .map_err(|e| Error::Config(format!("farp.gateway.hostnames: {e}")))?;
+    if !config.farp.enabled {
+        return Ok(());
+    }
+    let Some(gateway) = &config.farp.gateway else {
+        return Ok(());
+    };
+
+    if !gateway.hostnames.is_empty() {
+        for (index, hostname) in gateway.hostnames.iter().enumerate() {
+            octopus_router::HostMatch::parse_pattern(hostname)
+                .map_err(|e| Error::Config(format!("farp.gateway.hostnames[{index}]: {e}")))?;
         }
+        return Ok(());
+    }
+
+    let hostname = gateway.hostname.trim();
+    if hostname.is_empty() || hostname == "*" {
+        return Ok(());
+    }
+    if let Err(e) = octopus_router::HostMatch::parse_pattern(hostname) {
+        tracing::warn!(
+            "farp.gateway.hostname: {e}; matching it leniently as before. \
+             Use farp.gateway.hostnames for strict checking"
+        );
     }
     Ok(())
 }

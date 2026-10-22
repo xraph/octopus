@@ -135,6 +135,21 @@ impl Router {
         removed
     }
 
+    /// Remove every route carrying `id` that came from `origin`, across all
+    /// methods and hosts. Routes of other origins that happen to share the id
+    /// stay. Returns the number of routes removed.
+    pub fn remove_routes_by_id_and_origin(&self, id: &str, origin: RouteOrigin) -> usize {
+        let removed = self
+            .tries
+            .iter_mut()
+            .map(|mut entry| entry.value_mut().remove_by_id_and_origin(id, origin))
+            .sum();
+        if removed > 0 {
+            tracing::debug!(id = %id, origin = origin.as_str(), removed, "Routes removed from router by id and origin");
+        }
+        removed
+    }
+
     /// Every route carrying `id`, across all methods and hosts.
     pub fn routes_by_id(&self, id: &str) -> Vec<Route> {
         self.get_all_routes()
@@ -349,6 +364,7 @@ impl Default for Router {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn test_router_new() {
@@ -542,13 +558,91 @@ mod tests {
             ))
             .unwrap();
 
+        router
+            .add_route(origin_route(
+                Method::POST,
+                "/svc/y",
+                "svc",
+                HostMatch::Exact("old.dev".into()),
+                Some("farp:svc"),
+                RouteOrigin::Farp,
+            ))
+            .unwrap();
+
+        // The trie refuses a second copy on the same host, so a repeated host
+        // used to show up only as a failed insert. Count those as warnings.
+        static WARNINGS: AtomicUsize = AtomicUsize::new(0);
         let a = HostMatch::Exact("a.dev".into());
         let b = HostMatch::Exact("b.dev".into());
-        let inserted = router.rehost_routes(RouteOrigin::Farp, &[a.clone(), b, a]);
-        assert_eq!(inserted, 2);
-        assert_eq!(router.total_route_count(), 2);
-        assert!(matches(&router, "a.dev", &Method::GET, "/svc/x"));
-        assert!(matches(&router, "b.dev", &Method::GET, "/svc/x"));
+        let hosts = [a.clone(), b.clone(), a, b];
+        let inserted = tracing::subscriber::with_default(WarnCounter(&WARNINGS), || {
+            router.rehost_routes(RouteOrigin::Farp, &hosts)
+        });
+
+        // 2 unique hosts x 2 routes, and no insert ever failed.
+        assert_eq!(inserted, 2 * 2);
+        assert_eq!(
+            WARNINGS.load(Ordering::SeqCst),
+            0,
+            "a duplicate host was inserted twice"
+        );
+        assert_eq!(router.total_route_count(), 4);
+        for host in ["a.dev", "b.dev"] {
+            assert!(matches(&router, host, &Method::GET, "/svc/x"));
+            assert!(matches(&router, host, &Method::POST, "/svc/y"));
+        }
+    }
+
+    /// A subscriber that counts WARN and ERROR events.
+    struct WarnCounter(&'static AtomicUsize);
+
+    impl tracing::Subscriber for WarnCounter {
+        fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+        fn event(&self, event: &tracing::Event<'_>) {
+            if *event.metadata().level() <= tracing::Level::WARN {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        fn enter(&self, _: &tracing::span::Id) {}
+        fn exit(&self, _: &tracing::span::Id) {}
+    }
+
+    #[test]
+    fn remove_routes_by_id_and_origin_leaves_other_origins() {
+        let router = Router::new();
+        let host = HostMatch::Exact("a.dev".into());
+        for (path, origin) in [
+            ("/svc/a", RouteOrigin::Farp),
+            ("/svc/b", RouteOrigin::Config),
+            ("/svc/c", RouteOrigin::Admin),
+        ] {
+            router
+                .add_route(origin_route(
+                    Method::GET,
+                    path,
+                    "svc",
+                    host.clone(),
+                    Some("farp:svc"),
+                    origin,
+                ))
+                .unwrap();
+        }
+
+        assert_eq!(
+            router.remove_routes_by_id_and_origin("farp:svc", RouteOrigin::Farp),
+            1
+        );
+        assert!(!matches(&router, "a.dev", &Method::GET, "/svc/a"));
+        assert!(matches(&router, "a.dev", &Method::GET, "/svc/b"));
+        assert!(matches(&router, "a.dev", &Method::GET, "/svc/c"));
+        assert_eq!(router.routes_by_id("farp:svc").len(), 2);
     }
 
     #[test]

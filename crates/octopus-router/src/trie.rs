@@ -2,7 +2,7 @@
 
 use crate::host::HostMatch;
 use crate::matcher::{Match, PathMatcher};
-use crate::route::Route;
+use crate::route::{Route, RouteOrigin};
 use octopus_core::{Error, Result};
 use std::collections::HashMap;
 
@@ -186,27 +186,38 @@ impl RouteTrie {
     /// Remove every route carrying `id`, wherever it sits in the trie.
     /// Returns the number of routes removed.
     pub fn remove_by_id(&mut self, id: &str) -> usize {
-        let removed = Self::remove_by_id_recursive(&mut self.root, id);
+        self.remove_where(&|r| r.id.as_deref() == Some(id))
+    }
+
+    /// Remove every route carrying `id` that came from `origin`. Routes of
+    /// other origins keep the id. Returns the number of routes removed.
+    pub fn remove_by_id_and_origin(&mut self, id: &str, origin: RouteOrigin) -> usize {
+        self.remove_where(&|r| r.origin == origin && r.id.as_deref() == Some(id))
+    }
+
+    /// Remove every route `doomed` selects. Returns the number removed.
+    fn remove_where(&mut self, doomed: &dyn Fn(&Route) -> bool) -> usize {
+        let removed = Self::remove_where_recursive(&mut self.root, doomed);
         self.count -= removed;
         removed
     }
 
-    fn remove_by_id_recursive(node: &mut TrieNode, id: &str) -> usize {
+    fn remove_where_recursive(node: &mut TrieNode, doomed: &dyn Fn(&Route) -> bool) -> usize {
         let before = node.routes.len();
-        node.routes.retain(|r| r.id.as_deref() != Some(id));
+        node.routes.retain(|r| !doomed(r));
         let mut removed = before - node.routes.len();
         if removed > 0 {
             node.clear_matcher_if_empty();
         }
 
         for child in node.children.values_mut() {
-            removed += Self::remove_by_id_recursive(child, id);
+            removed += Self::remove_where_recursive(child, doomed);
         }
         if let Some(ref mut child) = node.param_child {
-            removed += Self::remove_by_id_recursive(child, id);
+            removed += Self::remove_where_recursive(child, doomed);
         }
         if let Some(ref mut child) = node.wildcard_child {
-            removed += Self::remove_by_id_recursive(child, id);
+            removed += Self::remove_where_recursive(child, doomed);
         }
         removed
     }

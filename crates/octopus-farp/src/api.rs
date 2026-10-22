@@ -45,21 +45,6 @@ fn bearer_token(value: &str) -> Option<&str> {
     (scheme.eq_ignore_ascii_case("bearer") && !credential.is_empty()).then_some(credential)
 }
 
-/// The HTTP method a FARP route table or OpenAPI document names, if FARP
-/// routes it.
-pub(crate) fn http_method(name: &str) -> Option<Method> {
-    match name.to_uppercase().as_str() {
-        "GET" => Some(Method::GET),
-        "POST" => Some(Method::POST),
-        "PUT" => Some(Method::PUT),
-        "DELETE" => Some(Method::DELETE),
-        "PATCH" => Some(Method::PATCH),
-        "HEAD" => Some(Method::HEAD),
-        "OPTIONS" => Some(Method::OPTIONS),
-        _ => None,
-    }
-}
-
 /// FARP API handler
 #[derive(Clone, Debug)]
 pub struct FarpApiHandler {
@@ -550,7 +535,7 @@ impl FarpApiHandler {
                             continue;
                         }
                         for method_str in &route_desc.methods {
-                            let Some(method) = http_method(method_str) else {
+                            let Some(method) = crate::routes::http_method(method_str) else {
                                 continue;
                             };
                             builders.push(crate::routes::service_route_builder(
@@ -584,7 +569,7 @@ impl FarpApiHandler {
                             let Some(ops) = operations.as_object() else {
                                 continue;
                             };
-                            for method in ops.keys().filter_map(|m| http_method(m)) {
+                            for method in ops.keys().filter_map(|m| crate::routes::http_method(m)) {
                                 builders.push(crate::routes::service_route_builder(
                                     &service_name,
                                     path,

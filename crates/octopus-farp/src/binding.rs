@@ -44,21 +44,28 @@ pub struct GatewayBinding {
 
 impl GatewayBinding {
     /// Create a binding for one `hostname` (Gateway API syntax: exact or
-    /// `*.suffix`). An empty hostname or `*` binds to any host.
+    /// `*.suffix`). An empty hostname or `*` gives host-agnostic routes, as
+    /// the legacy `farp.gateway.hostname` always did.
     pub fn new(hostname: &str) -> Self {
-        Self::with_hosts(vec![HostMatch::parse(hostname)])
+        Self::for_hostnames(&[hostname.to_string()])
     }
 
     /// Create a binding for every hostname in `hostnames`.
     ///
     /// Each one is normalized the way configuration hosts are (lowercase, one
     /// trailing dot dropped) and duplicates are dropped. A value the strict
-    /// parser rejects falls back to the lenient one, because Kubernetes
-    /// resources reach here without config validation. Blank values are
-    /// skipped, so an empty list gives host-agnostic routes.
+    /// parser rejects falls back to the lenient one, because the legacy
+    /// `hostname` key and Kubernetes resources reach here without strict
+    /// validation. Blank values and `*` are skipped, so a list of only those
+    /// (or an empty one) gives host-agnostic routes and `hosts` never holds
+    /// [`HostMatch::Any`].
     pub fn for_hostnames(hostnames: &[String]) -> Self {
         let mut hosts = Vec::with_capacity(hostnames.len());
-        for hostname in hostnames.iter().map(|h| h.trim()).filter(|h| !h.is_empty()) {
+        for hostname in hostnames
+            .iter()
+            .map(|h| h.trim())
+            .filter(|h| !h.is_empty() && *h != "*")
+        {
             let host =
                 HostMatch::parse_pattern(hostname).unwrap_or_else(|_| HostMatch::parse(hostname));
             if !hosts.contains(&host) {
@@ -272,6 +279,25 @@ mod tests {
             " ".into(),
         ]);
         assert_eq!(binding.hosts, vec![HostMatch::Exact("api.acme.dev".into())]);
+    }
+
+    #[test]
+    fn star_and_blank_hostnames_mean_host_agnostic() {
+        let binding = GatewayBinding::for_hostnames(&["*".into(), String::new()]);
+        assert!(binding.hosts.is_empty());
+        assert!(binding.hostnames().is_empty());
+
+        let binding = GatewayBinding::for_hostnames(&["*".into(), "a.dev".into()]);
+        assert_eq!(binding.hosts, vec![HostMatch::Exact("a.dev".into())]);
+
+        assert!(GatewayBinding::new("*").hosts.is_empty());
+        assert!(GatewayBinding::new("").hosts.is_empty());
+    }
+
+    #[test]
+    fn legacy_hostname_the_strict_parser_rejects_still_binds() {
+        let binding = GatewayBinding::new("my_svc.local");
+        assert_eq!(binding.hosts, vec![HostMatch::Exact("my_svc.local".into())]);
     }
 
     #[test]

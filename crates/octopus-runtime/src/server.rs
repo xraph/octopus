@@ -1056,16 +1056,7 @@ impl ServerBuilder {
 
             // Optional virtual-gateway binding: put every FARP route on each
             // listed hostname (e.g. api.example.cloud) and attach it for policy.
-            let farp_binding = config.farp.gateway.as_ref().map(|g| {
-                octopus_farp::GatewayBinding::for_hostnames(&g.effective_hostnames())
-                    .with_gateway_id(g.gateway_id.clone())
-                    .with_default_auth(g.default_auth_provider.clone())
-                    .with_rate_limit(
-                        g.default_rate_limit_per_minute
-                            .map(|rpm| (rpm, std::time::Duration::from_secs(60))),
-                    )
-                    .with_timeout(g.default_timeout)
-            });
+            let farp_binding = config.farp.gateway.as_ref().map(farp_binding_from_config);
 
             // Build the handler first so its (hot-swappable) binding cell can be
             // shared with the discovery watcher — a CRD-driven binding update via
@@ -1517,6 +1508,21 @@ impl ServerBuilder {
 /// Fail fast when `admin.require_auth` is set but nothing would protect the
 /// admin surface: neither built-in session auth (`session_auth`) nor an
 /// `admin.auth_provider`.
+/// The FARP gateway binding `farp.gateway` describes: every effective
+/// hostname (none means host-agnostic routes) plus the gateway policy.
+fn farp_binding_from_config(
+    g: &octopus_config::types::FarpGatewayConfig,
+) -> octopus_farp::GatewayBinding {
+    octopus_farp::GatewayBinding::for_hostnames(&g.effective_hostnames())
+        .with_gateway_id(g.gateway_id.clone())
+        .with_default_auth(g.default_auth_provider.clone())
+        .with_rate_limit(
+            g.default_rate_limit_per_minute
+                .map(|rpm| (rpm, std::time::Duration::from_secs(60))),
+        )
+        .with_timeout(g.default_timeout)
+}
+
 pub(crate) fn ensure_admin_auth(
     admin: &octopus_config::types::AdminConfig,
     session_auth: bool,
@@ -1539,6 +1545,33 @@ impl Default for ServerBuilder {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn legacy_star_hostname_binds_host_agnostic_routes_with_policy() {
+        let config = octopus_config::load_from_str(
+            "gateway: {listen: '127.0.0.1:8080'}\n\
+             farp: {enabled: true, gateway: {hostname: '*', gateway_id: g, default_auth_provider: x}}\n",
+            octopus_config::ConfigFormat::Yaml,
+        )
+        .unwrap();
+        octopus_config::validate_config(&config).unwrap();
+
+        let binding = super::farp_binding_from_config(config.farp.gateway.as_ref().unwrap());
+        assert!(binding.hosts.is_empty());
+        let builders = octopus_farp::expand_gateway_binding(
+            octopus_router::RouteBuilder::new()
+                .method(http::Method::GET)
+                .path("/billing/invoices")
+                .upstream_name("billing"),
+            Some(&binding),
+            false,
+        );
+        assert_eq!(builders.len(), 1);
+        let route = builders.into_iter().next().unwrap().build().unwrap();
+        assert_eq!(route.host, octopus_router::HostMatch::Any);
+        assert_eq!(route.gateway_id.as_deref(), Some("g"));
+        assert_eq!(route.auth_provider.as_deref(), Some("x"));
+    }
+
     use super::*;
     use octopus_config::{ConfigBuilder, GatewayConfig};
     use std::time::Duration;

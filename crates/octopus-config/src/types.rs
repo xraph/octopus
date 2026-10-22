@@ -1871,15 +1871,39 @@ mod tests {
         );
     }
 
+    fn farp_config(farp: &str) -> Config {
+        serde_yaml::from_str(&format!(
+            "gateway: {{listen: '127.0.0.1:8080'}}\nfarp: {farp}\n"
+        ))
+        .unwrap()
+    }
+
     #[test]
     fn farp_gateway_rejects_a_bad_hostname() {
-        let config: Config = serde_yaml::from_str(
-            "gateway: {listen: '127.0.0.1:8080'}\n\
-             farp:\n  gateway:\n    hostnames: ['api.*.dev']\n",
-        )
-        .unwrap();
-        let err = crate::validate_config(&config).unwrap_err();
-        assert!(err.to_string().contains("api.*.dev"), "{err}");
+        let config = farp_config("{enabled: true, gateway: {hostnames: [ok.dev, 'api.*.dev']}}");
+        let err = crate::validate_config(&config).unwrap_err().to_string();
+        assert!(err.contains("farp.gateway.hostnames[1]"), "{err}");
+        assert!(err.contains("api.*.dev"), "{err}");
+
+        let config = farp_config("{enabled: true, gateway: {hostnames: ['*']}}");
+        assert!(crate::validate_config(&config).is_err());
+    }
+
+    #[test]
+    fn farp_hostnames_are_not_checked_while_farp_is_off() {
+        let config = farp_config("{enabled: false, gateway: {hostnames: ['api.*.dev']}}");
+        crate::validate_config(&config).unwrap();
+    }
+
+    #[test]
+    fn legacy_farp_hostname_loads_as_leniently_as_before() {
+        for hostname in ["'*'", "''", "my_svc.local", "api.*.dev"] {
+            let config = farp_config(&format!(
+                "{{enabled: true, gateway: {{hostname: {hostname}, gateway_id: g}}}}"
+            ));
+            crate::validate_config(&config)
+                .unwrap_or_else(|e| panic!("hostname {hostname} should load: {e}"));
+        }
     }
 
     #[test]

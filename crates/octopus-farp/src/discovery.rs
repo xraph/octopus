@@ -7,7 +7,6 @@ use crate::federation::SchemaFederation;
 use crate::manifest::SchemaManifest;
 use crate::registry::SchemaRegistry;
 use crate::schema::SchemaFormat;
-use http::Method;
 use octopus_core::{Error, Result, UpstreamCluster, UpstreamInstance};
 use octopus_discovery::{DiscoveryProvider, ServiceInstance};
 use octopus_router::{RouteBuilder, Router};
@@ -602,13 +601,14 @@ impl DiscoveryWatcher {
                 let auth_config = registration.manifest.auth_config.as_ref();
                 let builders = routes
                     .iter()
-                    .map(|gen_route| {
+                    .filter_map(|gen_route| {
+                        let method = crate::routes::http_method(&gen_route.method)?;
                         let builder = crate::routes::service_route_builder(
                             service_name,
                             &gen_route.path,
-                            gen_route.method.parse().unwrap_or(Method::GET),
+                            method,
                         );
-                        with_auth_config(builder, auth_config)
+                        Some(with_auth_config(builder, auth_config))
                     })
                     .collect();
 
@@ -672,7 +672,10 @@ impl DiscoveryWatcher {
 
             // For each HTTP method in the path. Non-HTTP keys (like
             // "parameters" or "servers") are skipped.
-            for method in operations.keys().filter_map(|m| crate::api::http_method(m)) {
+            for method in operations
+                .keys()
+                .filter_map(|m| crate::routes::http_method(m))
+            {
                 let builder = crate::routes::service_route_builder(service_name, path, method);
                 builders.push(with_auth_config(builder, manifest_auth_config.as_ref()));
             }

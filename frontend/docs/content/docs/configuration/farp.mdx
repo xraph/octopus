@@ -76,20 +76,29 @@ farp:
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `hostnames` | array of string | `[]` | Hostnames every FARP route lands on: exact hosts (`api.acme.dev`) or `*.zone` wildcards. Wins over `hostname` when both are set. |
-| `hostname` | string | none | Legacy single hostname. Still read, and used only when `hostnames` is empty. |
+| `hostname` | string | none | Legacy single hostname. Still read, and used only when `hostnames` is empty. Checked leniently, see below. |
 | `gateway_id` | string | none | Virtual gateway id attached to each FARP route. |
 | `default_auth_provider` | string | none | Auth provider for FARP routes whose service doesn't declare one. |
 | `default_rate_limit_per_minute` | integer | none | Rate limit applied to FARP routes. |
 | `default_timeout` | duration | none | Per-request timeout applied to FARP routes. |
 
-Hostnames follow the same rules as [route hosts](/docs/configuration/routes): lowercase ASCII
-labels, with `*.` allowed only as the first label. Config loading fails on anything else. A
-wildcard never covers its apex, so `*.acme.dev` matches `api.acme.dev` but not `acme.dev`; list
-both if you want both. With no hostnames at all, FARP routes match any host and still pick up
-`gateway_id`, the auth provider, the rate limit and the timeout.
+Entries in `hostnames` follow the same rules as [route hosts](/docs/configuration/routes):
+lowercase ASCII labels, with `*.` allowed only as the first label. With FARP enabled, config
+loading fails on anything else and the error names the entry, for example
+`farp.gateway.hostnames[1]`. A wildcard never covers its apex, so `*.acme.dev` matches
+`api.acme.dev` but not `acme.dev`; list both if you want both.
 
-Each service gets one route per method and per hostname. For a service named `billing` that
-declares `GET /invoices`, the gateway adds:
+The legacy `hostname` loads the way it always has. `""` and `"*"` mean any host. A value the
+strict rules reject, such as `my_svc.local`, still loads: the gateway logs a warning and matches
+it as written. Move to `hostnames` when you want the check.
+
+With no hostnames at all (none listed, or a legacy `hostname` of `""` or `"*"`), FARP routes
+match any host and still pick up `gateway_id`, the auth provider, the rate limit and the
+timeout. While `farp.enabled` is `false` the hostnames aren't checked.
+
+Each service gets one route per method and per hostname. The shape is the same whether the
+service registered itself over the push API or a discovery backend found it. For a service named
+`billing` that declares `GET /invoices`, the gateway adds:
 
 - path `/billing/invoices` (the service name lowercased, then the declared path),
 - `strip_prefix: /billing`, so the service receives `/invoices`,
