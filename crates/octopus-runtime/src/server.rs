@@ -75,6 +75,49 @@ async fn serve_io<IO>(
     }
 }
 
+/// Spawn the accept loop for the private admin listener (plain HTTP).
+///
+/// Returns the stop sender and the task: sending `true` (or dropping the
+/// sender) makes the loop stop accepting and drop the socket. Connections
+/// already accepted finish on their own tasks.
+fn spawn_admin_listener(
+    listener: tokio::net::TcpListener,
+    handler: crate::RequestHandler,
+) -> (
+    tokio::sync::watch::Sender<bool>,
+    tokio::task::JoinHandle<()>,
+) {
+    let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
+    if let Ok(addr) = listener.local_addr() {
+        tracing::info!(
+            "Admin listener on {}: admin UI, admin API, FARP registration, metrics",
+            addr
+        );
+    }
+    let task = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                result = listener.accept() => match result {
+                    Ok((stream, addr)) => {
+                        tracing::trace!("Accepted admin connection from {}", addr);
+                        let handler = handler.clone();
+                        tokio::spawn(serve_io(stream, handler, None, None, addr));
+                    }
+                    Err(e) => tracing::error!("Failed to accept admin connection: {}", e),
+                },
+                // A send of `true` or a dropped sender both end the loop.
+                changed = stop_rx.changed() => {
+                    if changed.is_err() || *stop_rx.borrow() {
+                        break;
+                    }
+                }
+            }
+        }
+        tracing::info!("Admin listener stopped accepting");
+    });
+    (stop_tx, task)
+}
+
 /// Spawn a background task that reloads the file-based TLS certificate when the
 /// cert file's modification time changes, rebuilding the config (preserving mTLS
 /// and ALPN) and swapping it into the live acceptor with no downtime.
@@ -193,6 +236,11 @@ impl Server {
         self.config.gateway.listen
     }
 
+    /// Address of the private admin listener (`admin.listen`), if configured.
+    pub fn admin_listen_addr(&self) -> Option<SocketAddr> {
+        self.config.admin.listen
+    }
+
     /// Get router
     pub fn router(&self) -> &Router {
         &self.router
@@ -271,7 +319,17 @@ impl Server {
             .map_err(|e| {
                 Error::Runtime(format!("Failed to bind to {}: {}", self.listen_addr(), e))
             })?;
-        // Listener is bound — startup probe can now pass.
+
+        // The private admin listener (plain HTTP, never TLS), bound before the
+        // startup probe passes so a bad `admin.listen` fails the start.
+        let admin_listener = match self.admin_listen_addr() {
+            Some(addr) => Some(tokio::net::TcpListener::bind(addr).await.map_err(|e| {
+                Error::Runtime(format!("Failed to bind admin listener to {addr}: {e}"))
+            })?),
+            None => None,
+        };
+
+        // Both listeners are bound, so the startup probe can now pass.
         self.lifecycle.mark_bind_complete();
 
         // Create TLS acceptor if configured
@@ -622,6 +680,16 @@ impl Server {
             }
         }
 
+        // With a private admin listener the gateway port (TCP and QUIC) only
+        // proxies, and the admin listener gets a clone made after every setter
+        // above, so admin auth, the IP allowlist and probes apply unchanged.
+        let admin_stop = admin_listener.map(|listener| {
+            let mut private = handler.clone();
+            private.set_listener_role(crate::handler::ListenerRole::Private);
+            handler.set_listener_role(crate::handler::ListenerRole::Public);
+            spawn_admin_listener(listener, private)
+        });
+
         // Start the HTTP/3 listener on UDP, alongside the TCP listener above.
         // Config validation has already rejected http3.enabled without TLS.
         if self.config.gateway.http3.enabled {
@@ -782,6 +850,12 @@ impl Server {
                     break;
                 }
             }
+        }
+
+        // The admin listener stops accepting with the gateway.
+        if let Some((stop, task)) = admin_stop {
+            let _ = stop.send(true);
+            let _ = task.await;
         }
 
         // Readiness is NotReady, state is ShuttingDown, and we have stopped

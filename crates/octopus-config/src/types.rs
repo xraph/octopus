@@ -1571,6 +1571,12 @@ pub struct AdminConfig {
     /// `OCTOPUS_ADMIN_PASSWORD` or `OCTOPUS_ADMIN_API_TOKEN` environment
     /// variable, or `auth_provider`. Default `false`.
     pub require_auth: bool,
+    /// Address of a second, plain-HTTP listener that serves the admin UI,
+    /// admin API, FARP registration, metrics and probes. When set, the
+    /// gateway listener stops serving those paths and only proxies (probes
+    /// still answer on both). Unset keeps everything on `gateway.listen`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listen: Option<SocketAddr>,
 }
 
 // Auth config defaults

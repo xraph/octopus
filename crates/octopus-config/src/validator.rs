@@ -73,6 +73,21 @@ fn validate_gateway(config: &Config) -> Result<()> {
         }
     }
 
+    // The private admin listener needs its own socket. An unspecified IP
+    // (0.0.0.0 / ::) covers every interface, so it collides with any IP on
+    // the same port.
+    if let Some(admin) = config.admin.listen {
+        let gateway = config.gateway.listen;
+        let same_ip = admin.ip() == gateway.ip()
+            || admin.ip().is_unspecified()
+            || gateway.ip().is_unspecified();
+        if admin.port() == gateway.port() && same_ip {
+            return Err(Error::Config(
+                "admin.listen must use a different port from gateway.listen".to_string(),
+            ));
+        }
+    }
+
     // Validate TLS configuration if present
     if let Some(ref tls) = config.gateway.tls {
         if tls.cert_file.is_empty() {
@@ -292,6 +307,38 @@ mod tests {
         config.gateway.tls = None;
         config.gateway.http3.enabled = false;
 
+        assert!(validate_config(&config).is_ok());
+    }
+
+    /// The private admin listener and the gateway cannot share a socket: the
+    /// second bind would fail at startup, long after the config was accepted.
+    #[test]
+    fn admin_listen_must_differ_from_gateway_listen() {
+        let mut config = minimal_config();
+        config.gateway.listen = "0.0.0.0:8080".parse().unwrap();
+
+        config.admin.listen = Some("0.0.0.0:8080".parse().unwrap());
+        let err = validate_config(&config).expect_err("same address must fail");
+        assert!(
+            err.to_string()
+                .contains("admin.listen must use a different port from gateway.listen"),
+            "unexpected error: {err}"
+        );
+
+        // An unspecified gateway IP covers every interface, so a specific
+        // admin IP on the same port still collides.
+        config.admin.listen = Some("127.0.0.1:8080".parse().unwrap());
+        assert!(validate_config(&config).is_err());
+
+        config.admin.listen = Some("127.0.0.1:9090".parse().unwrap());
+        assert!(validate_config(&config).is_ok());
+
+        // Two distinct, specific IPs may share a port.
+        config.gateway.listen = "10.0.0.1:8080".parse().unwrap();
+        config.admin.listen = Some("127.0.0.1:8080".parse().unwrap());
+        assert!(validate_config(&config).is_ok());
+
+        config.admin.listen = None;
         assert!(validate_config(&config).is_ok());
     }
 

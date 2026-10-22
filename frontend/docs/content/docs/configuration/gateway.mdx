@@ -1,6 +1,6 @@
 ---
 title: Gateway
-description: The gateway section — listen address, worker threads, request and shutdown timeouts, body size limits, internal route prefix, SNI enforcement, health probes, and response compression.
+description: The gateway section. Listen address, worker threads, request and shutdown timeouts, body size limits, internal route prefix, SNI enforcement, health probes, and response compression.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -26,7 +26,7 @@ gateway:
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `listen` | socket address | — | Address and port to bind, e.g. `0.0.0.0:8080`. **Required.** |
+| `listen` | socket address | none | Address and port to bind, e.g. `0.0.0.0:8080`. **Required.** |
 | `workers` | integer | `0` | Worker threads. `0` means auto (derive from CPUs). |
 | `request_timeout` | duration | `30s` | Per-request timeout. Must be greater than zero. |
 | `shutdown_timeout` | duration | `30s` | Graceful shutdown window to drain in-flight requests. |
@@ -34,7 +34,7 @@ gateway:
 | `max_body_size` | integer (bytes) | `10485760` (10 MiB) | Maximum request body size. Must be greater than zero. |
 | `tls` | object | none | TLS listener configuration. See [TLS](/docs/configuration/tls). |
 | `compression` | object | enabled | Response compression. See [below](#compression). |
-| `internal_route_prefix` | string | `"__"` | Prefix for built-in internal endpoints (admin, metrics, FARP), e.g. `/__admin`, `/__metrics`. |
+| `internal_route_prefix` | string | `"__"` | Prefix for built-in internal endpoints (admin, metrics, FARP), e.g. `/__admin`, `/__metrics`. With `admin.listen` set, those endpoints move to the admin port and this port routes the paths like any other. See [Admin](/docs/configuration/admin#private-admin-listener). |
 | `probes` | object | enabled | Kubernetes-style health probe endpoints. See [below](#probes). |
 | `enforce_sni_check` | boolean | `true` | Reject requests whose `Host` / `:authority` disagrees with the negotiated TLS SNI (anti host-spoofing). Disable when TLS is terminated upstream or `Host` legitimately differs from the SNI. |
 | `security_headers` | object | disabled | Security response headers (HSTS, CSP, `X-Frame-Options`, …). See [below](#security-headers). |
@@ -48,7 +48,9 @@ gateway:
 ## Probes
 
 The `gateway.probes` object controls the health endpoints served on the gateway's listen port,
-intended for Kubernetes liveness/readiness/startup probes and external load-balancer checks.
+intended for Kubernetes liveness/readiness/startup probes and external load-balancer checks. When
+you set `admin.listen`, the probes answer on the admin port too, so you can point a probe at
+either one.
 
 ```yaml
 gateway:

@@ -38,6 +38,12 @@ config:
       readiness_path: /readyz
       startup_path: /startupz
       require_discovery_sync: true
+  # Admin UI, admin API, FARP registration and metrics move to this private
+  # listener (service.adminPort); the gateway port then only proxies. Never
+  # publish or route port 9090. Probes answer on both ports. Remove this block
+  # to serve everything on the gateway port, as 0.4.x did.
+  admin:
+    listen: "0.0.0.0:9090"
   farp:
     enabled: true
     discovery:
@@ -78,6 +84,8 @@ rbac:
 service:
   type: ClusterIP
   port: 8080
+  # Private admin listener (config.admin.listen). Keep it off any Ingress,
+  # Gateway or LoadBalancer.
   adminPort: 9090
 
 # HTTP/3 (QUIC). Adds a UDP port to the Service and Deployment; the gateway
@@ -149,7 +157,8 @@ probes:
 
 # ── Metrics ──────────────────────────────────────────────────────────────────
 metrics:
-  # Path the gateway serves Prometheus metrics on (gateway port).
+  # Path Prometheus metrics are served on: the admin port when
+  # config.admin.listen is set, otherwise the gateway port.
   path: /metrics
   serviceMonitor:
     enabled: false

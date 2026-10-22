@@ -13,7 +13,8 @@ spec:
     matchLabels:
       {{- include "octopus.selectorLabels" . | nindent 6 }}
   endpoints:
-    - port: http
+    # Metrics live on the private admin listener once config.admin.listen is set.
+    - port: {{ if dig "admin" "listen" "" .Values.config }}admin{{ else }}http{{ end }}
       path: {{ .Values.metrics.path }}
       interval: {{ .Values.metrics.serviceMonitor.interval }}
       scrapeTimeout: {{ .Values.metrics.serviceMonitor.scrapeTimeout }}

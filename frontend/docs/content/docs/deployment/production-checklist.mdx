@@ -1,6 +1,6 @@
 ---
 title: Production checklist
-description: A practical pre-flight checklist for running Octopus in production — TLS, authentication, health probes, resource limits, graceful drain, and metrics scraping — grounded in features that actually work, with notes where configuration is known to be inert.
+description: A practical pre-flight checklist for running Octopus in production. TLS, authentication, a private admin port, health probes, resource limits, graceful drain and metrics scraping, grounded in features that actually work, with notes where configuration is known to be inert.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -14,7 +14,7 @@ the [configuration implementation status](/docs/configuration).
 
 ## Transport security (TLS)
 
-- [ ] **Terminate TLS** — either on the gateway itself (`gateway.tls` with `cert_file` /
+- [ ] **Terminate TLS**, either on the gateway itself (`gateway.tls` with `cert_file` /
   `key_file`) or at a load balancer / ingress in front of it. Don't serve plaintext to the
   internet. See [TLS configuration](/docs/configuration/tls).
 - [ ] **Enable certificate hot-reload** if you terminate on the gateway, so rotated certs are
@@ -23,7 +23,7 @@ the [configuration implementation status](/docs/configuration).
   `client_ca_file`). See [mTLS](/docs/security/mtls).
 - [ ] **Set a minimum TLS version** (`min_tls_version`, e.g. `1.3`) appropriate to your clients.
 - [ ] On Kubernetes, TLS via cert-manager and Gateway listener Secrets is supported when the
-  operator's `terminate_tls` is enabled — see [TLS & cert-manager](/docs/kubernetes/tls-cert-manager).
+  operator's `terminate_tls` is enabled. See [TLS & cert-manager](/docs/kubernetes/tls-cert-manager).
 
 <Callout type="info">
   By default Octopus rejects requests whose `Host`/`:authority` disagrees with the negotiated TLS
@@ -33,10 +33,17 @@ the [configuration implementation status](/docs/configuration).
 
 ## Authentication & access control
 
-- [ ] **Protect routes that need it** with an auth provider — JWT, OIDC, API key, forward-auth,
+- [ ] **Protect routes that need it** with an auth provider: JWT, OIDC, API key, forward-auth
   or mTLS. See [Authentication](/docs/security/authentication).
-- [ ] **Protect the admin surface.** Set `admin.auth_provider` to an auth provider; with none
-  set, the admin dashboard is reachable **without authentication**.
+- [ ] **Move the admin surface to a private port.** Set `admin.listen: "0.0.0.0:9090"` and the
+  admin UI, admin API, FARP registration and `/metrics` leave the gateway port. Publish only 8080.
+  Never publish or route 9090: keep it off your Ingress, Gateway, LoadBalancer and `docker run -p`.
+  The Helm chart and bundled manifests already set it. See
+  [Private admin listener](/docs/configuration/admin#private-admin-listener).
+- [ ] **Protect the admin surface.** Set `OCTOPUS_ADMIN_PASSWORD` or `OCTOPUS_ADMIN_API_TOKEN`, or
+  `admin.auth_provider`, and turn on `admin.require_auth: true` so a missing secret stops startup.
+  With none set, the admin dashboard is reachable **without authentication**, on whichever port
+  serves it.
 - [ ] **Keep secrets out of the config file.** Use `${VAR}` substitution and inject JWT secrets,
   API keys, etc. from the environment (Kubernetes Secrets, your secret manager).
 
@@ -50,11 +57,11 @@ the [configuration implementation status](/docs/configuration).
 ## Health probes
 
 - [ ] **Wire all three probes** to the gateway listen port. They're enabled by default and served
-  on the listen port:
+  on the listen port (and on the admin port too, once `admin.listen` is set):
   - `startupProbe` → `/startupz` (200 once the listener has bound)
   - `livenessProbe` → `/livez` (200 while the process is alive; stays 200 while draining)
   - `readinessProbe` → `/readyz` (200 only when ready; flips to 503 on SIGTERM)
-- [ ] **Don't point liveness at `/readyz`** — a draining or not-yet-ready Pod would be killed
+- [ ] **Don't point liveness at `/readyz`.** A draining or not-yet-ready Pod would be killed
   instead of drained. The Helm chart and bundled manifests already wire these correctly.
 
 See [Health probes](/docs/observability/health-probes) and, on Kubernetes,
@@ -73,12 +80,12 @@ See [Health probes](/docs/observability/health-probes) and, on Kubernetes,
 ## Resource limits & runtime hardening
 
 - [ ] **Set CPU and memory requests and limits.** The Helm chart defaults to requests
-  `100m`/`128Mi` and limits `1`/`512Mi` — review these against your traffic.
+  `100m`/`128Mi` and limits `1`/`512Mi`. Review these against your traffic.
 - [ ] **Run as non-root.** The image already runs as `uid 1000`; the chart sets
   `runAsNonRoot`, drops all capabilities, disables privilege escalation, and uses a read-only
   root filesystem.
 - [ ] **Set `gateway.workers`** to match the cores you've actually allocated when you impose a CPU
-  limit — see [Scaling](/docs/deployment/scaling).
+  limit. See [Scaling](/docs/deployment/scaling).
 - [ ] **Set `gateway.max_body_size`** to bound request bodies (default 10 MB).
 
 ## Availability
@@ -86,29 +93,30 @@ See [Health probes](/docs/observability/health-probes) and, on Kubernetes,
 - [ ] **Run at least two replicas** behind a load balancer (the chart defaults to 2). A single
   instance is a single point of failure.
 - [ ] **Configure a shared state backend** if you use rate limiting, shared caching, or circuit
-  breaking across replicas — the default in-memory store is per-process. See
+  breaking across replicas. The default in-memory store is per-process. See
   [State](/docs/state) and [Scaling](/docs/deployment/scaling).
 - [ ] On Kubernetes, keep the **PodDisruptionBudget** (enabled by default) and spread replicas
   across nodes/zones with `topologySpreadConstraints`.
-- [ ] Consider the **HorizontalPodAutoscaler** for elastic capacity — see
+- [ ] Consider the **HorizontalPodAutoscaler** for elastic capacity. See
   [Scaling](/docs/deployment/scaling).
 
 ## Observability
 
-- [ ] **Scrape `/metrics`** on the gateway **listen port** (e.g. `:8080/metrics`). On Kubernetes,
-  enable the chart's `ServiceMonitor` (`metrics.serviceMonitor.enabled=true`), which scrapes the
-  `http` port at `/metrics`.
+- [ ] **Scrape `/metrics`** on the **admin port** (`:9090/metrics`) once `admin.listen` is set,
+  or on the gateway listen port (`:8080/metrics`) when it isn't. With `admin.listen` set, the
+  gateway port no longer serves `/metrics`. On Kubernetes, enable the chart's `ServiceMonitor`
+  (`metrics.serviceMonitor.enabled=true`). It scrapes the `admin` port when `config.admin.listen`
+  is set and the `http` port otherwise.
 - [ ] **Configure structured logging** (`observability.logging`, JSON in production) and ship logs
   to your aggregator. See [Logging](/docs/observability/logging).
 - [ ] **Enable tracing** if you run a Jaeger/OpenTelemetry collector
   (`observability.tracing`). See [Tracing](/docs/observability/tracing).
 
 <Callout type="warn">
-  Known-inert: the `/metrics` path is **fixed** and served on the gateway listen port. The
-  `observability.metrics.endpoint` field (the `0.0.0.0:9090` you may see in examples) is **not
-  wired** — it does not move or open a second listener — and `observability.metrics.enabled` does
-  **not** gate the endpoint. Treat both as informational and scrape `/metrics` on the listen
-  port. See [Metrics](/docs/observability/metrics).
+  Known-inert: the `/metrics` path is **fixed**. The `observability.metrics.endpoint` field (the
+  `0.0.0.0:9090` you may see in examples) is **not wired**. It does not open a listener; only
+  `admin.listen` moves metrics off the gateway port. Setting `observability.metrics.enabled: false`
+  turns the endpoint off (it answers `404`). See [Metrics](/docs/observability/metrics).
 </Callout>
 
 ## Configuration hygiene
