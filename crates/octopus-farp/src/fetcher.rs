@@ -49,11 +49,22 @@ impl std::fmt::Debug for RegistryBackend {
 /// `consul` crate: that crate's client is blocking and pins reqwest 0.11
 /// (hyper 0.14, h2 0.3), which carries open advisories.
 #[cfg(feature = "consul-backend")]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ConsulKvClient {
     http: reqwest::Client,
     address: String,
     token: Option<String>,
+}
+
+// Hand-written so `{:?}` never prints the ACL token.
+#[cfg(feature = "consul-backend")]
+impl std::fmt::Debug for ConsulKvClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ConsulKvClient")
+            .field("address", &self.address)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .finish_non_exhaustive()
+    }
 }
 
 #[cfg(feature = "consul-backend")]
@@ -481,5 +492,19 @@ mod tests {
 
         let missing = fetcher.fetch_schema(&descriptor("farp/missing")).await;
         assert!(missing.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[cfg(feature = "consul-backend")]
+    #[test]
+    fn test_consul_client_debug_redacts_token() {
+        let client = ConsulKvClient::new(reqwest::Client::new(), "http://127.0.0.1:8500")
+            .with_token("s3cr3t-acl-token");
+        let debug = format!("{client:?}");
+        assert!(!debug.contains("s3cr3t-acl-token"), "token leaked: {debug}");
+        assert!(debug.contains("<redacted>"));
+
+        let anonymous = ConsulKvClient::new(reqwest::Client::new(), "http://127.0.0.1:8500");
+        let debug = format!("{anonymous:?}");
+        assert!(debug.contains("token: None"), "unexpected: {debug}");
     }
 }
