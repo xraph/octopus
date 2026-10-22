@@ -50,6 +50,8 @@ jobs:
         with:
           images: ${{ env.GHCR_IMAGE }}
           tags: type=semver,pattern={{version}}
+          flavor: |
+            latest=false
           labels: |
             org.opencontainers.image.title=octopus
             org.opencontainers.image.description=Octopus API Gateway
@@ -159,6 +161,8 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha
+          flavor: |
+            latest=false
 
       - name: Create and push manifest list
         working-directory: ${{ runner.temp }}/digests

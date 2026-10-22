@@ -10,10 +10,10 @@ import { Callout } from 'fumadocs-ui/components/callout';
 # Octopus API Gateway 🐙
 
 **Octopus** is an API gateway written in Rust. It routes HTTP traffic to upstream services and
-can discover and configure those services automatically through **FARP** — the Forge API Gateway
-Registration Protocol. Services that speak FARP publish their own schemas (OpenAPI, AsyncAPI,
+can discover and configure those services automatically through **FARP** (the Forge API Gateway
+Registration Protocol). Services that speak FARP publish their own schemas (OpenAPI, AsyncAPI,
 gRPC, GraphQL) and Octopus turns them into routes as services come and go. You can also run it
-purely statically by listing `upstreams` and `routes` in a config file — the two modes work
+purely statically by listing `upstreams` and `routes` in a config file. The two modes work
 together.
 
 Octopus is maintained by [Xraph](https://github.com/xraph) and is part of the
@@ -23,7 +23,7 @@ Octopus is maintained by [Xraph](https://github.com/xraph) and is part of the
 
 <Cards>
   <Card title="⚡ Fast by default" description="An async core built on Tokio and Hyper, a trie-based router, connection pooling, and Rhai scripts that run in microseconds." />
-  <Card title="🔄 Schema-driven discovery" description="FARP watches services and generates routes from their published schemas — no hand-written route tables required." />
+  <Card title="🔄 Schema-driven discovery" description="FARP watches services and generates routes from their published schemas, with no hand-written route tables required." />
   <Card title="☸️ Kubernetes-first" description="An in-process operator programs the router from the Gateway API and Octopus CRDs, with probes, graceful drain, EndpointSlice discovery, and cert-manager TLS." />
   <Card title="🧩 Extensible" description="A middleware chain, an embedded Rhai scripting engine, and a plugin SDK for custom behaviour." />
   <Card title="🌐 Multi-protocol" description="HTTP/1.1 and HTTP/2 reverse proxying with WebSocket upgrades, plus gRPC and Server-Sent Events." />
@@ -32,16 +32,16 @@ Octopus is maintained by [Xraph](https://github.com/xraph) and is part of the
 
 ## Capabilities
 
-- **Reverse proxy** — HTTP/1.1 and HTTP/2 with connection pooling, configurable timeouts, and WebSocket upgrades.
-- **Routing** — a trie-based router with wildcard path matching, method filtering, prefix rewriting, and per-route priorities.
-- **Load balancing & resilience** — round-robin and weighted load balancing, active health checks, and circuit breaking.
-- **Service discovery** — FARP-driven discovery with backends for mDNS, Consul, DNS, and Kubernetes (EndpointSlice).
-- **Middleware** — compression and authentication run in the request chain today; the `octopus-middleware` crate also provides CORS, rate limiting, transformations, caching, a WAF, and more (see [Middleware](/docs/middleware) for what's currently wired).
-- **Security** — JWT, OIDC, API-key, forward-auth, and mTLS authentication; role/scope and Rhai/OPA authorization; TLS termination with mutual TLS (certificate hot-reload on the Kubernetes path).
-- **Scripting & plugins** — an embedded [Rhai](https://rhai.rs) scripting engine and a plugin SDK (`octopus-plugin-api`) for custom behaviour.
-- **Kubernetes** — an operator for the Gateway API (`HTTPRoute`/`GRPCRoute`) and Octopus CRDs, health probes, graceful drain, and a Helm chart.
-- **Observability** — Prometheus metrics, structured logging, and a built-in admin dashboard and REST API (distributed tracing is planned).
-- **Configuration** — layered YAML, JSON, or TOML with `${VAR}` / `${VAR:-default}` environment substitution and multi-file merging.
+- **Reverse proxy**: HTTP/1.1 and HTTP/2 with connection pooling, configurable timeouts, and WebSocket upgrades.
+- **Routing**: a trie-based router with wildcard path matching, method filtering, prefix rewriting, and per-route priorities.
+- **Load balancing & resilience**: round-robin and weighted load balancing, active health checks, and circuit breaking.
+- **Service discovery**: FARP-driven discovery with backends for mDNS, Consul, DNS, and Kubernetes (EndpointSlice).
+- **Middleware**: compression and authentication run in the request chain today; the `octopus-middleware` crate also provides CORS, rate limiting, transformations, caching, a WAF, and more (see [Middleware](/docs/middleware) for what's currently wired).
+- **Security**: JWT, OIDC, API-key, forward-auth, and mTLS authentication; role/scope and Rhai/OPA authorization; TLS termination with mutual TLS (certificate hot-reload on the Kubernetes path).
+- **Scripting & plugins**: an embedded [Rhai](https://rhai.rs) scripting engine and a plugin SDK (`octopus-plugin-api`) for custom behaviour.
+- **Kubernetes**: an operator for the Gateway API (`HTTPRoute`/`GRPCRoute`) and Octopus CRDs, health probes, graceful drain, and a Helm chart.
+- **Observability**: Prometheus metrics, structured logging, and a built-in admin dashboard and REST API (distributed tracing is planned).
+- **Configuration**: layered YAML, JSON, or TOML with `${VAR}` / `${VAR:-default}` environment substitution and multi-file merging.
 
 ## Protocol support
 
@@ -57,7 +57,7 @@ Octopus is maintained by [Xraph](https://github.com/xraph) and is part of the
 
 ## Quick example
 
-A minimal static configuration — one upstream and one route:
+A minimal static configuration with one upstream and one route:
 
 ```yaml
 # config.yaml
@@ -108,10 +108,10 @@ Run the published container image (the listen port `8080` serves traffic, health
 docker run --rm \
   -p 8080:8080 \
   -v "$(pwd)/config.yaml:/etc/octopus/config.yaml" \
-  ghcr.io/xraph/octopus:latest
+  ghcr.io/xraph/octopus:0.5.0
 ```
 
-Or build from source (Rust 1.85+) — the binary is written to `target/release/octopus`:
+Or build from source (Rust 1.85+). The binary is written to `target/release/octopus`:
 
 ```bash
 git clone https://github.com/xraph/octopus.git
@@ -163,7 +163,7 @@ curl http://localhost:8080/readyz           # readiness
 
 ## Community & license
 
-- **Discussions** — [GitHub Discussions](https://github.com/xraph/octopus/discussions)
-- **Issues** — [GitHub Issues](https://github.com/xraph/octopus/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/xraph/octopus/discussions)
+- **Issues**: [GitHub Issues](https://github.com/xraph/octopus/issues)
 
 Octopus is dual-licensed under **MIT** or **Apache-2.0**.

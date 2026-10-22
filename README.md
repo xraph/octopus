@@ -10,7 +10,7 @@ Registration Protocol.
 
 Octopus is maintained by Xraph and is part of the [FARP](https://github.com/xraph/farp)
 ecosystem. Most gateways expect you to declare every route by hand. Services that speak FARP
-instead publish their own schemas — OpenAPI, AsyncAPI, gRPC, GraphQL — and Octopus turns those
+instead publish their own schemas (OpenAPI, AsyncAPI, gRPC, GraphQL) and Octopus turns those
 schemas into routes as services come and go. You can also run it purely statically by listing
 upstreams and routes in a config file; the two modes work together.
 
@@ -40,7 +40,7 @@ Images are published for `linux/amd64` and `linux/arm64` on every release.
 docker run --rm \
   -p 8080:8080 -p 9090:9090 \
   -v "$(pwd)/config.yaml:/etc/octopus/config.yaml" \
-  ghcr.io/xraph/octopus:latest
+  ghcr.io/xraph/octopus:0.5.0
 ```
 
 ### From source
@@ -121,7 +121,7 @@ option.
 
 A service that speaks FARP describes itself with a manifest pointing at one or more schemas.
 Octopus watches the configured discovery backend, fetches each service's schemas, and generates
-routes from them. When a service updates or goes away, its routes change with it — so the
+routes from them. When a service updates or goes away, its routes change with it, so the
 gateway stays in step with the services behind it without manual edits.
 
 See [design/FARP_INTEGRATION.md](design/FARP_INTEGRATION.md) for the protocol details.

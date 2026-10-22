@@ -157,6 +157,7 @@ spec:
           # To pin by digest, read the per-arch digests from the release asset:
           #   gh release download v0.5.0 --repo xraph/octopus --pattern octopus-image-digests.json
           # and use ghcr.io/xraph/octopus@<index_digest> here.
+          # Bump this tag with each release (there is no moving `latest`).
           image: ghcr.io/xraph/octopus:0.5.0
           imagePullPolicy: IfNotPresent
           args: ["serve", "--config", "/etc/octopus/config.yaml"]

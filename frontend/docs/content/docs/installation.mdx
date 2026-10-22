@@ -34,10 +34,10 @@ The image is published to `ghcr.io/xraph/octopus`, built for `linux/amd64` and `
 entrypoint is the `octopus` binary, and it expects a config file mounted at
 `/etc/octopus/config.yaml`.
 
-Pull the image:
+Pull the image. Name a release tag, as there is no `latest` (see [Image tags](/docs/deployment/docker#image-tags)):
 
 ```bash
-docker pull ghcr.io/xraph/octopus:latest
+docker pull ghcr.io/xraph/octopus:0.5.0
 ```
 
 Run it, mounting your config and exposing the listen port (`8080`), which also serves the probes and `/metrics`:
@@ -47,7 +47,7 @@ docker run --rm \
   --name octopus \
   -p 8080:8080 \
   -v "$(pwd)/config.yaml:/etc/octopus/config.yaml" \
-  ghcr.io/xraph/octopus:latest
+  ghcr.io/xraph/octopus:0.5.0
 ```
 
 <Callout type="info">
@@ -200,9 +200,14 @@ for details.
 
 ### Docker
 
+Pull the new release tag, then recreate the container with it (`docker restart` keeps running the old image):
+
 ```bash
-docker pull ghcr.io/xraph/octopus:latest
-docker restart octopus
+docker pull ghcr.io/xraph/octopus:0.5.0
+docker rm -f octopus
+docker run -d --name octopus -p 8080:8080 \
+  -v "$(pwd)/config.yaml:/etc/octopus/config.yaml" \
+  ghcr.io/xraph/octopus:0.5.0
 ```
 
 ### From source
