@@ -1,5 +1,6 @@
 //! Trie-based route storage for efficient lookups
 
+use crate::host::HostMatch;
 use crate::matcher::{Match, PathMatcher};
 use crate::route::Route;
 use octopus_core::{Error, Result};
@@ -18,8 +19,8 @@ struct TrieNode {
     wildcard_child: Option<Box<TrieNode>>,
 
     /// Routes at this node (terminal). Multiple routes may share a method+path
-    /// when they are scoped to different hosts; selection picks the most
-    /// specific host at match time.
+    /// when they are scoped to different hosts or carry different ids;
+    /// selection picks the most specific host at match time.
     routes: Vec<Route>,
 
     /// Path matcher for this node (shared by all routes here — same path)
@@ -36,6 +37,28 @@ impl TrieNode {
             matcher: None,
         }
     }
+
+    /// Drop the matcher once the last route at this node is gone.
+    fn clear_matcher_if_empty(&mut self) {
+        if self.routes.is_empty() {
+            self.matcher = None;
+        }
+    }
+}
+
+/// Routes at one terminal node that are visible to a request for `host`.
+///
+/// A route must match the host, and a discovered route (FARP, Kubernetes) is
+/// hidden by any declared route (config, admin) at the same node with an
+/// equal [`HostMatch`]. Host specificity and priority are applied afterwards.
+fn visible_routes<'a>(routes: &'a [Route], host: &'a str) -> impl Iterator<Item = &'a Route> {
+    routes.iter().filter(move |route| {
+        route.host.matches(host)
+            && (route.origin.is_declared()
+                || !routes
+                    .iter()
+                    .any(|other| other.origin.is_declared() && other.host == route.host))
+    })
 }
 
 /// Trie for storing and matching routes
@@ -84,11 +107,16 @@ impl RouteTrie {
         }
 
         // Store route and matcher at terminal node. The same path may host
-        // several routes (one per host), but a given (path, host) is unique.
-        if current.routes.iter().any(|r| r.host == route.host) {
+        // several routes, but a given (path, host, id) is unique. Two `None`
+        // ids are equal, so legacy duplicates are still rejected.
+        if current
+            .routes
+            .iter()
+            .any(|r| r.host == route.host && r.id == route.id)
+        {
             return Err(Error::Config(format!(
-                "Route already exists: {} (host {:?})",
-                route.path, route.host
+                "Route already exists: {} (host {:?}, id {:?})",
+                route.path, route.host, route.id
             )));
         }
 
@@ -112,6 +140,69 @@ impl RouteTrie {
         } else {
             Err(Error::RouteNotFound(path.to_string()))
         }
+    }
+
+    /// Remove every route carrying `id`, wherever it sits in the trie.
+    /// Returns the number of routes removed.
+    pub fn remove_by_id(&mut self, id: &str) -> usize {
+        let removed = Self::remove_by_id_recursive(&mut self.root, id);
+        self.count -= removed;
+        removed
+    }
+
+    fn remove_by_id_recursive(node: &mut TrieNode, id: &str) -> usize {
+        let before = node.routes.len();
+        node.routes.retain(|r| r.id.as_deref() != Some(id));
+        let mut removed = before - node.routes.len();
+        if removed > 0 {
+            node.clear_matcher_if_empty();
+        }
+
+        for child in node.children.values_mut() {
+            removed += Self::remove_by_id_recursive(child, id);
+        }
+        if let Some(ref mut child) = node.param_child {
+            removed += Self::remove_by_id_recursive(child, id);
+        }
+        if let Some(ref mut child) = node.wildcard_child {
+            removed += Self::remove_by_id_recursive(child, id);
+        }
+        removed
+    }
+
+    /// Remove the one route stored at exactly `(path, host, id)`.
+    /// Returns whether a route was removed.
+    pub fn remove_exact(&mut self, path: &str, host: &HostMatch, id: Option<&str>) -> bool {
+        let Some(node) = self.node_mut(path) else {
+            return false;
+        };
+        let Some(pos) = node
+            .routes
+            .iter()
+            .position(|r| &r.host == host && r.id.as_deref() == id)
+        else {
+            return false;
+        };
+        node.routes.remove(pos);
+        node.clear_matcher_if_empty();
+        self.count -= 1;
+        true
+    }
+
+    /// The terminal node a route with `path` would be stored at, if it exists.
+    fn node_mut(&mut self, path: &str) -> Option<&mut TrieNode> {
+        let mut current = &mut self.root;
+        for segment in path.split('/').filter(|s| !s.is_empty()) {
+            current = if segment.starts_with(':') {
+                current.param_child.as_deref_mut()?
+            } else if segment.starts_with('*') {
+                // Wildcard must be terminal, as in `insert`.
+                return current.wildcard_child.as_deref_mut();
+            } else {
+                current.children.get_mut(segment)?
+            };
+        }
+        Some(current)
     }
 
     /// Returns the number of routes removed at the matched terminal node.
@@ -178,14 +269,12 @@ impl RouteTrie {
             if let Some(matcher) = &node.matcher {
                 let path = format!("/{}", segments.join("/"));
                 if let Some(params) = matcher.matches(&path) {
-                    for route in &node.routes {
-                        if route.host.matches(host) {
-                            matches.push(Match {
-                                route: route.clone(),
-                                params: params.clone(),
-                                wildcard: None,
-                            });
-                        }
+                    for route in visible_routes(&node.routes, host) {
+                        matches.push(Match {
+                            route: route.clone(),
+                            params: params.clone(),
+                            wildcard: None,
+                        });
                     }
                 }
             }
@@ -209,14 +298,12 @@ impl RouteTrie {
             if let Some(matcher) = &child.matcher {
                 let path = format!("/{}", segments.join("/"));
                 if let Some(params) = matcher.matches(&path) {
-                    for route in &child.routes {
-                        if route.host.matches(host) {
-                            matches.push(Match {
-                                route: route.clone(),
-                                params: params.clone(),
-                                wildcard: Some(segments[index..].join("/")),
-                            });
-                        }
+                    for route in visible_routes(&child.routes, host) {
+                        matches.push(Match {
+                            route: route.clone(),
+                            params: params.clone(),
+                            wildcard: Some(segments[index..].join("/")),
+                        });
                     }
                 }
             }
@@ -268,8 +355,7 @@ impl Default for RouteTrie {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::host::HostMatch;
-    use crate::RouteBuilder;
+    use crate::{RouteBuilder, RouteOrigin};
     use http::Method;
 
     fn route_h(path: &str, upstream: &str, host: HostMatch) -> Route {
@@ -519,5 +605,211 @@ mod tests {
                 .upstream_name,
             "static-files"
         );
+    }
+
+    fn route_o(
+        path: &str,
+        upstream: &str,
+        host: HostMatch,
+        id: Option<&str>,
+        origin: RouteOrigin,
+        priority: i32,
+    ) -> Route {
+        RouteBuilder::new()
+            .method(Method::GET)
+            .path(path)
+            .upstream_name(upstream)
+            .host(host)
+            .id(id)
+            .origin(origin)
+            .priority(priority)
+            .build()
+            .unwrap()
+    }
+
+    fn upstream_for(trie: &RouteTrie, host: &str, path: &str) -> Option<String> {
+        trie.match_path(host, path).map(|m| m.route.upstream_name)
+    }
+
+    #[test]
+    fn declared_route_shadows_discovered_route_on_same_host_and_path() {
+        let host = HostMatch::Exact("api.acme.dev".into());
+        let mut trie = RouteTrie::new();
+        trie.insert(route_o(
+            "/billing/invoices",
+            "billing",
+            host.clone(),
+            Some("farp:billing"),
+            RouteOrigin::Farp,
+            100,
+        ))
+        .unwrap();
+        trie.insert(route_o(
+            "/billing/invoices",
+            "manual",
+            host,
+            Some("lpr-1"),
+            RouteOrigin::Admin,
+            0,
+        ))
+        .unwrap();
+
+        assert_eq!(
+            upstream_for(&trie, "api.acme.dev", "/billing/invoices").as_deref(),
+            Some("manual")
+        );
+        assert_eq!(trie.remove_by_id("lpr-1"), 1);
+        assert_eq!(
+            upstream_for(&trie, "api.acme.dev", "/billing/invoices").as_deref(),
+            Some("billing")
+        );
+    }
+
+    #[test]
+    fn declared_route_does_not_shadow_discovered_route_on_another_host() {
+        let mut trie = RouteTrie::new();
+        trie.insert(route_o(
+            "/p",
+            "billing",
+            HostMatch::Exact("api.acme.dev".into()),
+            Some("farp:billing"),
+            RouteOrigin::Farp,
+            0,
+        ))
+        .unwrap();
+        trie.insert(route_o(
+            "/p",
+            "manual",
+            HostMatch::Wildcard(".acme.dev".into()),
+            Some("lpr-1"),
+            RouteOrigin::Config,
+            0,
+        ))
+        .unwrap();
+        // Different HostMatch: no shadowing, the exact host still wins.
+        assert_eq!(
+            upstream_for(&trie, "api.acme.dev", "/p").as_deref(),
+            Some("billing")
+        );
+        assert_eq!(
+            upstream_for(&trie, "www.acme.dev", "/p").as_deref(),
+            Some("manual")
+        );
+    }
+
+    #[test]
+    fn discovered_route_still_wins_on_a_more_specific_path() {
+        let host = HostMatch::Exact("api.acme.dev".into());
+        let mut trie = RouteTrie::new();
+        trie.insert(route_o(
+            "/billing/*",
+            "manual",
+            host.clone(),
+            Some("lpr-1"),
+            RouteOrigin::Admin,
+            0,
+        ))
+        .unwrap();
+        trie.insert(route_o(
+            "/billing/invoices",
+            "billing",
+            host,
+            Some("farp:billing"),
+            RouteOrigin::Farp,
+            100,
+        ))
+        .unwrap();
+
+        assert_eq!(
+            upstream_for(&trie, "api.acme.dev", "/billing/invoices").as_deref(),
+            Some("billing")
+        );
+        assert_eq!(
+            upstream_for(&trie, "api.acme.dev", "/billing/other").as_deref(),
+            Some("manual")
+        );
+    }
+
+    #[test]
+    fn same_path_host_and_id_is_rejected_but_different_ids_coexist() {
+        let host = HostMatch::Exact("a.com".into());
+        let mut trie = RouteTrie::new();
+        trie.insert(route_o(
+            "/p",
+            "u1",
+            host.clone(),
+            Some("a"),
+            RouteOrigin::Admin,
+            0,
+        ))
+        .unwrap();
+        assert!(trie
+            .insert(route_o(
+                "/p",
+                "u2",
+                host.clone(),
+                Some("a"),
+                RouteOrigin::Admin,
+                0
+            ))
+            .is_err());
+        trie.insert(route_o("/p", "u3", host, Some("b"), RouteOrigin::Admin, 0))
+            .unwrap();
+        assert_eq!(trie.len(), 2);
+    }
+
+    #[test]
+    fn remove_by_id_leaves_other_routes_at_the_same_path() {
+        let mut trie = RouteTrie::new();
+        trie.insert(route_o(
+            "/p",
+            "ux",
+            HostMatch::Exact("x.com".into()),
+            Some("a"),
+            RouteOrigin::Admin,
+            0,
+        ))
+        .unwrap();
+        trie.insert(route_o(
+            "/p",
+            "uy",
+            HostMatch::Exact("y.com".into()),
+            Some("b"),
+            RouteOrigin::Admin,
+            0,
+        ))
+        .unwrap();
+
+        assert_eq!(trie.remove_by_id("a"), 1);
+        assert_eq!(trie.len(), 1);
+        assert!(trie.match_path("x.com", "/p").is_none());
+        assert_eq!(upstream_for(&trie, "y.com", "/p").as_deref(), Some("uy"));
+        assert_eq!(trie.remove_by_id("a"), 0);
+    }
+
+    #[test]
+    fn remove_exact_removes_only_the_named_route() {
+        let x = HostMatch::Exact("x.com".into());
+        let mut trie = RouteTrie::new();
+        trie.insert(route_o(
+            "/p",
+            "u1",
+            x.clone(),
+            Some("a"),
+            RouteOrigin::Admin,
+            0,
+        ))
+        .unwrap();
+        trie.insert(route_o("/p", "u2", x.clone(), None, RouteOrigin::Config, 0))
+            .unwrap();
+
+        assert!(!trie.remove_exact("/p", &x, Some("zzz")));
+        assert!(!trie.remove_exact("/q", &x, Some("a")));
+        assert!(trie.remove_exact("/p", &x, Some("a")));
+        assert_eq!(trie.len(), 1);
+        assert_eq!(upstream_for(&trie, "x.com", "/p").as_deref(), Some("u2"));
+        assert!(trie.remove_exact("/p", &x, None));
+        assert!(trie.is_empty());
+        assert!(trie.match_path("x.com", "/p").is_none());
     }
 }
