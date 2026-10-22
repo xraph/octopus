@@ -46,6 +46,57 @@ impl TrieNode {
     }
 }
 
+/// One segment of a route path as the trie stores it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NodeSegment<'a> {
+    /// A literal segment, matched exactly.
+    Static(&'a str),
+    /// A `:name` parameter. Every parameter name shares one child.
+    Param,
+    /// A `*name` wildcard. It ends the path; later segments are ignored.
+    Wildcard,
+}
+
+/// The segments of `path` as the trie walks them: empty segments dropped,
+/// parameters and wildcards stripped of their names, nothing after a
+/// wildcard.
+fn node_segments(path: &str) -> Vec<NodeSegment<'_>> {
+    let mut segments = Vec::new();
+    for segment in path.split('/').filter(|s| !s.is_empty()) {
+        if segment.starts_with(':') {
+            segments.push(NodeSegment::Param);
+        } else if segment.starts_with('*') {
+            segments.push(NodeSegment::Wildcard);
+            break;
+        } else {
+            segments.push(NodeSegment::Static(segment));
+        }
+    }
+    segments
+}
+
+/// The key of the trie node a route with `path` is stored at.
+///
+/// Two paths with the same key share a node, and so compete for the same
+/// requests: `/x` and `/x/`, `/users/:id` and `/users/:uid`, `/files/*` and
+/// `/files/*rest` all do. Parameters become `:`, wildcards become `*`, and
+/// the root is `/`.
+pub fn node_key(path: &str) -> String {
+    let mut key = String::new();
+    for segment in node_segments(path) {
+        key.push('/');
+        key.push_str(match segment {
+            NodeSegment::Static(s) => s,
+            NodeSegment::Param => ":",
+            NodeSegment::Wildcard => "*",
+        });
+    }
+    if key.is_empty() {
+        key.push('/');
+    }
+    key
+}
+
 /// Routes at one terminal node that are visible to a request for `host`.
 ///
 /// A route must match the host, and a discovered route (FARP, Kubernetes) is
@@ -79,31 +130,21 @@ impl RouteTrie {
 
     /// Insert a route into the trie
     pub fn insert(&mut self, route: Route) -> Result<()> {
-        let segments: Vec<&str> = route.path.split('/').filter(|s| !s.is_empty()).collect();
-
         let mut current = &mut self.root;
 
-        for segment in &segments {
-            if segment.starts_with(':') {
-                // Parameter segment
-                if current.param_child.is_none() {
-                    current.param_child = Some(Box::new(TrieNode::new()));
-                }
-                current = current.param_child.as_mut().unwrap();
-            } else if segment.starts_with('*') {
-                // Wildcard segment (must be last)
-                if current.wildcard_child.is_none() {
-                    current.wildcard_child = Some(Box::new(TrieNode::new()));
-                }
-                current = current.wildcard_child.as_mut().unwrap();
-                break; // Wildcard must be terminal
-            } else {
-                // Static segment
-                current = current
+        for segment in node_segments(&route.path) {
+            current = match segment {
+                NodeSegment::Param => current
+                    .param_child
+                    .get_or_insert_with(|| Box::new(TrieNode::new())),
+                NodeSegment::Wildcard => current
+                    .wildcard_child
+                    .get_or_insert_with(|| Box::new(TrieNode::new())),
+                NodeSegment::Static(segment) => current
                     .children
                     .entry(segment.to_string())
-                    .or_insert_with(TrieNode::new);
-            }
+                    .or_insert_with(TrieNode::new),
+            };
         }
 
         // Store route and matcher at terminal node. The same path may host
@@ -192,14 +233,11 @@ impl RouteTrie {
     /// The terminal node a route with `path` would be stored at, if it exists.
     fn node_mut(&mut self, path: &str) -> Option<&mut TrieNode> {
         let mut current = &mut self.root;
-        for segment in path.split('/').filter(|s| !s.is_empty()) {
-            current = if segment.starts_with(':') {
-                current.param_child.as_deref_mut()?
-            } else if segment.starts_with('*') {
-                // Wildcard must be terminal, as in `insert`.
-                return current.wildcard_child.as_deref_mut();
-            } else {
-                current.children.get_mut(segment)?
+        for segment in node_segments(path) {
+            current = match segment {
+                NodeSegment::Param => current.param_child.as_deref_mut()?,
+                NodeSegment::Wildcard => current.wildcard_child.as_deref_mut()?,
+                NodeSegment::Static(segment) => current.children.get_mut(segment)?,
             };
         }
         Some(current)
@@ -811,5 +849,56 @@ mod tests {
         assert!(trie.remove_exact("/p", &x, None));
         assert!(trie.is_empty());
         assert!(trie.match_path("x.com", "/p").is_none());
+    }
+
+    #[test]
+    fn node_key_names_the_node_a_path_is_stored_at() {
+        assert_eq!(node_key("/x"), node_key("/x/"));
+        assert_eq!(node_key("//x//"), "/x");
+        assert_eq!(node_key("/users/:id"), node_key("/users/:uid"));
+        assert_eq!(node_key("/billing/*"), node_key("/billing/*rest"));
+        assert_eq!(node_key("/billing/*rest/ignored"), "/billing/*");
+        assert_eq!(node_key("/"), "/");
+        assert_eq!(node_key(""), "/");
+        assert_ne!(node_key("/x"), node_key("/x/:id"));
+        assert_ne!(node_key("/billing"), node_key("/billing/*"));
+        assert_ne!(node_key("/a/:b"), node_key("/a/b"));
+    }
+
+    #[test]
+    fn paths_with_one_node_key_share_a_node() {
+        // The trie's uniqueness check is per node, so an equal node key with
+        // an equal host and id is a duplicate whatever the path spelling.
+        for (a, b) in [
+            ("/x", "/x/"),
+            ("/users/:id", "/users/:uid"),
+            ("/billing/*", "/billing/*rest"),
+        ] {
+            assert_eq!(node_key(a), node_key(b));
+            let mut trie = RouteTrie::new();
+            trie.insert(route_o(
+                a,
+                "u1",
+                HostMatch::Any,
+                None,
+                RouteOrigin::Config,
+                0,
+            ))
+            .unwrap();
+            assert!(
+                trie.insert(route_o(
+                    b,
+                    "u2",
+                    HostMatch::Any,
+                    None,
+                    RouteOrigin::Config,
+                    0
+                ))
+                .is_err(),
+                "{a} and {b} share a node"
+            );
+            assert!(trie.remove_exact(b, &HostMatch::Any, None));
+            assert!(trie.is_empty());
+        }
     }
 }

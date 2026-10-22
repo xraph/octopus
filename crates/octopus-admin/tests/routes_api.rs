@@ -370,11 +370,238 @@ async fn put_and_delete_accept_a_legacy_positional_id() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(router.total_route_count(), 1);
-    assert_eq!(router.routes_by_id("route-0").len(), 1);
 
-    let (status, _) = call(&router, Method::DELETE, "/admin/api/routes/route-0", None).await;
+    // The replaced route gets a fresh UUID id, never the positional one, so
+    // the list never shows two entries under one id.
+    let id = body["id"].as_str().unwrap().to_string();
+    assert!(uuid::Uuid::parse_str(&id).is_ok(), "new id {id} is a UUID");
+    assert_eq!(body["route_id"], id.as_str());
+    assert!(router.routes_by_id("route-0").is_empty());
+    assert_eq!(router.routes_by_id(&id).len(), 1);
+
+    let (_, listed) = call(&router, Method::GET, "/admin/api/routes", None).await;
+    let ids: Vec<&str> = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec![id.as_str()]);
+
+    let (status, got) = call(
+        &router,
+        Method::GET,
+        &format!("/admin/api/routes/{id}"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(got["path"], "/old");
+
+    let (status, _) = call(
+        &router,
+        Method::DELETE,
+        &format!("/admin/api/routes/{id}"),
+        None,
+    )
+    .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     assert_eq!(router.total_route_count(), 0);
+}
+
+#[tokio::test]
+async fn positional_shaped_ids_are_never_created() {
+    let router = router();
+    let body = json!({"path": "/x", "methods": ["GET"], "upstream": "web"});
+
+    let (status, reply) = call(
+        &router,
+        Method::PUT,
+        "/admin/api/routes/route-7",
+        Some(body.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{reply}");
+    assert!(reply["error"].is_string());
+
+    let mut post = body.clone();
+    post["id"] = json!("route-3");
+    let (status, reply) = call(&router, Method::POST, "/admin/api/routes", Some(post)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{reply}");
+
+    assert_eq!(router.total_route_count(), 0);
+
+    // `route-` followed by something other than digits is an ordinary id.
+    let (status, _) = call(
+        &router,
+        Method::PUT,
+        "/admin/api/routes/route-web",
+        Some(body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(router.routes_by_id("route-web").len(), 1);
+}
+
+#[tokio::test]
+async fn conflict_check_compares_trie_nodes_not_path_spelling() {
+    for (held, other) in [
+        ("/x", "/x/"),
+        ("/billing/*", "/billing/*rest"),
+        ("/users/:id", "/users/:uid"),
+    ] {
+        let router = router();
+        let (status, _) = call(
+            &router,
+            Method::PUT,
+            "/admin/api/routes/lpr-1",
+            Some(json!({"path": held, "methods": ["GET"], "hosts": ["a.dev"], "upstream": "web"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, body) = call(
+            &router,
+            Method::PUT,
+            "/admin/api/routes/lpr-2",
+            Some(json!({"path": other, "methods": ["GET"], "hosts": ["a.dev"], "upstream": "web"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{held} vs {other}: {body}");
+        assert_eq!(body["conflict"], "lpr-1");
+        assert!(router.routes_by_id("lpr-2").is_empty());
+    }
+
+    // A different host on the same node is not a conflict.
+    let router = router();
+    let (status, _) = call(
+        &router,
+        Method::PUT,
+        "/admin/api/routes/lpr-1",
+        Some(json!({"path": "/x", "methods": ["GET"], "hosts": ["a.dev"], "upstream": "web"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = call(
+        &router,
+        Method::PUT,
+        "/admin/api/routes/lpr-2",
+        Some(json!({"path": "/x/", "methods": ["GET"], "hosts": ["b.dev"], "upstream": "web"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn malformed_bodies_get_a_json_400() {
+    let router = router();
+    for body in [
+        json!({"path": "/x", "methods": ["GET"]}),
+        json!({"upstream": "web"}),
+        json!({"path": 5, "upstream": "web"}),
+    ] {
+        for (method, uri) in [
+            (Method::PUT, "/admin/api/routes/lpr-1"),
+            (Method::POST, "/admin/api/routes"),
+        ] {
+            let (status, reply) = call(&router, method.clone(), uri, Some(body.clone())).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{method} {body}: {reply}");
+            assert!(reply["error"].is_string(), "{method} {body}: {reply}");
+        }
+    }
+    assert_eq!(router.total_route_count(), 0);
+}
+
+#[tokio::test]
+async fn put_and_delete_leave_discovered_routes_to_their_discoverer() {
+    let router = router();
+    router
+        .add_route(farp_route(Method::GET, "/x", "a.dev", "svc"))
+        .unwrap();
+
+    let (status, body) = call(
+        &router,
+        Method::PUT,
+        "/admin/api/routes/farp:svc",
+        Some(json!({"path": "/x", "methods": ["GET"], "hosts": ["a.dev"], "upstream": "web"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["conflict"], "farp:svc");
+
+    let (status, _) = call(&router, Method::DELETE, "/admin/api/routes/farp:svc", None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    let entries = router.routes_by_id("farp:svc");
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].origin, RouteOrigin::Farp);
+    assert_eq!(entries[0].upstream_name, "svc");
+}
+
+#[tokio::test]
+async fn put_path_id_beats_body_id() {
+    let router = router();
+    let (status, body) = call(
+        &router,
+        Method::PUT,
+        "/admin/api/routes/lpr-path",
+        Some(json!({"id": "lpr-body", "path": "/x", "methods": ["GET"], "upstream": "web"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["id"], "lpr-path");
+    assert_eq!(router.routes_by_id("lpr-path").len(), 1);
+    assert!(router.routes_by_id("lpr-body").is_empty());
+}
+
+#[tokio::test]
+async fn manual_route_shadows_a_higher_priority_farp_route_until_deleted() {
+    let router = router();
+    let mut farp = farp_route(Method::GET, "/x", "a.dev", "svc");
+    farp.priority = 1000;
+    router.add_route(farp).unwrap();
+
+    let (status, body) = call(
+        &router,
+        Method::PUT,
+        "/admin/api/routes/lpr-1",
+        Some(json!({"path": "/x", "methods": ["GET"], "hosts": ["a.dev"], "upstream": "web", "priority": 0})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let matched = router.match_route("a.dev", &Method::GET, "/x").unwrap();
+    assert_eq!(matched.route.upstream_name, "web");
+
+    let (status, _) = call(&router, Method::DELETE, "/admin/api/routes/lpr-1", None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let matched = router.match_route("a.dev", &Method::GET, "/x").unwrap();
+    assert_eq!(matched.route.upstream_name, "svc");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_puts_of_one_id_leave_one_route() {
+    let router = router();
+    let calls: Vec<_> = (0..32)
+        .map(|i| {
+            let router = Arc::clone(&router);
+            tokio::spawn(async move {
+                let host = format!("h{}.dev", i % 4);
+                call(
+                    &router,
+                    Method::PUT,
+                    "/admin/api/routes/lpr-1",
+                    Some(json!({"path": "/x", "methods": ["GET"], "hosts": [host], "upstream": "web"})),
+                )
+                .await
+                .0
+            })
+        })
+        .collect();
+    for task in calls {
+        assert_eq!(task.await.unwrap(), StatusCode::OK);
+    }
+    assert_eq!(router.routes_by_id("lpr-1").len(), 1);
+    assert_eq!(router.total_route_count(), 1);
 }
 
 #[tokio::test]

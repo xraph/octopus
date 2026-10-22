@@ -39,7 +39,7 @@ pub use load_balancer::{new_load_balancer, LoadBalancer};
 pub use matcher::{Match, PathMatcher};
 pub use proxy_spec::{PathMode, ProxySpec, Scheme, UpstreamOrigin};
 pub use route::{Route, RouteBuilder, RouteCorsOverride, RouteOrigin};
-pub use trie::RouteTrie;
+pub use trie::{node_key, RouteTrie};
 pub use virtual_gateway::{
     gateway_scoped_upstream, GatewayEntry, GatewayPolicy, VirtualGatewayIndex,
 };

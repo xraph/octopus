@@ -9,7 +9,7 @@
 //! - System information
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{rejection::JsonRejection, Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
     Json,
@@ -209,9 +209,33 @@ impl ApiError {
         }
     }
 
+    /// An error answering `409` with `{"error": message, "conflict": other}`.
+    fn conflict(message: impl Into<String>, other: &str) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
+            body: serde_json::json!({ "error": message.into(), "conflict": other }),
+        }
+    }
+
+    /// A `404` for the route `id`.
+    fn route_not_found(id: &str) -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
+            body: serde_json::json!({ "error": "Route not found", "id": id }),
+        }
+    }
+
     /// The router is not wired into the admin state.
     fn router_unavailable() -> Self {
         Self::new(StatusCode::SERVICE_UNAVAILABLE, "Router not available")
+    }
+
+    /// A route body that is not valid JSON or misses a required field.
+    fn bad_body(rejection: &JsonRejection) -> Self {
+        Self::new(
+            StatusCode::BAD_REQUEST,
+            format!("Invalid route body: {}", rejection.body_text()),
+        )
     }
 }
 
@@ -221,47 +245,111 @@ impl IntoResponse for ApiError {
     }
 }
 
+/// Serializes admin route writes, so one request's conflict check and swap
+/// never interleave with another's, and a rollback never removes entries a
+/// concurrent request inserted.
+static ROUTE_WRITES: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Hold the admin route write lock. Never held across an `.await`.
+fn route_writes() -> std::sync::MutexGuard<'static, ()> {
+    ROUTE_WRITES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// Whether `a` and `b` are the same router entry: the key the trie keeps
 /// unique per method.
 fn same_entry(a: &octopus_router::Route, b: &octopus_router::Route) -> bool {
     a.method == b.method && a.path == b.path && a.host == b.host && a.id == b.id
 }
 
-/// The id-less route the list shows as `route-{i}`, when `id` is such a
-/// positional id.
+/// Whether `id` has the `route-<n>` shape the list uses for routes without
+/// an id. Those ids are never given to a route.
+fn is_positional_id(id: &str) -> bool {
+    id.strip_prefix("route-")
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// The id-less route the list shows as `id`, when `id` is a positional
+/// `route-{i}`.
 fn positional_route(router: &octopus_router::Router, id: &str) -> Option<octopus_router::Route> {
-    let index: usize = id.strip_prefix("route-")?.parse().ok()?;
+    if !is_positional_id(id) {
+        return None;
+    }
     router
         .get_all_routes()
         .into_iter()
-        .nth(index)
-        .filter(|route| route.id.is_none())
+        .enumerate()
+        .find(|(index, route)| route.id.is_none() && format!("route-{index}") == id)
+        .map(|(_, route)| route)
 }
 
-/// Every router entry `id` names: the routes carrying that id, or the one
-/// id-less route at that position for a legacy `route-{i}` id.
-fn entries_for_id(router: &octopus_router::Router, id: &str) -> Vec<octopus_router::Route> {
-    let entries = router.routes_by_id(id);
-    if entries.is_empty() {
-        positional_route(router, id).into_iter().collect()
-    } else {
-        entries
-    }
+/// The error for a body or path id of the reserved positional shape.
+fn reserved_id(id: &str) -> ApiError {
+    ApiError::new(
+        StatusCode::BAD_REQUEST,
+        format!("Route id {id} is reserved: route-<n> names a listed route without an id"),
+    )
 }
 
 /// Create or replace the route `id` from an admin API body.
 ///
-/// Every new entry (one per method and host, origin [`RouteOrigin::Admin`])
-/// is built and checked before the router changes. An unknown upstream is a
-/// 400, and an entry on the same method, path and host as a declared route of
-/// another id is a 409 naming that route's listed id in `conflict`. The old
-/// entries for `id` (whatever their origin) are then swapped for the new
-/// ones. If an insert fails, the router is put back exactly as it was.
+/// - An id carried by routes from the config file or the admin API replaces
+///   all of them.
+/// - An id carried by a discovered route (FARP or the Kubernetes operator)
+///   is a 409: those routes belong to their discoverer.
+/// - A positional `route-{i}` id replaces that one id-less route, and the
+///   new entries get a fresh UUID v4 id.
+/// - Any other `route-<n>` id is a 400, and any other id creates the route.
 ///
-/// [`RouteOrigin::Admin`]: octopus_router::RouteOrigin::Admin
+/// Admin route writes are serialized, so the check and the swap are atomic
+/// against other admin requests.
 pub(crate) fn upsert_admin_route(
     router: &octopus_router::Router,
     id: &str,
+    body: &RouteConfig,
+) -> Result<Vec<octopus_router::Route>, ApiError> {
+    let _writes = route_writes();
+
+    let held = router.routes_by_id(id);
+    if let Some(discovered) = held.iter().find(|route| !route.origin.is_declared()) {
+        return Err(ApiError::conflict(
+            format!(
+                "Route {id} was discovered by {} and can't be replaced through the admin API",
+                discovered.origin.as_str()
+            ),
+            id,
+        ));
+    }
+
+    if !held.is_empty() {
+        return swap_route(router, id, &held, body);
+    }
+    if is_positional_id(id) {
+        let Some(entry) = positional_route(router, id) else {
+            return Err(reserved_id(id));
+        };
+        let new_id = uuid::Uuid::new_v4().to_string();
+        return swap_route(router, &new_id, &[entry], body);
+    }
+    swap_route(router, id, &[], body)
+}
+
+/// Swap `old_entries` for the entries `body` describes under `id`, with the
+/// route write lock held.
+///
+/// Every new entry (one per method and host, origin
+/// [`RouteOrigin::Admin`]) is built and checked before the router changes.
+/// An unknown upstream is a 400, and an entry on the same method, trie node
+/// and host as a declared route of another id is a 409 naming that route's
+/// listed id in `conflict`. If an insert fails, the router is put back
+/// exactly as it was.
+///
+/// [`RouteOrigin::Admin`]: octopus_router::RouteOrigin::Admin
+fn swap_route(
+    router: &octopus_router::Router,
+    id: &str,
+    old_entries: &[octopus_router::Route],
     body: &RouteConfig,
 ) -> Result<Vec<octopus_router::Route>, ApiError> {
     let new_entries = body
@@ -276,7 +364,10 @@ pub(crate) fn upsert_admin_route(
         ));
     }
 
-    let old_entries = entries_for_id(router, id);
+    let new_keys: Vec<_> = new_entries
+        .iter()
+        .map(|new| (&new.method, octopus_router::node_key(&new.path), &new.host))
+        .collect();
 
     for (index, existing) in router.get_all_routes().into_iter().enumerate() {
         if !existing.origin.is_declared()
@@ -285,27 +376,25 @@ pub(crate) fn upsert_admin_route(
         {
             continue;
         }
-        let clashes = new_entries.iter().any(|new| {
-            new.method == existing.method && new.path == existing.path && new.host == existing.host
+        let key = octopus_router::node_key(&existing.path);
+        let clashes = new_keys.iter().any(|(method, path, host)| {
+            **method == existing.method && *path == key && **host == existing.host
         });
         if clashes {
             let other = crate::handlers::listed_route_id(index, &existing);
-            return Err(ApiError {
-                status: StatusCode::CONFLICT,
-                body: serde_json::json!({
-                    "error": format!(
-                        "Route {other} already serves {} {} on {}",
-                        existing.method,
-                        existing.path,
-                        existing.host.pattern().as_deref().unwrap_or("any host"),
-                    ),
-                    "conflict": other,
-                }),
-            });
+            return Err(ApiError::conflict(
+                format!(
+                    "Route {other} already serves {} {} on {}",
+                    existing.method,
+                    existing.path,
+                    existing.host.pattern().as_deref().unwrap_or("any host"),
+                ),
+                &other,
+            ));
         }
     }
 
-    for old in &old_entries {
+    for old in old_entries {
         router.remove_route_exact(&old.method, &old.path, &old.host, old.id.as_deref());
     }
 
@@ -314,7 +403,7 @@ pub(crate) fn upsert_admin_route(
             for new in &new_entries[..inserted] {
                 router.remove_route_exact(&new.method, &new.path, &new.host, new.id.as_deref());
             }
-            for old in &old_entries {
+            for old in old_entries {
                 if let Err(restore) = router.add_route(old.clone()) {
                     tracing::error!(id = %id, error = %restore, "Could not restore route");
                 }
@@ -339,10 +428,10 @@ pub(crate) fn upsert_admin_route(
 }
 
 /// The `RouteInfo` of the first entry of a freshly upserted route.
-fn upserted_info(id: &str, entries: &[octopus_router::Route]) -> serde_json::Value {
+fn upserted_info(entries: &[octopus_router::Route]) -> serde_json::Value {
     entries.first().map_or(serde_json::Value::Null, |route| {
         serde_json::to_value(crate::handlers::route_to_info(
-            id.to_string(),
+            crate::handlers::listed_route_id(0, route),
             route,
             0,
             0,
@@ -363,24 +452,23 @@ pub async fn api_route_get_handler(
         return Err(ApiError::router_unavailable());
     }
     let routes = crate::handlers::build_routes_from_state(&state);
-    match routes.into_iter().find(|r| r.id == id) {
-        Some(route) => Ok(Json(route)),
-        None => Err(ApiError {
-            status: StatusCode::NOT_FOUND,
-            body: serde_json::json!({"error": "Route not found", "id": id}),
-        }),
-    }
+    routes
+        .into_iter()
+        .find(|r| r.id == id)
+        .map(Json)
+        .ok_or_else(|| ApiError::route_not_found(&id))
 }
 
 /// Create new route (mutates the live router)
 /// POST /admin/api/routes
 pub async fn api_route_create_handler(
     State(state): State<Arc<AppState>>,
-    Json(config): Json<RouteConfig>,
+    body: Result<Json<RouteConfig>, JsonRejection>,
 ) -> impl IntoResponse {
     let Some(ref router) = state.router else {
         return Err(ApiError::router_unavailable());
     };
+    let Json(config) = body.map_err(|rejection| ApiError::bad_body(&rejection))?;
 
     let id = config
         .id
@@ -388,18 +476,19 @@ pub async fn api_route_create_handler(
         .filter(|id| !id.trim().is_empty())
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-    if !entries_for_id(router, &id).is_empty() {
-        return Err(ApiError {
-            status: StatusCode::CONFLICT,
-            body: serde_json::json!({
-                "error": format!("Route {id} already exists"),
-                "conflict": id,
-            }),
-        });
+    let _writes = route_writes();
+    if !router.routes_by_id(&id).is_empty() {
+        return Err(ApiError::conflict(
+            format!("Route {id} already exists"),
+            &id,
+        ));
+    }
+    if is_positional_id(&id) {
+        return Err(reserved_id(&id));
     }
 
-    let entries = upsert_admin_route(router, &id, &config)?;
-    Ok((StatusCode::CREATED, Json(upserted_info(&id, &entries))))
+    let entries = swap_route(router, &id, &[], &config)?;
+    Ok((StatusCode::CREATED, Json(upserted_info(&entries))))
 }
 
 /// Create or replace a route by id (idempotent upsert; the path id wins over
@@ -408,18 +497,20 @@ pub async fn api_route_create_handler(
 pub async fn api_route_update_handler(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-    Json(config): Json<RouteConfig>,
+    body: Result<Json<RouteConfig>, JsonRejection>,
 ) -> impl IntoResponse {
     let Some(ref router) = state.router else {
         return Err(ApiError::router_unavailable());
     };
+    let Json(config) = body.map_err(|rejection| ApiError::bad_body(&rejection))?;
 
     let entries = upsert_admin_route(router, &id, &config)?;
-    Ok(Json(upserted_info(&id, &entries)))
+    Ok(Json(upserted_info(&entries)))
 }
 
 /// Delete every entry of a route by id, or one id-less route by its legacy
-/// positional id
+/// positional id. Routes discovered by FARP or the Kubernetes operator are
+/// left to their discoverer.
 /// DELETE /admin/api/routes/:id
 pub async fn api_route_delete_handler(
     State(state): State<Arc<AppState>>,
@@ -429,23 +520,30 @@ pub async fn api_route_delete_handler(
         return Err(ApiError::router_unavailable());
     };
 
-    let removed = router.remove_routes_by_id(&id);
-    if removed > 0 {
-        tracing::info!(id = %id, removed, "Route deleted through the admin API");
+    let _writes = route_writes();
+    let declared: Vec<_> = router
+        .routes_by_id(&id)
+        .into_iter()
+        .filter(|route| route.origin.is_declared())
+        .collect();
+    if !declared.is_empty() {
+        for route in &declared {
+            router.remove_route_exact(&route.method, &route.path, &route.host, route.id.as_deref());
+        }
+        tracing::info!(id = %id, removed = declared.len(), "Route deleted through the admin API");
         return Ok(StatusCode::NO_CONTENT);
     }
 
-    if let Some(route) = positional_route(router, &id) {
-        if router.remove_route_exact(&route.method, &route.path, &route.host, None) {
-            tracing::info!(id = %id, method = %route.method, path = %route.path, "Route deleted through the admin API");
-            return Ok(StatusCode::NO_CONTENT);
+    if router.routes_by_id(&id).is_empty() {
+        if let Some(route) = positional_route(router, &id) {
+            if router.remove_route_exact(&route.method, &route.path, &route.host, None) {
+                tracing::info!(id = %id, method = %route.method, path = %route.path, "Route deleted through the admin API");
+                return Ok(StatusCode::NO_CONTENT);
+            }
         }
     }
 
-    Err(ApiError {
-        status: StatusCode::NOT_FOUND,
-        body: serde_json::json!({"error": "Route not found", "id": id}),
-    })
+    Err(ApiError::route_not_found(&id))
 }
 
 // ============================================================================

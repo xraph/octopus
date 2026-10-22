@@ -96,14 +96,17 @@ route table; response shapes are taken from the admin response models.
 | Method | Path | Answers |
 | --- | --- | --- |
 | `GET` | `/admin/api/routes` | `200` with an array of `RouteInfo`, one per router entry. |
-| `POST` | `/admin/api/routes` | `201` with the new route's first `RouteInfo`. `409` when the body's `id` already exists. |
+| `POST` | `/admin/api/routes` | `201` with the new route's first `RouteInfo`. `400` for a bad body, `409` when the body's `id` already exists or clashes. |
 | `GET` | `/admin/api/routes/:id` | `200` with the first `RouteInfo` listed under that id, or `404`. |
-| `PUT` | `/admin/api/routes/:id` | `200` with the route's first `RouteInfo`. Creates the route or replaces it. |
+| `PUT` | `/admin/api/routes/:id` | `200` with the route's first `RouteInfo`. Creates the route or replaces it. `400` for a bad body, `409` on a clash. |
 | `DELETE` | `/admin/api/routes/:id` | `204` once every entry of that route is gone, or `404`. |
 
-All four write paths answer `400` for a bad method, path, host or upstream,
-and `503` when the gateway router isn't wired into the admin API. Errors come
-back as `{ "error": "..." }`.
+`POST` and `PUT` answer `400` when the body isn't valid JSON, misses `path` or
+`upstream`, or names a bad method, path, host or upstream. They answer `500` in
+the rare case an insert fails after the checks passed; the router is put back
+as it was first. Every route endpoint except the list answers `503` when the
+gateway router isn't wired into the admin API. Errors come back as
+`{ "error": "..." }`.
 
 ### One route, many entries
 
@@ -138,7 +141,9 @@ The replacement is checked before anything changes:
   method is a `400`.
 - The upstream must already be registered, or you get a `400`.
 - If a route from the config file or the admin API with a different id already
-  serves the same method, path and host, you get a `409`:
+  serves the same method, path and host, you get a `409`. Paths are compared the
+  way the router stores them, so `/x` and `/x/` are the same path, and so are
+  `/users/:id` and `/users/:uid`, or `/files/*` and `/files/*rest`:
 
   ```json
   { "error": "Route lpr-1 already serves GET /x on a.dev", "conflict": "lpr-1" }
@@ -149,13 +154,24 @@ The replacement is checked before anything changes:
 Only then are the old entries removed and the new ones inserted. If an insert
 still fails, the old entries go back and the router is left as it was.
 
-The upsert acts on every entry with that id, whatever its origin. You can
-replace a route that came from the config file's `routes[]` by its `id`. It then
-reports `"origin": "admin"` until the next restart reloads it from the file.
+You can replace a route that came from the config file's `routes[]` by its
+`id`. It then reports `"origin": "admin"` until the next restart reloads it from
+the file. An id that belongs to a route FARP or the Kubernetes operator
+discovered is different: `PUT` answers `409` with that id in `conflict`, since
+the discoverer owns those routes.
+
+Ids of the form `route-<n>` are reserved for the positional ids the list gives
+routes without one. A `PUT` to `route-3` replaces the id-less route listed
+there, and the new route gets a fresh UUID v4 id, returned in the response.
+`PUT` to a `route-<n>` that names no such route, or a `POST` body with an id of
+that shape, is a `400`.
 
 `POST /admin/api/routes` does the same work for a route that must be new. It
 generates a UUID v4 when the body has no `id`, and answers `409` when the id is
 already taken.
+
+Route writes through the admin API run one at a time, so two calls racing on the
+same id can't leave a mix of both.
 
 ### Routes discovered by FARP or the operator
 
@@ -167,11 +183,13 @@ removes entries carrying the id you named.
 
 ### Deleting
 
-`DELETE /admin/api/routes/:id` removes every entry carrying that id. A route
-without an id (a config route with no `id`, for example) is listed under a
-positional id such as `route-3`, and `DELETE` falls back to that: it removes the
-one entry the list showed at that position. Positional ids shift as routes come
-and go, so give a route an `id` if you plan to manage it through the API.
+`DELETE /admin/api/routes/:id` removes every entry carrying that id from the
+config file or the admin API. It never removes a discovered route: an id held
+only by FARP or operator routes answers `404`. A route without an id (a config
+route with no `id`, for example) is listed under a positional id such as
+`route-3`, and `DELETE` falls back to that: it removes the one entry the list
+showed at that position. Positional ids shift as routes come and go, so give a
+route an `id` if you plan to manage it through the API.
 
 ### `GET /admin/api/routes`: the route-config endpoint
 
@@ -258,7 +276,7 @@ Only `path` and `upstream` are required.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `id` | string \| null | Route id. `POST` generates a UUID v4 when it's missing. `PUT` ignores it in favour of the path id. |
+| `id` | string \| null | Route id. `POST` generates a UUID v4 when it's missing. `PUT` ignores it in favour of the path id. `route-<n>` is reserved. |
 | `path` | string | Route match path. Must start with `/`. |
 | `methods` | string[] | HTTP methods. Empty means every method (`GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`). |
 | `method` | string \| null | The older single-method field, still accepted. Used only when `methods` is empty. |
