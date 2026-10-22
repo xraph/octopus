@@ -44,6 +44,10 @@ pub struct AppState {
     pub admin_auth: Option<Arc<crate::auth::AdminAuth>>,
     /// Server start time for uptime calculation
     pub start_time: std::time::Instant,
+    /// Wall-clock start time, captured once with `start_time`. Reported as
+    /// `start_time` by `GET /admin/api/system/info` when no metrics collector
+    /// is wired in.
+    pub started_at: std::time::SystemTime,
 }
 
 impl AppState {
@@ -64,6 +68,7 @@ impl AppState {
             farp_binding: None,
             admin_auth: None,
             start_time: std::time::Instant::now(),
+            started_at: std::time::SystemTime::now(),
         }
     }
 

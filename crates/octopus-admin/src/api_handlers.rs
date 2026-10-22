@@ -800,6 +800,25 @@ pub async fn api_config_update_handler(
 // System Information Endpoints
 // ============================================================================
 
+/// The wall-clock time this process started, as `YYYY-MM-DD HH:MM:SS` UTC.
+/// It comes from a value captured once at startup (the metrics collector's,
+/// else the admin state's), so it stays the same until Octopus restarts.
+fn start_time_string(state: &AppState) -> String {
+    let started_ms = state.metrics.as_ref().map_or_else(
+        || {
+            state
+                .started_at
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+        },
+        |m| m.start_time_ms(),
+    );
+    chrono::DateTime::<Utc>::from_timestamp_millis(i64::try_from(started_ms).unwrap_or(i64::MAX))
+        .unwrap_or_default()
+        .format("%Y-%m-%d %H:%M:%S")
+        .to_string()
+}
+
 /// Get system information
 /// GET /admin/api/system/info
 pub async fn api_system_info_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -813,11 +832,7 @@ pub async fn api_system_info_handler(State(state): State<Arc<AppState>>) -> impl
     let info = SystemInfo {
         version: env!("CARGO_PKG_VERSION").to_string(),
         uptime_seconds,
-        start_time: Utc::now()
-            .checked_sub_signed(chrono::Duration::seconds(uptime_seconds as i64))
-            .unwrap_or_else(Utc::now)
-            .format("%Y-%m-%d %H:%M:%S")
-            .to_string(),
+        start_time: start_time_string(&state),
         hostname: hostname::get()
             .ok()
             .and_then(|h| h.into_string().ok())

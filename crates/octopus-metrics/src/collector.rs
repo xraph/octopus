@@ -240,6 +240,13 @@ impl MetricsCollector {
         (total_latency_ns as f64 / total_requests as f64) / 1_000_000.0
     }
 
+    /// Wall-clock time the collector was created, in milliseconds since the
+    /// Unix epoch. Captured once, so it only changes when the process
+    /// restarts.
+    pub fn start_time_ms(&self) -> u64 {
+        self.start_time.load(Ordering::Relaxed)
+    }
+
     /// Get uptime in seconds
     pub fn uptime_seconds(&self) -> u64 {
         let start = self.start_time.load(Ordering::Relaxed);
