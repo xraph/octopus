@@ -58,7 +58,7 @@ kube = { version = "0.96", features = ["client", "runtime", "rustls-tls"], optio
 k8s-openapi = { version = "0.23", features = ["v1_30"], optional = true }
 
 # Validation
-jsonschema = { version = "0.17", optional = true }
+jsonschema = { version = "0.17", default-features = false, optional = true }
 
 # Rate limiting
 governor = "0.6"
