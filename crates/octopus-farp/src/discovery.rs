@@ -4,7 +4,6 @@
 
 use crate::client::FarpClient;
 use crate::federation::SchemaFederation;
-use crate::manifest::SchemaManifest;
 use crate::registry::SchemaRegistry;
 use crate::schema::SchemaFormat;
 use octopus_core::{Error, Result, UpstreamCluster, UpstreamInstance};
@@ -333,68 +332,15 @@ impl DiscoveryWatcher {
             .or_else(|| metadata.custom.get("version").cloned())
             .unwrap_or_else(|| "unknown".to_string());
 
-        // Create schema manifest using FARP v1.0.0 signature
-        let mut manifest = SchemaManifest::new(instance.name.clone(), version, instance.id.clone());
-
-        // Set up endpoints using FARP v1.0.0 standard metadata keys
-        let health_endpoint = metadata
-            .custom
-            .get("farp.health.path")
-            .or_else(|| metadata.custom.get("health"))
-            .cloned()
-            .unwrap_or_else(|| "/health".to_string());
-
-        // Try FARP standard key first, then fall back to legacy
-        let openapi_path = metadata
-            .custom
-            .get("farp.openapi.path")
-            .or_else(|| metadata.custom.get("openapi"))
-            .cloned()
-            .unwrap_or_else(|| "/openapi.json".to_string());
-
-        manifest.endpoints = crate::types::SchemaEndpoints {
-            health: health_endpoint,
-            metrics: metadata
-                .custom
-                .get("farp.metrics.path")
-                .or_else(|| metadata.custom.get("metrics"))
-                .cloned(),
-            openapi: Some(openapi_path.clone()),
-            asyncapi: metadata
-                .custom
-                .get("farp.asyncapi.path")
-                .or_else(|| metadata.custom.get("asyncapi"))
-                .cloned(),
-            grpc_reflection: metadata
-                .custom
-                .get("farp.grpc.reflection")
-                .or_else(|| metadata.custom.get("grpc_reflection"))
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(false),
-            graphql: metadata
-                .custom
-                .get("farp.graphql.path")
-                .or_else(|| metadata.custom.get("graphql"))
-                .cloned(),
-        };
-
-        // Parse capabilities from FARP metadata (format: "[rest websocket grpc]")
-        if let Some(caps_str) = metadata.custom.get("farp.capabilities") {
-            // Remove brackets and split by spaces
-            let caps_str = caps_str.trim_matches(|c| c == '[' || c == ']');
-            for cap in caps_str.split_whitespace() {
-                manifest.add_capability(cap);
-            }
-        } else {
-            // Default capability if not specified
-            manifest.add_capability("rest");
-        }
-
-        // Add OpenAPI schema location if available
-        manifest.add_openapi_http(&format!("{base_url}{openapi_path}"));
-
-        // Update checksum
-        manifest.update_checksum()?;
+        // Build the manifest from the FARP opt-in metadata
+        let manifest = crate::manifest::manifest_from_metadata(
+            &instance.name,
+            &version,
+            &instance.id,
+            &base_url,
+            &metadata.custom,
+        )?;
+        let openapi_path = manifest.endpoints.openapi.clone().unwrap_or_default();
 
         // Register with FARP
         self.registry.register_service(manifest).await?;

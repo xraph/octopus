@@ -2,7 +2,7 @@
 
 use crate::client::FarpClient;
 use crate::federation::SchemaFederation;
-use crate::manifest::SchemaManifest;
+use crate::manifest::{manifest_from_metadata, SchemaManifest};
 use crate::registry::SchemaRegistry;
 use crate::route_generator::{GeneratedRoute, RouteGenerator};
 use crate::schema::{SchemaDescriptor, SchemaFormat};
@@ -440,18 +440,22 @@ impl FarpApiHandler {
                             error = %e,
                             "Failed to fetch manifest from service, registering with instance info only"
                         );
-                        let mut m = SchemaManifest::new(
-                            &service_name,
-                            instance.service_version.as_deref().unwrap_or("0.0.0"),
-                            &instance.id,
-                        );
+                        let version = instance.service_version.as_deref().unwrap_or("0.0.0");
                         let base = if instance.port > 0 && !instance.address.contains(':') {
                             format!("http://{}:{}", instance.address, instance.port)
                         } else {
                             format!("http://{}", instance.address)
                         };
-                        m.endpoints.health = format!("{base}/_farp/health");
-                        m
+                        // A service that opted in with `farp.openapi.path` gets the
+                        // same manifest discovery would build from that metadata.
+                        // Without the key, only the instance info is registered.
+                        if let Some(m) = metadata.filter(|m| m.contains_key("farp.openapi.path")) {
+                            manifest_from_metadata(&service_name, version, &instance.id, &base, m)?
+                        } else {
+                            let mut m = SchemaManifest::new(&service_name, version, &instance.id);
+                            m.endpoints.health = format!("{base}/_farp/health");
+                            m
+                        }
                     }
                 }
             };
@@ -2093,5 +2097,76 @@ mod tests {
 
         assert!(router.routes_by_id("farp:billing").is_empty());
         assert!(router.get_upstream("billing").is_none());
+    }
+
+    // Paused time lets the client's retry backoff elapse instantly.
+    #[tokio::test(start_paused = true)]
+    async fn push_without_manifest_uses_openapi_path_metadata() {
+        let registry = Arc::new(SchemaRegistry::new());
+        let handler = FarpApiHandler::new(Arc::clone(&registry));
+        // Nothing listens on 127.0.0.1:1, so the manifest fetch fails at once
+        // and the handler falls back to the opt-in metadata.
+        let body = serde_json::json!({
+            "instance": {
+                "id": "web-1",
+                "service_name": "web",
+                "service_version": "2.0.0",
+                "address": "127.0.0.1",
+                "port": 1,
+                "metadata": {"farp.openapi.path": "/openapi.json"}
+            }
+        });
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/farp/register")
+            .body(Full::new(Bytes::from(body.to_string())))
+            .unwrap();
+        assert_eq!(
+            handler.handle(req).await.unwrap().status(),
+            StatusCode::CREATED
+        );
+
+        let registered = registry.get_service("web").unwrap();
+        assert_eq!(registered.manifest.service_version, "2.0.0");
+        assert_eq!(registered.manifest.schemas.len(), 1);
+        assert_eq!(
+            registered.manifest.schemas[0].location.url.as_deref(),
+            Some("http://127.0.0.1:1/openapi.json")
+        );
+    }
+
+    // Paused time lets the client's retry backoff elapse instantly.
+    #[tokio::test(start_paused = true)]
+    async fn push_without_manifest_or_openapi_path_keeps_the_empty_manifest() {
+        let registry = Arc::new(SchemaRegistry::new());
+        let handler = FarpApiHandler::new(Arc::clone(&registry));
+        let body = serde_json::json!({
+            "instance": {
+                "id": "web-1",
+                "service_name": "web",
+                "address": "127.0.0.1",
+                "port": 1,
+                "metadata": {"unrelated": "x"}
+            }
+        });
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/farp/register")
+            .body(Full::new(Bytes::from(body.to_string())))
+            .unwrap();
+        // The empty manifest has no checksum, so a build with strict manifest
+        // validation rejects it, as it did before this fallback existed. Either
+        // way no schema is invented from metadata that has no OpenAPI path.
+        if let Ok(res) = handler.handle(req).await {
+            assert_eq!(res.status(), StatusCode::CREATED);
+            assert!(registry
+                .get_service("web")
+                .unwrap()
+                .manifest
+                .schemas
+                .is_empty());
+        } else {
+            assert!(registry.get_service("web").is_err());
+        }
     }
 }

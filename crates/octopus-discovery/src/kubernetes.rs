@@ -102,11 +102,7 @@ impl K8sDiscovery {
 
     /// Get list parameters for the Service list (honoring the label selector).
     fn service_list_params(&self) -> ListParams {
-        let mut params = ListParams::default();
-        if let Some(selector) = &self.label_selector {
-            params = params.labels(selector);
-        }
-        params
+        service_list_params(self.label_selector.as_deref())
     }
 
     fn services_api(&self) -> Api<Service> {
@@ -371,18 +367,64 @@ fn owning_service(slice: &EndpointSlice) -> Option<String> {
         .and_then(|labels| labels.get(SERVICE_NAME_LABEL).cloned())
 }
 
+/// List parameters for the Service list. The selector goes to the API server
+/// unchanged, which ANDs comma-joined equality terms such as
+/// `farp.enabled=true,team=payments`.
+fn service_list_params(label_selector: Option<&str>) -> ListParams {
+    let mut params = ListParams::default();
+    if let Some(selector) = label_selector {
+        params = params.labels(selector);
+    }
+    params
+}
+
+/// Prefix of the Service annotations that carry FARP opt-in metadata.
+const FARP_PREFIX: &str = "farp.";
+
+/// Key (label or annotation) that narrows discovery to one Service port.
+const FARP_PORT_KEY: &str = "farp.port";
+
 /// Build [`ServiceMetadata`] from a Kubernetes Service object.
+///
+/// Labels all go into the custom metadata. Annotations whose key starts with
+/// `farp.` are merged on top and win over a label with the same key: label
+/// values cannot hold `/`, so path keys such as `farp.openapi.path` have to be
+/// annotations. Other annotations (for example
+/// `kubectl.kubernetes.io/last-applied-configuration`) never leak in.
 fn metadata_from_service(svc: &Service) -> ServiceMetadata {
     let labels = svc.metadata.labels.as_ref();
+    let mut custom: HashMap<String, String> = labels
+        .map(|l| l.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+        .unwrap_or_default();
+    if let Some(annotations) = svc.metadata.annotations.as_ref() {
+        custom.extend(
+            annotations
+                .iter()
+                .filter(|(k, _)| k.starts_with(FARP_PREFIX))
+                .map(|(k, v)| (k.clone(), v.clone())),
+        );
+    }
     ServiceMetadata {
         version: labels.and_then(|l| l.get("version").cloned()),
         tags: labels
             .map(|l| l.keys().cloned().collect())
             .unwrap_or_default(),
         datacenter: svc.metadata.namespace.clone(),
-        custom: labels
-            .map(|l| l.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-            .unwrap_or_default(),
+        custom,
+    }
+}
+
+/// Whether a Service port is selected by `farp.port`.
+///
+/// A number keeps only that port, any other value keeps only the port with
+/// that name, and no selector keeps every port.
+fn port_selected(selector: Option<&str>, number: u16, name: Option<&str>) -> bool {
+    let Some(selector) = selector else {
+        return true;
+    };
+    match selector.parse::<u16>() {
+        Ok(wanted) => wanted == number,
+        Err(_) => name == Some(selector),
     }
 }
 
@@ -390,6 +432,7 @@ fn metadata_from_service(svc: &Service) -> ServiceMetadata {
 ///
 /// Honors each endpoint's `ready` condition (unless `include_not_ready`), skips
 /// FQDN slices (no routable IPs), and produces one instance per address × port.
+/// `farp.port` on the Service narrows the ports to one.
 fn instances_from_slices(
     svc_name: &str,
     namespace: &str,
@@ -398,6 +441,7 @@ fn instances_from_slices(
     include_not_ready: bool,
 ) -> Vec<ServiceInstance> {
     let mut instances = Vec::new();
+    let port_selector = metadata.custom.get(FARP_PORT_KEY).map(String::as_str);
 
     for slice in slices {
         // FQDN slices carry hostnames rather than routable IPs.
@@ -408,7 +452,13 @@ fn instances_from_slices(
         let ports: Vec<u16> = slice
             .ports
             .as_ref()
-            .map(|ps| ps.iter().filter_map(|p| p.port).map(|p| p as u16).collect())
+            .map(|ps| {
+                ps.iter()
+                    .filter_map(|p| p.port.map(|num| (num as u16, p.name.as_deref())))
+                    .filter(|(num, name)| port_selected(port_selector, *num, *name))
+                    .map(|(num, _)| num)
+                    .collect()
+            })
             .unwrap_or_default();
 
         for endpoint in &slice.endpoints {
@@ -451,6 +501,7 @@ fn instances_from_endpoints(svc: &Service, endpoints: &Endpoints) -> Vec<Service
     };
     let namespace = svc.metadata.namespace.clone().unwrap_or_default();
     let metadata = metadata_from_service(svc);
+    let port_selector = metadata.custom.get(FARP_PORT_KEY).map(String::as_str);
 
     if let Some(subsets) = &endpoints.subsets {
         for subset in subsets {
@@ -464,6 +515,9 @@ fn instances_from_endpoints(svc: &Service, endpoints: &Endpoints) -> Vec<Service
                 let ip = &address.ip;
                 for port in ports {
                     let port_num = port.port as u16;
+                    if !port_selected(port_selector, port_num, port.name.as_deref()) {
+                        continue;
+                    }
                     instances.push(ServiceInstance {
                         id: format!("{namespace}:{svc_name}:{ip}:{port_num}"),
                         name: svc_name.clone(),
@@ -596,5 +650,196 @@ mod tests {
         s.address_type = "FQDN".to_string();
         let refs = vec![&s];
         assert!(instances_from_slices("ext", "default", &meta, &refs, false).is_empty());
+    }
+
+    fn named_port(name: &str, port: i32) -> EndpointPort {
+        EndpointPort {
+            name: Some(name.to_string()),
+            port: Some(port),
+            ..Default::default()
+        }
+    }
+
+    fn two_port_slice() -> EndpointSlice {
+        let mut s = slice("web-1", "web", &[("10.0.0.1", Some(true))], 8080);
+        s.ports = Some(vec![named_port("http", 8080), named_port("metrics", 9100)]);
+        s
+    }
+
+    fn service(
+        labels: &[(&str, &str)],
+        annotations: &[(&str, &str)],
+    ) -> k8s_openapi::api::core::v1::Service {
+        let to_map = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        };
+        k8s_openapi::api::core::v1::Service {
+            metadata: ObjectMeta {
+                name: Some("web".to_string()),
+                namespace: Some("default".to_string()),
+                labels: Some(to_map(labels)),
+                annotations: Some(to_map(annotations)),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    fn ports_of(instances: &[ServiceInstance]) -> Vec<u16> {
+        let mut ports: Vec<u16> = instances.iter().map(|i| i.port).collect();
+        ports.sort_unstable();
+        ports
+    }
+
+    #[test]
+    fn annotation_metadata_overrides_labels() {
+        let svc = service(
+            &[("farp.enabled", "true"), ("farp.openapi.path", "a")],
+            &[("farp.openapi.path", "/v1/openapi.json")],
+        );
+        let meta = metadata_from_service(&svc);
+        assert_eq!(meta.custom["farp.openapi.path"], "/v1/openapi.json");
+        assert_eq!(meta.custom["farp.enabled"], "true");
+    }
+
+    #[test]
+    fn farp_annotations_fill_in_keys_labels_cannot_hold() {
+        let svc = service(
+            &[("farp.enabled", "true")],
+            &[
+                ("farp.openapi.path", "/docs/openapi.json"),
+                ("farp.health.path", "/healthz"),
+            ],
+        );
+        let meta = metadata_from_service(&svc);
+        assert_eq!(meta.custom["farp.openapi.path"], "/docs/openapi.json");
+        assert_eq!(meta.custom["farp.health.path"], "/healthz");
+        // Tags still come from labels only.
+        assert_eq!(meta.tags, vec!["farp.enabled".to_string()]);
+    }
+
+    #[test]
+    fn non_farp_annotations_are_ignored() {
+        let svc = service(
+            &[("farp.enabled", "true")],
+            &[
+                (
+                    "kubectl.kubernetes.io/last-applied-configuration",
+                    "{\"big\":\"blob\"}",
+                ),
+                ("loomplane.farp.gateway", "gw"),
+            ],
+        );
+        let meta = metadata_from_service(&svc);
+        assert!(!meta
+            .custom
+            .contains_key("kubectl.kubernetes.io/last-applied-configuration"));
+        assert!(!meta.custom.contains_key("loomplane.farp.gateway"));
+    }
+
+    #[test]
+    fn farp_port_selects_named_port() {
+        let svc = service(&[("farp.port", "http")], &[]);
+        let meta = metadata_from_service(&svc);
+        let s = two_port_slice();
+        let found = instances_from_slices("web", "default", &meta, &[&s], false);
+        assert_eq!(ports_of(&found), vec![8080]);
+    }
+
+    #[test]
+    fn farp_port_selects_numeric_port() {
+        let svc = service(&[], &[("farp.port", "9100")]);
+        let meta = metadata_from_service(&svc);
+        let s = two_port_slice();
+        let found = instances_from_slices("web", "default", &meta, &[&s], false);
+        assert_eq!(ports_of(&found), vec![9100]);
+    }
+
+    #[test]
+    fn no_farp_port_keeps_every_port() {
+        let svc = service(&[("farp.enabled", "true")], &[]);
+        let meta = metadata_from_service(&svc);
+        let s = two_port_slice();
+        let found = instances_from_slices("web", "default", &meta, &[&s], false);
+        assert_eq!(ports_of(&found), vec![8080, 9100]);
+    }
+
+    #[test]
+    fn unknown_farp_port_keeps_nothing() {
+        let svc = service(&[("farp.port", "grpc")], &[]);
+        let meta = metadata_from_service(&svc);
+        let s = two_port_slice();
+        assert!(instances_from_slices("web", "default", &meta, &[&s], false).is_empty());
+    }
+
+    #[test]
+    fn port_selected_matches_number_or_name() {
+        assert!(port_selected(None, 8080, Some("http")));
+        assert!(port_selected(None, 8080, None));
+        assert!(port_selected(Some("8080"), 8080, Some("http")));
+        assert!(!port_selected(Some("8080"), 9100, Some("metrics")));
+        assert!(port_selected(Some("http"), 8080, Some("http")));
+        assert!(!port_selected(Some("http"), 8080, None));
+        assert!(!port_selected(Some("http"), 9100, Some("metrics")));
+    }
+
+    #[test]
+    fn farp_port_filters_legacy_endpoints() {
+        use k8s_openapi::api::core::v1::{
+            EndpointAddress, EndpointPort as CoreEndpointPort, EndpointSubset,
+        };
+        let endpoints = Endpoints {
+            subsets: Some(vec![EndpointSubset {
+                addresses: Some(vec![EndpointAddress {
+                    ip: "10.0.0.1".to_string(),
+                    ..Default::default()
+                }]),
+                ports: Some(vec![
+                    CoreEndpointPort {
+                        name: Some("http".to_string()),
+                        port: 8080,
+                        ..Default::default()
+                    },
+                    CoreEndpointPort {
+                        name: Some("metrics".to_string()),
+                        port: 9100,
+                        ..Default::default()
+                    },
+                ]),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        };
+
+        let all = instances_from_endpoints(&service(&[], &[]), &endpoints);
+        assert_eq!(ports_of(&all), vec![8080, 9100]);
+
+        let named =
+            instances_from_endpoints(&service(&[("farp.port", "metrics")], &[]), &endpoints);
+        assert_eq!(ports_of(&named), vec![9100]);
+
+        let numeric = instances_from_endpoints(&service(&[], &[("farp.port", "8080")]), &endpoints);
+        assert_eq!(ports_of(&numeric), vec![8080]);
+    }
+
+    #[test]
+    fn comma_joined_label_selector_is_passed_through() {
+        let selector = "farp.enabled=true,loomplane.environment=env-1,loomplane.farp.gateway=gw";
+        let config = K8sConfig {
+            label_selector: Some(selector.into()),
+            ..Default::default()
+        };
+        // The apiserver ANDs comma-joined equality terms, so the string must
+        // reach it unchanged.
+        assert_eq!(
+            service_list_params(config.label_selector.as_deref())
+                .label_selector
+                .as_deref(),
+            Some(selector)
+        );
+        assert_eq!(service_list_params(None).label_selector, None);
     }
 }

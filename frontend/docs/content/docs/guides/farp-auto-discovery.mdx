@@ -1,6 +1,6 @@
 ---
 title: Auto-discover services with FARP
-description: Turn on FARP so services publish their own OpenAPI schemas and Octopus generates routes for them automatically — with a Kubernetes EndpointSlice backend (and a local mDNS option).
+description: Turn on FARP so services publish their own OpenAPI schemas and Octopus generates routes for them automatically, with a Kubernetes EndpointSlice backend (and a local mDNS option).
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -9,7 +9,7 @@ import { Tabs } from 'fumadocs-ui/components/tabs';
 
 # Auto-discover services with FARP
 
-[FARP](/docs/farp) — the Forge API Gateway Registration Protocol — flips
+[FARP](/docs/farp), the Forge API Gateway Registration Protocol, flips
 hand-written routing around: a discovery backend reports live service instances,
 Octopus fetches each one's published **OpenAPI** document, and turns its paths and
 methods into routes. As services scale, appear, or disappear, the routes follow.
@@ -21,15 +21,15 @@ incrementally.
 <Step>
 ## Make services advertise themselves
 
-FARP only registers an instance — and generates routes for it — when its
+FARP only registers an instance, and generates routes for it, when its
 discovery metadata advertises `farp.enabled = true`. The OpenAPI document is then
 fetched from `farp.openapi.path` (default `/openapi.json`). How you set that
 metadata depends on the backend:
 
-- **Kubernetes** — carried on the Service/Pod metadata; filter with a
+- **Kubernetes**: Service labels plus `farp.*` annotations; filter with a
   `label_selector`.
-- **Consul** — service `Meta`.
-- **mDNS** — TXT records.
+- **Consul**: service `Meta`.
+- **mDNS**: TXT records.
 
 Instances without `farp.enabled` are discovered but skipped. See
 [what a backend reports](/docs/farp/backends#what-a-backend-reports).
@@ -98,7 +98,7 @@ themselves with their own mDNS library.
   `dns`, `consul`, `kubernetes`); the default runtime build enables only `mdns`.
   A configured-but-not-compiled backend is logged and skipped, not fatal. There
   is no `type: etcd` backend. The DNS backend is experimental (only
-  `watch_interval` is applied) — prefer mDNS, Consul, or Kubernetes. See
+  `watch_interval` is applied), so prefer mDNS, Consul, or Kubernetes. See
   [Discovery backends](/docs/farp/backends).
 </Callout>
 </Step>
@@ -147,17 +147,69 @@ down and the routes reconcile to match.
 
 </Steps>
 
+## FARP metadata keys
+
+The same keys work on every path that registers a service: Service labels and annotations on
+Kubernetes, `instance.metadata` on push registration, and the metadata of the other backends.
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `farp.enabled` | _(unset)_ | Must be `true` for discovery to register the instance. On Kubernetes, set it as a label. |
+| `farp.openapi.path` | `/openapi.json` | Where the service publishes its OpenAPI document. |
+| `farp.asyncapi.path` | _(unset)_ | AsyncAPI document path. |
+| `farp.graphql.path` | _(unset)_ | GraphQL endpoint path. |
+| `farp.grpc.reflection` | `false` | `true` when the service exposes gRPC reflection. |
+| `farp.health.path` | `/health` | Health check path. |
+| `farp.metrics.path` | _(unset)_ | Metrics path. |
+| `farp.capabilities` | `rest` | Protocols the service speaks, written as `rest websocket` or `[rest websocket]`. |
+| `farp.port` | _(unset)_ | Kubernetes only. A number keeps that port, any other value keeps the port with that name, unset keeps every port. |
+
+The older unprefixed keys (`openapi`, `asyncapi`, `graphql`, `grpc_reflection`, `health`,
+`metrics`) still work when the `farp.` key is absent.
+
+On Kubernetes, labels cannot hold `/`, so every key whose value is a path must be an annotation.
+`farp.enabled` stays a label so `label_selector: "farp.enabled=true"` keeps working, and an
+annotation with the same key as a label wins. Only annotations starting with `farp.` are read.
+See [Kubernetes discovery](/docs/kubernetes/discovery#opting-a-service-into-farp) for a complete
+Service.
+
+## Push registration without a manifest
+
+A service that pushes to `POST /farp/register` can leave out the manifest. Octopus then tries to
+fetch it from the service (`farp.manifest` in `instance.metadata`, or `/_farp/manifest` on the
+instance address). If that fails and `instance.metadata` contains `farp.openapi.path`, Octopus
+builds the manifest from the metadata, using the keys above and `http://{address}:{port}` as the
+base URL. A Docker service gets the same result as a Kubernetes one by sending the same keys:
+
+```json
+{
+  "instance": {
+    "id": "web-1",
+    "service_name": "web",
+    "address": "10.0.0.7",
+    "port": 3000,
+    "metadata": {
+      "farp.openapi.path": "/docs/openapi.json",
+      "farp.health.path": "/healthz"
+    }
+  }
+}
+```
+
+Without `farp.openapi.path`, the registration is accepted with an empty manifest, as before. If
+you set a [registration token](/docs/configuration/farp#registration-token), send it with the request.
+
 ## Readiness and discovery
 
 If you also run on Kubernetes with probes, `/readyz` can wait for the first
-discovery sync before reporting ready — `gateway.probes.require_discovery_sync`
+discovery sync before reporting ready. `gateway.probes.require_discovery_sync`
 (default `true`) keeps a freshly started pod out of the Service EndpointSlice
 until it knows where its upstreams are. See [Probes & drain](/docs/kubernetes/probes-and-drain)
 and the [observability guide](/docs/guides/observability-setup).
 
 ## See also
 
-- [Service Discovery & FARP](/docs/farp) — the discovery and auto-routing model.
-- [Discovery backends](/docs/farp/backends) — every backend's fields and honest status.
-- [Schema federation](/docs/farp/schema-federation) — how published schemas become a unified API surface.
+- [Service Discovery & FARP](/docs/farp): the discovery and auto-routing model.
+- [Discovery backends](/docs/farp/backends): every backend's fields and honest status.
+- [Schema federation](/docs/farp/schema-federation): how published schemas become a unified API surface.
 - [FARP configuration](/docs/configuration/farp) and [Kubernetes discovery](/docs/kubernetes/discovery).
