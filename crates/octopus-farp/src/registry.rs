@@ -24,8 +24,12 @@ pub struct ServiceRegistration {
     pub manifest: SchemaManifest,
     /// Fetched schemas
     pub schemas: Vec<SchemaDescriptor>,
-    /// Manifest fetch URL (for heartbeat retry — §17.4.1)
+    /// Manifest fetch URL (for heartbeat retry, §17.4.1)
     pub manifest_url: Option<String>,
+    /// The last registration could not fetch any of its schemas, so the
+    /// gateway kept the service's previous FARP routes. Each heartbeat retries
+    /// the fetch until it works.
+    pub schema_retry_pending: bool,
 }
 
 impl ServiceRegistration {
@@ -40,6 +44,7 @@ impl ServiceRegistration {
             manifest,
             schemas: Vec::new(),
             manifest_url: None,
+            schema_retry_pending: false,
         }
     }
 

@@ -141,6 +141,17 @@ it from the service.
 number of schemas it fetched and stored. Services compare `routes_checksum` against their own on
 heartbeat to detect drift.
 
+The gateway files the registration under the pushed `instance.id` and `instance.service_name`,
+even when the manifest it fetched names another instance or service. Heartbeat and deregister
+calls use that same `instance.id`.
+
+`schemas_applied: 0` on a service that lists schemas means the gateway could not fetch them yet
+(the service is still starting, or its schema endpoint failed). The registration still succeeds,
+and the gateway keeps the service's existing FARP routes rather than wiping them. It then retries
+the schema locations on each heartbeat for that instance (the `farp.openapi.path` location
+included), one short attempt each, and swaps in the fresh routes as soon as a fetch works. A
+fetch that works and declares no routes is a real answer: it replaces the routes with none.
+
 </Tab>
 <Tab value="Legacy">
 
@@ -216,7 +227,8 @@ Content-Type: application/json
 
 `routes_checksum` is optional. When present, the gateway compares it against its own copy; if
 they differ (or the gateway holds no schemas), it re-fetches the manifest so the two sides
-reconcile.
+reconcile. When the last registration could not fetch its schemas, every heartbeat also retries
+them until one works (see `schemas_applied` above).
 
 **Response (`200 OK`)**:
 
