@@ -1043,16 +1043,19 @@ async fn run_watcher<K, C>(
 }
 
 /// Build a FARP [`GatewayBinding`](octopus_farp::GatewayBinding) from an
-/// `OctopusGateway` spec: its first hostname + id + inherited auth/rate-limit/timeout.
-/// `None` when the gateway declares no hostname.
+/// `OctopusGateway` spec: every hostname + id + inherited auth/rate-limit/timeout.
+/// FARP routes then land on each of the gateway's hostnames. `None` when the
+/// gateway declares no hostname.
 fn gateway_binding_from_spec(
     name: &str,
     spec: &OctopusGatewaySpec,
 ) -> Option<octopus_farp::GatewayBinding> {
-    let host = spec.hostnames.first()?;
+    if spec.hostnames.is_empty() {
+        return None;
+    }
     let dp = spec.default_policy.as_ref();
     Some(
-        octopus_farp::GatewayBinding::new(host)
+        octopus_farp::GatewayBinding::for_hostnames(&spec.hostnames)
             .with_gateway_id(Some(name.to_string()))
             .with_default_auth(
                 dp.and_then(|p| p.auth_provider.clone())
@@ -1519,11 +1522,26 @@ mod tests {
         let guard = cell.load();
         let binding = (**guard).as_ref().expect("FARP binding set from the CRD");
         assert_eq!(
-            binding.host,
-            octopus_router::HostMatch::Exact("api.acme.com".into())
+            binding.hosts,
+            vec![octopus_router::HostMatch::Exact("api.acme.com".into())]
         );
         assert_eq!(binding.gateway_id.as_deref(), Some("platform-api"));
         assert_eq!(binding.default_auth_provider.as_deref(), Some("jwt"));
+    }
+
+    #[test]
+    fn farp_binding_covers_every_gateway_hostname() {
+        let spec = gw_spec(&["api.acme.com", "*.acme.dev"], GatewayIsolation::Shared);
+        let binding = gateway_binding_from_spec("platform-api", &spec).unwrap();
+        assert_eq!(
+            binding.hosts,
+            vec![
+                octopus_router::HostMatch::Exact("api.acme.com".into()),
+                octopus_router::HostMatch::Wildcard(".acme.dev".into()),
+            ]
+        );
+        let none = gw_spec(&[], GatewayIsolation::Shared);
+        assert!(gateway_binding_from_spec("platform-api", &none).is_none());
     }
 
     fn gw_spec(hostnames: &[&str], isolation: GatewayIsolation) -> OctopusGatewaySpec {

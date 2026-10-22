@@ -1054,10 +1054,10 @@ impl ServerBuilder {
             ));
             let federation = Arc::new(octopus_farp::SchemaFederation::new());
 
-            // Optional virtual-gateway binding: scope all FARP routes under one
-            // hostname (e.g. api.example.cloud) and attach them for policy.
+            // Optional virtual-gateway binding: put every FARP route on each
+            // listed hostname (e.g. api.example.cloud) and attach it for policy.
             let farp_binding = config.farp.gateway.as_ref().map(|g| {
-                octopus_farp::GatewayBinding::new(&g.hostname)
+                octopus_farp::GatewayBinding::for_hostnames(&g.effective_hostnames())
                     .with_gateway_id(g.gateway_id.clone())
                     .with_default_auth(g.default_auth_provider.clone())
                     .with_rate_limit(

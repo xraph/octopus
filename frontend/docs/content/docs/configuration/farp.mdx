@@ -36,6 +36,7 @@ farp:
 | `schema_cache_ttl` | duration | `5m` | Schema cache time-to-live. |
 | `discovery` | object | none | Discovery backend configuration. See [below](#discovery). |
 | `registration_token` | string | none | Token callers must present to register, update or remove services. See [Registration token](#registration-token). |
+| `gateway` | object | none | Bind FARP routes to hostnames and a virtual gateway. See [Gateway binding](#gateway-binding). |
 
 ## Registration token
 
@@ -58,6 +59,56 @@ logged. An empty string counts as no token.
 If FARP is enabled with no token, the gateway starts and logs a warning. See the
 [FARP registration API](/docs/api/farp#authentication) for the exact request and response shapes,
 including what a service should do when a heartbeat comes back `404` after a gateway restart.
+
+## Gateway binding
+
+`farp.gateway` puts every FARP route on the hostnames you list, and on no other host.
+
+```yaml
+farp:
+  enabled: true
+  gateway:
+    hostnames: ["api.acme.dev", "*.acme.dev"]
+    gateway_id: platform-api
+    default_auth_provider: jwt
+```
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `hostnames` | array of string | `[]` | Hostnames every FARP route lands on: exact hosts (`api.acme.dev`) or `*.zone` wildcards. Wins over `hostname` when both are set. |
+| `hostname` | string | none | Legacy single hostname. Still read, and used only when `hostnames` is empty. |
+| `gateway_id` | string | none | Virtual gateway id attached to each FARP route. |
+| `default_auth_provider` | string | none | Auth provider for FARP routes whose service doesn't declare one. |
+| `default_rate_limit_per_minute` | integer | none | Rate limit applied to FARP routes. |
+| `default_timeout` | duration | none | Per-request timeout applied to FARP routes. |
+
+Hostnames follow the same rules as [route hosts](/docs/configuration/routes): lowercase ASCII
+labels, with `*.` allowed only as the first label. Config loading fails on anything else. A
+wildcard never covers its apex, so `*.acme.dev` matches `api.acme.dev` but not `acme.dev`; list
+both if you want both. With no hostnames at all, FARP routes match any host and still pick up
+`gateway_id`, the auth provider, the rate limit and the timeout.
+
+Each service gets one route per method and per hostname. For a service named `billing` that
+declares `GET /invoices`, the gateway adds:
+
+- path `/billing/invoices` (the service name lowercased, then the declared path),
+- `strip_prefix: /billing`, so the service receives `/invoices`,
+- priority `100`,
+- upstream `billing`, named after the FARP `service_name`.
+
+All of a service's routes share the route id `farp:<service_name>` and report origin `farp` in
+the [admin API](/docs/observability/admin-api#routes-crud). When the service registers again, the
+gateway replaces that whole set, so a route the service stopped declaring goes away. When it
+deregisters, or discovery stops seeing it, the gateway removes its routes and its upstream.
+
+A route you declare yourself, in `routes[]` or through the admin API, wins over a FARP route on
+the same method, host and path, whatever their priorities. FARP never removes it, and a
+re-registration doesn't bring the FARP route back in front of it. Delete your route and the FARP
+route serves that path again.
+
+You can change the hostnames at runtime with
+[`PUT /admin/api/farp/binding`](/docs/observability/admin-api#farp). That change is in memory
+only. Write the same list into `farp.gateway.hostnames` too, or a restart puts the old one back.
 
 ## Discovery
 

@@ -63,6 +63,7 @@ pub mod fetcher;
 pub mod manifest;
 pub mod registry;
 pub mod route_generator;
+pub mod routes;
 pub mod schema;
 pub mod schema_ops;
 pub mod types;
@@ -72,7 +73,7 @@ pub mod validation;
 pub use adapter::{EventType, ManifestEvent, RegistryAdapter, SchemaManifestAdapter};
 
 pub use api::{FarpApiHandler, RegistrationRequest, RegistrationResponse, FARP_TOKEN_HEADER};
-pub use binding::{apply_gateway_binding, new_binding_cell, BindingCell, GatewayBinding};
+pub use binding::{expand_gateway_binding, new_binding_cell, BindingCell, GatewayBinding};
 pub use client::{FarpClient, FarpClientConfig};
 pub use discovery::DiscoveryWatcher;
 pub use federation::{FederatedSchema, SchemaFederation};
@@ -82,6 +83,7 @@ pub use manifest::{
 };
 pub use registry::{SchemaRegistry, ServiceRegistration};
 pub use route_generator::{GeneratedRoute, RouteGenerator, RouteMetadata};
+pub use routes::{farp_route_id, remove_service_routes, replace_service_routes};
 pub use schema::{SchemaDescriptor as LegacySchemaDescriptor, SchemaFormat, SchemaProvider};
 pub use types::{
     Capability, LocationType, SchemaDescriptor, SchemaEndpoints, SchemaLocation, SchemaType,

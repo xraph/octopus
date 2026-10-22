@@ -95,6 +95,10 @@ The v1 push payload carries instance info and, optionally, the manifest. If `man
 omitted, the gateway fetches it from the instance's `/_farp/manifest` endpoint (resolved from the
 `farp.manifest` metadata URL, or built from the instance address). The gateway then fetches the
 schemas the manifest references, registers the upstream and routes, and federates.
+Registering again replaces that service's FARP routes and upstream as a set, so routes the
+service no longer declares disappear. Routes you declared in config or through the admin API are
+never touched. See [Gateway binding](/docs/configuration/farp#gateway-binding) for the route
+shape and the hostnames the routes land on.
 
 ```http
 POST /farp/register
@@ -256,7 +260,9 @@ DELETE /farp/deregister/user-service-7f9c
 { "status": "deregistered" }
 ```
 
-Returns **`404 Not Found`** (`{"error": "instance not found"}`) if the instance is unknown.
+The gateway also removes the service's FARP routes and its upstream, so its paths stop matching
+right away. Returns **`404 Not Found`** (`{"error": "instance not found"}`) if the instance is
+unknown.
 
 ---
 
@@ -293,7 +299,8 @@ Content-Type: application/json
 
 ### DELETE /farp/services/\{service_name\}
 
-Deregister a service by name (removes the whole service, not a single instance).
+Deregister a service by name (removes the whole service, not a single instance). Its FARP
+routes and upstream go with it.
 
 ```http
 DELETE /farp/services/user-service

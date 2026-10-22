@@ -241,6 +241,7 @@ impl RequestHandler {
 
         let farp_registry = farp_handler.as_ref().map(|h| Arc::clone(h.registry()));
         let farp_federation = farp_handler.as_ref().map(|h| Arc::clone(h.federation()));
+        let farp_binding = farp_handler.as_ref().map(|h| h.binding_handle());
         let admin_handler = AdminHandler::with_all(
             Arc::clone(&router),
             Arc::clone(&request_count),
@@ -251,6 +252,7 @@ impl RequestHandler {
             Some(Arc::clone(&activity_log)),
             farp_registry,
             farp_federation,
+            farp_binding,
             None, // config
         );
 
@@ -298,6 +300,7 @@ impl RequestHandler {
     ) -> Self {
         let farp_registry = farp_handler.as_ref().map(|h| Arc::clone(h.registry()));
         let farp_federation = farp_handler.as_ref().map(|h| Arc::clone(h.federation()));
+        let farp_binding = farp_handler.as_ref().map(|h| h.binding_handle());
         let admin_handler = AdminHandler::with_all(
             Arc::clone(&router),
             Arc::clone(&request_count),
@@ -308,6 +311,7 @@ impl RequestHandler {
             Some(Arc::clone(&activity_log)),
             farp_registry,
             farp_federation,
+            farp_binding,
             config,
         );
 

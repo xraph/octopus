@@ -359,6 +359,26 @@ pub struct FarpServiceInfo {
     pub updated_at: String,
 }
 
+/// Body of `PUT /admin/api/farp/binding`: the hostnames FARP routes land on.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FarpBindingUpdate {
+    /// Exact hostnames or `*.zone` wildcards. Empty makes FARP routes
+    /// host-agnostic.
+    pub hostnames: Vec<String>,
+}
+
+/// The FARP gateway binding as `GET` and `PUT /admin/api/farp/binding`
+/// report it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FarpBindingInfo {
+    /// Hostnames every FARP route lands on (empty = any host).
+    pub hostnames: Vec<String>,
+    /// Virtual gateway id attached to FARP routes.
+    pub gateway_id: Option<String>,
+    /// Number of FARP route entries in the router (one per method and host).
+    pub farp_routes: usize,
+}
+
 impl Default for DashboardStats {
     fn default() -> Self {
         Self {

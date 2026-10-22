@@ -37,6 +37,9 @@ pub struct AppState {
     pub farp_registry: Option<Arc<octopus_farp::SchemaRegistry>>,
     /// FARP schema federation for merged `OpenAPI` output
     pub farp_federation: Option<Arc<octopus_farp::SchemaFederation>>,
+    /// FARP gateway binding shared with the FARP handler and discovery
+    /// watcher. `None` when FARP is not enabled.
+    pub farp_binding: Option<octopus_farp::BindingCell>,
     /// Optional admin authentication (login/session). `None` = no auth enforced.
     pub admin_auth: Option<Arc<crate::auth::AdminAuth>>,
     /// Server start time for uptime calculation
@@ -58,6 +61,7 @@ impl AppState {
             config: None,
             farp_registry: None,
             farp_federation: None,
+            farp_binding: None,
             admin_auth: None,
             start_time: std::time::Instant::now(),
         }
@@ -123,6 +127,13 @@ impl AppState {
     #[must_use]
     pub fn with_farp_federation(mut self, f: Arc<octopus_farp::SchemaFederation>) -> Self {
         self.farp_federation = Some(f);
+        self
+    }
+
+    /// Builder: set the FARP gateway binding cell
+    #[must_use]
+    pub fn with_farp_binding(mut self, cell: octopus_farp::BindingCell) -> Self {
+        self.farp_binding = Some(cell);
         self
     }
 

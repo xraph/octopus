@@ -347,8 +347,9 @@ impl SchemaRegistry {
         Err(Error::Farp(format!("Instance '{instance_id}' not found")))
     }
 
-    /// Deregister a service by instance ID
-    pub fn deregister_by_instance_id(&self, instance_id: &str) -> Result<()> {
+    /// Deregister a service by instance ID. Returns the name of the service
+    /// that instance belonged to.
+    pub fn deregister_by_instance_id(&self, instance_id: &str) -> Result<String> {
         // Find and remove the service by instance_id
         let service_name = {
             let mut found = None;
@@ -371,7 +372,7 @@ impl SchemaRegistry {
 
             self.services.remove(&name);
             info!(instance_id = %instance_id, service = %name, "Service instance deregistered");
-            Ok(())
+            Ok(name)
         } else {
             Err(Error::Farp(format!("Instance '{instance_id}' not found")))
         }

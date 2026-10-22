@@ -146,12 +146,19 @@ impl Router {
     /// Move every route of `origin` onto `hosts`.
     ///
     /// The routes are deduplicated by `(id, method, path)`, removed, and
-    /// re-inserted once per host (once as [`HostMatch::Any`] when `hosts` is
-    /// empty). Routes of other origins are untouched. Returns the number of
-    /// routes inserted.
+    /// re-inserted once per distinct host (once as [`HostMatch::Any`] when
+    /// `hosts` is empty). Repeated entries in `hosts` count once. Routes of
+    /// other origins are untouched. Returns the number of routes inserted.
     pub fn rehost_routes(&self, origin: RouteOrigin, hosts: &[HostMatch]) -> usize {
-        let any = [HostMatch::Any];
-        let targets = if hosts.is_empty() { &any[..] } else { hosts };
+        let mut targets: Vec<HostMatch> = Vec::with_capacity(hosts.len().max(1));
+        for host in hosts {
+            if !targets.contains(host) {
+                targets.push(host.clone());
+            }
+        }
+        if targets.is_empty() {
+            targets.push(HostMatch::Any);
+        }
         let mut inserted = 0;
 
         for mut entry in self.tries.iter_mut() {
@@ -169,7 +176,7 @@ impl Router {
             }
 
             for route in originals {
-                for host in targets {
+                for host in &targets {
                     let mut copy = route.clone();
                     copy.host = host.clone();
                     match trie.insert(copy) {
@@ -519,6 +526,29 @@ mod tests {
         assert_eq!(router.rehost_routes(RouteOrigin::Farp, &[]), 1);
         assert_eq!(router.total_route_count(), 1);
         assert!(matches(&router, "anything.dev", &Method::GET, "/svc/x"));
+    }
+
+    #[test]
+    fn rehost_routes_ignores_duplicate_hosts() {
+        let router = Router::new();
+        router
+            .add_route(origin_route(
+                Method::GET,
+                "/svc/x",
+                "svc",
+                HostMatch::Exact("old.dev".into()),
+                Some("farp:svc"),
+                RouteOrigin::Farp,
+            ))
+            .unwrap();
+
+        let a = HostMatch::Exact("a.dev".into());
+        let b = HostMatch::Exact("b.dev".into());
+        let inserted = router.rehost_routes(RouteOrigin::Farp, &[a.clone(), b, a]);
+        assert_eq!(inserted, 2);
+        assert_eq!(router.total_route_count(), 2);
+        assert!(matches(&router, "a.dev", &Method::GET, "/svc/x"));
+        assert!(matches(&router, "b.dev", &Method::GET, "/svc/x"));
     }
 
     #[test]

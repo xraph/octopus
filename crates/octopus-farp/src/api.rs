@@ -45,6 +45,21 @@ fn bearer_token(value: &str) -> Option<&str> {
     (scheme.eq_ignore_ascii_case("bearer") && !credential.is_empty()).then_some(credential)
 }
 
+/// The HTTP method a FARP route table or OpenAPI document names, if FARP
+/// routes it.
+pub(crate) fn http_method(name: &str) -> Option<Method> {
+    match name.to_uppercase().as_str() {
+        "GET" => Some(Method::GET),
+        "POST" => Some(Method::POST),
+        "PUT" => Some(Method::PUT),
+        "DELETE" => Some(Method::DELETE),
+        "PATCH" => Some(Method::PATCH),
+        "HEAD" => Some(Method::HEAD),
+        "OPTIONS" => Some(Method::OPTIONS),
+        _ => None,
+    }
+}
+
 /// FARP API handler
 #[derive(Clone, Debug)]
 pub struct FarpApiHandler {
@@ -523,10 +538,9 @@ impl FarpApiHandler {
                 cluster.add_instance(upstream_inst);
                 router.register_upstream(cluster);
 
-                let service_name_lower = service_name.to_lowercase();
-
                 // Prefer pre-computed route table from manifest (FARP v1.1.0).
                 // This uses the exact routes the service declared, already validated.
+                let mut builders = Vec::new();
                 if manifest.has_route_table() {
                     for route_desc in &manifest.route_table {
                         // Skip introspection endpoints
@@ -536,95 +550,67 @@ impl FarpApiHandler {
                             continue;
                         }
                         for method_str in &route_desc.methods {
-                            let method = match method_str.to_uppercase().as_str() {
-                                "GET" => Method::GET,
-                                "POST" => Method::POST,
-                                "PUT" => Method::PUT,
-                                "DELETE" => Method::DELETE,
-                                "PATCH" => Method::PATCH,
-                                "HEAD" => Method::HEAD,
-                                "OPTIONS" => Method::OPTIONS,
-                                _ => continue,
+                            let Some(method) = http_method(method_str) else {
+                                continue;
                             };
-                            let prefixed_path = format!("/{service_name_lower}{}", route_desc.path);
-                            let builder = octopus_router::RouteBuilder::new()
-                                .path(&prefixed_path)
-                                .method(method)
-                                .upstream_name(&service_name)
-                                .priority(100);
-                            let binding = self.binding.load();
-                            let builder = crate::binding::apply_gateway_binding(
-                                builder,
-                                (**binding).as_ref(),
-                                false,
-                            );
-                            if let Ok(route) = builder.build() {
-                                let _ = router.add_route(route);
-                            }
+                            builders.push(crate::routes::service_route_builder(
+                                &service_name,
+                                &route_desc.path,
+                                method,
+                            ));
                         }
                     }
-                    debug!(
-                        service = %service_name,
-                        route_count = manifest.route_table.len(),
-                        "Routes registered from manifest route_table"
-                    );
-                } else {
+                } else if let Ok(schemas) = self.registry.get_schemas(&service_name) {
                     // Fallback: parse OpenAPI schema paths
-                    if let Ok(schemas) = self.registry.get_schemas(&service_name) {
-                        for schema in &schemas {
-                            if schema.format == SchemaFormat::OpenApi {
-                                if let Ok(schema_json) =
-                                    serde_json::from_str::<serde_json::Value>(&schema.content)
-                                {
-                                    if let Some(paths) =
-                                        schema_json.get("paths").and_then(|p| p.as_object())
-                                    {
-                                        for (path, operations) in paths {
-                                            if crate::schema_ops::should_exclude_introspection()
-                                                && crate::schema_ops::is_introspection_path(path)
-                                            {
-                                                continue;
-                                            }
-                                            if let Some(ops) = operations.as_object() {
-                                                for method_str in ops.keys() {
-                                                    let method =
-                                                        match method_str.to_uppercase().as_str() {
-                                                            "GET" => Method::GET,
-                                                            "POST" => Method::POST,
-                                                            "PUT" => Method::PUT,
-                                                            "DELETE" => Method::DELETE,
-                                                            "PATCH" => Method::PATCH,
-                                                            "HEAD" => Method::HEAD,
-                                                            "OPTIONS" => Method::OPTIONS,
-                                                            _ => continue,
-                                                        };
-                                                    let prefixed_path =
-                                                        format!("/{service_name_lower}{path}");
-                                                    let builder =
-                                                        octopus_router::RouteBuilder::new()
-                                                            .path(&prefixed_path)
-                                                            .method(method)
-                                                            .upstream_name(&service_name)
-                                                            .priority(100);
-                                                    let binding = self.binding.load();
-                                                    let builder =
-                                                        crate::binding::apply_gateway_binding(
-                                                            builder,
-                                                            (**binding).as_ref(),
-                                                            false,
-                                                        );
-                                                    if let Ok(route) = builder.build() {
-                                                        let _ = router.add_route(route);
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                    for schema in &schemas {
+                        if schema.format != SchemaFormat::OpenApi {
+                            continue;
+                        }
+                        let Ok(schema_json) =
+                            serde_json::from_str::<serde_json::Value>(&schema.content)
+                        else {
+                            continue;
+                        };
+                        let Some(paths) = schema_json.get("paths").and_then(|p| p.as_object())
+                        else {
+                            continue;
+                        };
+                        for (path, operations) in paths {
+                            if crate::schema_ops::should_exclude_introspection()
+                                && crate::schema_ops::is_introspection_path(path)
+                            {
+                                continue;
+                            }
+                            let Some(ops) = operations.as_object() else {
+                                continue;
+                            };
+                            for method in ops.keys().filter_map(|m| http_method(m)) {
+                                builders.push(crate::routes::service_route_builder(
+                                    &service_name,
+                                    path,
+                                    method,
+                                ));
                             }
                         }
                     }
                 }
+
+                // Replace the service's FARP routes in one step, so a
+                // re-registration drops routes the service no longer declares.
+                let binding = self.binding.load();
+                let route_count = crate::routes::replace_service_routes(
+                    router,
+                    &service_name,
+                    builders,
+                    (**binding).as_ref(),
+                    false,
+                );
+                debug!(
+                    service = %service_name,
+                    route_count,
+                    from_route_table = manifest.has_route_table(),
+                    "FARP routes registered"
+                );
 
                 info!(service = %service_name, "Upstream and routes registered in gateway router");
             }
@@ -844,7 +830,8 @@ impl FarpApiHandler {
     async fn deregister_by_id(&self, instance_id: &str) -> Result<Response<Full<Bytes>>> {
         info!(instance_id = %instance_id, "Deregistering service instance");
 
-        if self.registry.deregister_by_instance_id(instance_id).is_ok() {
+        if let Ok(service_name) = self.registry.deregister_by_instance_id(instance_id) {
+            self.remove_service_from_router(&service_name);
             self.json_response(
                 StatusCode::OK,
                 &serde_json::json!({"status": "deregistered"}),
@@ -854,6 +841,15 @@ impl FarpApiHandler {
                 StatusCode::NOT_FOUND,
                 &serde_json::json!({"error": "instance not found"}),
             )
+        }
+    }
+
+    /// Drop a deregistered service's FARP routes and its upstream.
+    fn remove_service_from_router(&self, service_name: &str) {
+        if let Some(ref router) = self.router {
+            let removed = crate::routes::remove_service_routes(router, service_name);
+            router.remove_upstream(service_name);
+            info!(service = %service_name, routes_removed = removed, "Service removed from gateway router");
         }
     }
 
@@ -892,6 +888,7 @@ impl FarpApiHandler {
         info!(service = %service_name, "Deregistering service");
 
         self.registry.deregister_service(service_name).await?;
+        self.remove_service_from_router(service_name);
 
         let response = serde_json::json!({
             "success": true,
@@ -1965,5 +1962,151 @@ mod tests {
         let body = res.into_body().collect().await.unwrap().to_bytes();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["action"], "re-register");
+    }
+
+    /// The `billing` manifest a push registration sends: one route-table entry
+    /// (`GET /invoices`) and a schema on a closed port, so the schema fetch
+    /// fails fast and the route table drives the routes.
+    fn billing_manifest() -> SchemaManifest {
+        let mut manifest = SchemaManifest::new("billing", "1.0.0", "billing-1");
+        manifest.endpoints.health = "http://127.0.0.1:1/health".to_string();
+        manifest.add_schema(crate::types::SchemaDescriptor::new(
+            crate::types::SchemaType::OpenAPI,
+            "3.1.0",
+            crate::types::SchemaLocation::http("http://127.0.0.1:1/openapi.json"),
+            "application/json",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            1024,
+        ));
+        manifest.set_route_table(vec![serde_json::from_value(serde_json::json!({
+            "path": "/invoices",
+            "methods": ["GET"],
+            "protocol": "rest"
+        }))
+        .unwrap()]);
+        manifest
+            .update_checksum()
+            .expect("failed to compute manifest checksum");
+        manifest
+    }
+
+    /// A handler wired to `router` with FARP routes bound to `a.dev` and
+    /// `*.b.dev`.
+    fn bound_handler(router: &Arc<Router>) -> FarpApiHandler {
+        FarpApiHandler::new(Arc::new(SchemaRegistry::new()))
+            .with_router(Arc::clone(router))
+            .with_binding(crate::binding::GatewayBinding::for_hostnames(&[
+                "a.dev".into(),
+                "*.b.dev".into(),
+            ]))
+    }
+
+    async fn push_register(handler: &FarpApiHandler) -> StatusCode {
+        let body = serde_json::json!({
+            "instance": {
+                "id": "billing-1",
+                "service_name": "billing",
+                "address": "127.0.0.1",
+                "port": 1
+            },
+            "manifest": billing_manifest(),
+        });
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/farp/register")
+            .body(Full::new(Bytes::from(body.to_string())))
+            .unwrap();
+        handler.handle(req).await.unwrap().status()
+    }
+
+    #[tokio::test]
+    async fn push_registration_binds_routes_to_every_hostname() {
+        let router = Arc::new(Router::new());
+        let handler = bound_handler(&router);
+        assert_eq!(push_register(&handler).await, StatusCode::CREATED);
+
+        for host in ["a.dev", "x.b.dev"] {
+            let m = router
+                .match_route(host, &Method::GET, "/billing/invoices")
+                .unwrap_or_else(|_| panic!("no FARP route on {host}"));
+            assert_eq!(m.route.upstream_name, "billing");
+            assert_eq!(m.route.origin, octopus_router::RouteOrigin::Farp);
+            assert_eq!(m.route.id.as_deref(), Some("farp:billing"));
+            assert_eq!(m.route.strip_prefix.as_deref(), Some("/billing"));
+            assert_eq!(m.route.priority, 100);
+        }
+        assert!(router
+            .match_route("c.dev", &Method::GET, "/billing/invoices")
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn reregistration_keeps_manual_route_at_the_same_path() {
+        let router = Arc::new(Router::new());
+        router.register_upstream(octopus_core::UpstreamCluster::new("lp-manual"));
+        router
+            .add_route(
+                octopus_router::RouteBuilder::new()
+                    .id(Some("lpr-1"))
+                    .origin(octopus_router::RouteOrigin::Admin)
+                    .method(Method::GET)
+                    .path("/billing/invoices")
+                    .host(octopus_router::HostMatch::Exact("a.dev".into()))
+                    .upstream_name("lp-manual")
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+        let handler = bound_handler(&router);
+
+        for _ in 0..2 {
+            assert_eq!(push_register(&handler).await, StatusCode::CREATED);
+            let m = router
+                .match_route("a.dev", &Method::GET, "/billing/invoices")
+                .unwrap();
+            assert_eq!(m.route.upstream_name, "lp-manual");
+            assert_eq!(router.routes_by_id("lpr-1").len(), 1);
+            // The FARP route still serves the other bound host, and the
+            // re-registration replaced it instead of adding a second copy.
+            assert_eq!(router.routes_by_id("farp:billing").len(), 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn deregister_removes_service_routes_and_upstream() {
+        let router = Arc::new(Router::new());
+        let handler = bound_handler(&router);
+        assert_eq!(push_register(&handler).await, StatusCode::CREATED);
+        assert!(router.get_upstream("billing").is_some());
+
+        let req = Request::builder()
+            .method(Method::DELETE)
+            .uri("/farp/deregister/billing-1")
+            .body(Full::new(Bytes::new()))
+            .unwrap();
+        assert_eq!(handler.handle(req).await.unwrap().status(), StatusCode::OK);
+
+        assert!(router
+            .match_route("a.dev", &Method::GET, "/billing/invoices")
+            .is_err());
+        assert!(router.routes_by_id("farp:billing").is_empty());
+        assert!(router.get_upstream("billing").is_none());
+    }
+
+    #[tokio::test]
+    async fn deregister_service_by_name_removes_routes_and_upstream() {
+        let router = Arc::new(Router::new());
+        let handler = bound_handler(&router);
+        assert_eq!(push_register(&handler).await, StatusCode::CREATED);
+
+        let req = Request::builder()
+            .method(Method::DELETE)
+            .uri("/farp/services/billing")
+            .body(Full::new(Bytes::new()))
+            .unwrap();
+        assert_eq!(handler.handle(req).await.unwrap().status(), StatusCode::OK);
+
+        assert!(router.routes_by_id("farp:billing").is_empty());
+        assert!(router.get_upstream("billing").is_none());
     }
 }

@@ -517,9 +517,16 @@ impl Default for FarpConfig {
 /// Binds FARP-discovered routes to a virtual gateway.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FarpGatewayConfig {
-    /// Hostname all FARP routes are scoped to (Gateway API syntax: exact
-    /// `api.example.cloud` or wildcard `*.example.cloud`).
+    /// Legacy single hostname FARP routes are scoped to (Gateway API syntax:
+    /// exact `api.example.cloud` or wildcard `*.example.cloud`). Ignored when
+    /// `hostnames` is set.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub hostname: String,
+    /// Hostnames every FARP route lands on (exact hosts or `*.zone`
+    /// wildcards). FARP routes match these hosts and no other. Wins over
+    /// `hostname` when both are set.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hostnames: Vec<String>,
     /// Virtual gateway id attached to each FARP route (attribution / policy).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gateway_id: Option<String>,
@@ -536,6 +543,21 @@ pub struct FarpGatewayConfig {
         with = "humantime_serde"
     )]
     pub default_timeout: Option<Duration>,
+}
+
+impl FarpGatewayConfig {
+    /// The hostnames FARP routes are bound to: `hostnames` when it is not
+    /// empty, else `[hostname]` when that is set, else none. None means
+    /// host-agnostic FARP routes that still carry the gateway policy.
+    pub fn effective_hostnames(&self) -> Vec<String> {
+        if !self.hostnames.is_empty() {
+            self.hostnames.clone()
+        } else if self.hostname.is_empty() {
+            Vec::new()
+        } else {
+            vec![self.hostname.clone()]
+        }
+    }
 }
 
 /// FARP discovery backend configuration
@@ -1806,6 +1828,58 @@ mod tests {
             .contains("s3cret-farp"));
         assert!(!format!("{farp:?}").contains("s3cret-farp"));
         assert_eq!(FarpConfig::default().registration_token, None);
+    }
+
+    #[test]
+    fn farp_gateway_accepts_hostname_or_hostnames() {
+        let gateway = |yaml: &str| -> FarpGatewayConfig { serde_yaml::from_str(yaml).unwrap() };
+
+        assert_eq!(
+            gateway("hostname: a.dev\n").effective_hostnames(),
+            vec!["a.dev".to_string()]
+        );
+        assert_eq!(
+            gateway("hostnames: [a.dev, b.dev]\n").effective_hostnames(),
+            vec!["a.dev".to_string(), "b.dev".to_string()]
+        );
+        assert_eq!(
+            gateway("hostname: old.dev\nhostnames: [a.dev, b.dev]\n").effective_hostnames(),
+            vec!["a.dev".to_string(), "b.dev".to_string()]
+        );
+        assert!(gateway("gateway_id: gw\n").effective_hostnames().is_empty());
+
+        let config: Config = serde_yaml::from_str(
+            "gateway: {listen: '127.0.0.1:8080'}\n\
+             farp:\n  enabled: true\n  gateway:\n    hostnames: ['*.acme.dev', api.acme.dev]\n",
+        )
+        .unwrap();
+        crate::validate_config(&config).unwrap();
+        let hosts: Vec<HostMatch> = config
+            .farp
+            .gateway
+            .unwrap()
+            .effective_hostnames()
+            .iter()
+            .map(|h| HostMatch::parse_pattern(h).unwrap())
+            .collect();
+        assert_eq!(
+            hosts,
+            vec![
+                HostMatch::Wildcard(".acme.dev".into()),
+                HostMatch::Exact("api.acme.dev".into())
+            ]
+        );
+    }
+
+    #[test]
+    fn farp_gateway_rejects_a_bad_hostname() {
+        let config: Config = serde_yaml::from_str(
+            "gateway: {listen: '127.0.0.1:8080'}\n\
+             farp:\n  gateway:\n    hostnames: ['api.*.dev']\n",
+        )
+        .unwrap();
+        let err = crate::validate_config(&config).unwrap_err();
+        assert!(err.to_string().contains("api.*.dev"), "{err}");
     }
 
     #[test]

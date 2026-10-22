@@ -140,7 +140,7 @@ impl Route {
 }
 
 /// Builder for constructing routes
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct RouteBuilder {
     id: Option<Arc<str>>,
     origin: RouteOrigin,

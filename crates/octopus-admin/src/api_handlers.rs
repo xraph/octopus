@@ -20,9 +20,9 @@ use std::sync::Arc;
 
 use crate::handlers::AppState;
 use crate::models::{
-    ActivityLogEntry, AnalyticsMetrics, ConfigItem, FarpServiceInfo, LatencyPercentiles, LogQuery,
-    PerformanceMetrics, RouteConfig, RouteMetric, SecurityEvent, SystemInfo, TimeSeriesPoint,
-    UpstreamClusterInfo, UpstreamInstanceInfo,
+    ActivityLogEntry, AnalyticsMetrics, ConfigItem, FarpBindingInfo, FarpBindingUpdate,
+    FarpServiceInfo, LatencyPercentiles, LogQuery, PerformanceMetrics, RouteConfig, RouteMetric,
+    SecurityEvent, SystemInfo, TimeSeriesPoint, UpstreamClusterInfo, UpstreamInstanceInfo,
 };
 
 /// Lazily-initialized system info provider for CPU/memory metrics
@@ -1068,6 +1068,95 @@ pub async fn api_farp_federated_openapi_handler(
         },
         "paths": {}
     }))
+}
+
+/// The 404 for the FARP binding endpoints when FARP is not enabled.
+fn farp_not_enabled() -> ApiError {
+    ApiError::new(StatusCode::NOT_FOUND, "FARP is not enabled")
+}
+
+/// The binding as the admin API reports it, with the router's FARP route
+/// entry count.
+fn farp_binding_info(
+    binding: Option<&octopus_farp::GatewayBinding>,
+    router: Option<&octopus_router::Router>,
+) -> FarpBindingInfo {
+    FarpBindingInfo {
+        hostnames: binding
+            .map(octopus_farp::GatewayBinding::hostnames)
+            .unwrap_or_default(),
+        gateway_id: binding.and_then(|b| b.gateway_id.clone()),
+        farp_routes: router.map_or(0, |router| {
+            router
+                .get_all_routes()
+                .iter()
+                .filter(|route| route.origin == octopus_router::RouteOrigin::Farp)
+                .count()
+        }),
+    }
+}
+
+/// The hostnames FARP routes are bound to
+/// GET /admin/api/farp/binding
+pub async fn api_farp_binding_get_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let cell = state.farp_binding.as_ref().ok_or_else(farp_not_enabled)?;
+    let binding = cell.load();
+    Ok::<_, ApiError>(Json(farp_binding_info(
+        (**binding).as_ref(),
+        state.router.as_deref(),
+    )))
+}
+
+/// Bind FARP routes to new hostnames and move the existing ones there.
+/// PUT /admin/api/farp/binding
+///
+/// The binding's other policy (gateway id, auth, rate limit, timeout) stays.
+/// The change lives in memory only, so the config file must carry the same
+/// `farp.gateway.hostnames` to survive a restart.
+pub async fn api_farp_binding_put_handler(
+    State(state): State<Arc<AppState>>,
+    body: Result<Json<FarpBindingUpdate>, JsonRejection>,
+) -> impl IntoResponse {
+    let cell = state.farp_binding.as_ref().ok_or_else(farp_not_enabled)?;
+    let Json(update) = body.map_err(|rejection| {
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            format!("Invalid binding body: {}", rejection.body_text()),
+        )
+    })?;
+
+    let mut hosts: Vec<octopus_router::HostMatch> = Vec::with_capacity(update.hostnames.len());
+    for hostname in &update.hostnames {
+        let host = octopus_router::HostMatch::parse_pattern(hostname).map_err(|e| {
+            ApiError::new(StatusCode::BAD_REQUEST, format!("Invalid hostname: {e}"))
+        })?;
+        if !hosts.contains(&host) {
+            hosts.push(host);
+        }
+    }
+
+    // Rehosting rewrites routes, so it is serialized with the route writes.
+    let _writes = route_writes();
+    let current = cell.load();
+    let mut binding = (**current)
+        .clone()
+        .unwrap_or_else(|| octopus_farp::GatewayBinding::for_hostnames(&[]));
+    binding.hosts.clone_from(&hosts);
+    cell.store(Arc::new(Some(binding.clone())));
+
+    if let Some(ref router) = state.router {
+        let moved = router.rehost_routes(octopus_router::RouteOrigin::Farp, &hosts);
+        tracing::info!(
+            hostnames = ?binding.hostnames(),
+            routes = moved,
+            "FARP binding updated through the admin API"
+        );
+    }
+
+    Ok::<_, ApiError>(Json(farp_binding_info(
+        Some(&binding),
+        state.router.as_deref(),
+    )))
 }
 
 // ============================================================================

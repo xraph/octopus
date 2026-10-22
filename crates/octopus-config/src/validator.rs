@@ -14,6 +14,9 @@ pub fn validate_config(config: &Config) -> Result<()> {
     // Validate routes
     validate_routes(config)?;
 
+    // Validate the FARP gateway binding
+    validate_farp(config)?;
+
     // Validate plugins
     validate_plugins(config)?;
 
@@ -188,6 +191,16 @@ fn validate_routes(config: &Config) -> Result<()> {
         route.to_routes(octopus_router::RouteOrigin::Config)?;
     }
 
+    Ok(())
+}
+
+fn validate_farp(config: &Config) -> Result<()> {
+    if let Some(gateway) = &config.farp.gateway {
+        for hostname in gateway.effective_hostnames() {
+            octopus_router::HostMatch::parse_pattern(&hostname)
+                .map_err(|e| Error::Config(format!("farp.gateway.hostnames: {e}")))?;
+        }
+    }
     Ok(())
 }
 

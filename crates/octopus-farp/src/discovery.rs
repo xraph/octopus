@@ -281,11 +281,17 @@ impl DiscoveryWatcher {
             }
         }
 
-        // Remove services that exceeded threshold
+        // Remove services that exceeded threshold, with their routes,
+        // upstream and cached route checksum.
         for service_name in to_remove {
             if let Err(e) = self.registry.deregister_service(&service_name).await {
                 error!(service = %service_name, error = %e, "Failed to deregister service");
             }
+            if let Some(ref router) = self.router {
+                crate::routes::remove_service_routes(router, &service_name);
+                router.remove_upstream(&service_name);
+            }
+            self.routes_checksums.remove(&service_name);
             tracked.remove(&service_name);
         }
         drop(tracked);
@@ -594,37 +600,26 @@ impl DiscoveryWatcher {
                 );
                 // Apply auth config from manifest to generated routes
                 let auth_config = registration.manifest.auth_config.as_ref();
-                // Register each generated route with the router
-                let service_prefix = format!("/{}", service_name.to_lowercase());
-                for gen_route in &routes {
-                    let mut builder = RouteBuilder::new()
-                        .method(gen_route.method.parse().unwrap_or(Method::GET))
-                        .path(format!("{}{}", service_prefix, gen_route.path))
-                        .upstream_name(service_name)
-                        .strip_prefix(&service_prefix)
-                        .priority(100);
+                let builders = routes
+                    .iter()
+                    .map(|gen_route| {
+                        let builder = crate::routes::service_route_builder(
+                            service_name,
+                            &gen_route.path,
+                            gen_route.method.parse().unwrap_or(Method::GET),
+                        );
+                        with_auth_config(builder, auth_config)
+                    })
+                    .collect();
 
-                    // Apply auth config from manifest
-                    if let Some(auth) = auth_config {
-                        builder = builder
-                            .auth_provider(auth.auth_provider.as_deref())
-                            .require_roles(&auth.require_roles)
-                            .require_scopes(&auth.require_scopes);
-                    }
-
-                    let binding = self.binding.load();
-                    let builder = crate::binding::apply_gateway_binding(
-                        builder,
-                        (**binding).as_ref(),
-                        auth_config.is_some(),
-                    );
-                    let route = builder.build();
-                    if let Ok(route) = route {
-                        if let Err(e) = router.add_route(route) {
-                            warn!(error = %e, "Failed to register route from route_table");
-                        }
-                    }
-                }
+                let binding = self.binding.load();
+                crate::routes::replace_service_routes(
+                    router,
+                    service_name,
+                    builders,
+                    (**binding).as_ref(),
+                    auth_config.is_some(),
+                );
                 return Ok(());
             }
         }
@@ -659,7 +654,7 @@ impl DiscoveryWatcher {
             .and_then(|p| p.as_object())
             .ok_or_else(|| Error::Farp("No paths found in OpenAPI schema".to_string()))?;
 
-        let mut routes_added = 0;
+        let mut builders = Vec::new();
 
         // Create routes for each path
         for (path, operations) in paths {
@@ -675,67 +670,22 @@ impl DiscoveryWatcher {
                 .as_object()
                 .ok_or_else(|| Error::Farp(format!("Invalid operations for path {path}")))?;
 
-            // For each HTTP method in the path
-            for (method_str, _operation) in operations {
-                // Skip non-HTTP methods (like "parameters", "servers", etc.)
-                let method = match method_str.to_uppercase().as_str() {
-                    "GET" => Method::GET,
-                    "POST" => Method::POST,
-                    "PUT" => Method::PUT,
-                    "DELETE" => Method::DELETE,
-                    "PATCH" => Method::PATCH,
-                    "HEAD" => Method::HEAD,
-                    "OPTIONS" => Method::OPTIONS,
-                    _ => continue, // Skip non-standard methods
-                };
-
-                // Create route with lowercase service prefix
-                let service_prefix = format!("/{}", service_name.to_lowercase());
-                let prefixed_path = format!("{service_prefix}{path}");
-
-                let mut builder = RouteBuilder::new()
-                    .path(&prefixed_path)
-                    .method(method.clone())
-                    .upstream_name(service_name)
-                    .strip_prefix(&service_prefix)
-                    .priority(100); // Default priority for FARP routes
-
-                // Apply auth config from manifest
-                if let Some(ref auth) = manifest_auth_config {
-                    builder = builder
-                        .auth_provider(auth.auth_provider.as_deref())
-                        .require_roles(&auth.require_roles)
-                        .require_scopes(&auth.require_scopes);
-                }
-
-                let binding = self.binding.load();
-                let builder = crate::binding::apply_gateway_binding(
-                    builder,
-                    (**binding).as_ref(),
-                    manifest_auth_config.is_some(),
-                );
-                let route = builder.build()?;
-
-                // Register the route
-                if let Err(e) = router.add_route(route) {
-                    warn!(
-                        service = %service_name,
-                        path = %prefixed_path,
-                        method = %method,
-                        error = %e,
-                        "Failed to register route (may already exist)"
-                    );
-                } else {
-                    debug!(
-                        service = %service_name,
-                        path = %prefixed_path,
-                        method = %method,
-                        "Route registered"
-                    );
-                    routes_added += 1;
-                }
+            // For each HTTP method in the path. Non-HTTP keys (like
+            // "parameters" or "servers") are skipped.
+            for method in operations.keys().filter_map(|m| crate::api::http_method(m)) {
+                let builder = crate::routes::service_route_builder(service_name, path, method);
+                builders.push(with_auth_config(builder, manifest_auth_config.as_ref()));
             }
         }
+
+        let binding = self.binding.load();
+        let routes_added = crate::routes::replace_service_routes(
+            router,
+            service_name,
+            builders,
+            (**binding).as_ref(),
+            manifest_auth_config.is_some(),
+        );
 
         info!(
             service = %service_name,
@@ -744,6 +694,20 @@ impl DiscoveryWatcher {
         );
 
         Ok(())
+    }
+}
+
+/// Apply a service manifest's auth requirements to one of its routes.
+fn with_auth_config(
+    builder: RouteBuilder,
+    auth: Option<&crate::manifest::ServiceAuthConfig>,
+) -> RouteBuilder {
+    match auth {
+        Some(auth) => builder
+            .auth_provider(auth.auth_provider.as_deref())
+            .require_roles(&auth.require_roles)
+            .require_scopes(&auth.require_scopes),
+        None => builder,
     }
 }
 
