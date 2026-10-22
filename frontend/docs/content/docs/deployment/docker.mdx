@@ -66,10 +66,10 @@ Mount the config read-only and publish the listen port:
 docker run --rm \
   -p 8080:8080 \
   -v "$(pwd)/config.yaml:/etc/octopus/config.yaml:ro" \
-  ghcr.io/xraph/octopus:latest
+  ghcr.io/xraph/octopus:0.5.0
 ```
 
-Pin a release tag (for example `:0.1.0`) instead of `:latest` for reproducible deployments.
+Always name a release tag. There is no moving `latest` to follow. See [Image tags](#image-tags).
 
 </Step>
 
@@ -89,6 +89,39 @@ curl -s   http://localhost:8080/metrics   # Prometheus text-format metrics
 
 </Steps>
 
+## Image tags
+
+Every release pushes three tags for the same multi-arch image. For release `0.5.0` that is:
+
+| Tag | Example | Moves? |
+|-----|---------|--------|
+| `{{version}}` | `0.5.0` | No. Fixed to that release. |
+| `{{major}}.{{minor}}` | `0.5` | Yes. Follows the newest patch release of that minor line. |
+| `sha-<7 hex>` | `sha-1a2b3c4` | No. Fixed to that commit. |
+
+Octopus does not publish a `latest` tag. The `latest` tag you can still see on ghcr is left over
+from an older workflow. It is frozen at the 0.4.1 index
+(`sha256:84624c71f16423edea9753a24acd15cd3287adc5b39100c4fe416aeb7363458f`) and will not move
+again, so `docker pull ghcr.io/xraph/octopus:latest` gives you 0.4.1 forever. Use a version tag.
+
+### Pin by digest
+
+A tag can be re-pushed. A digest cannot. Each release uploads a small asset,
+`octopus-image-digests.json`, with the digest of the multi-arch index and of each architecture:
+
+```bash
+gh release download v0.5.0 --repo xraph/octopus --pattern octopus-image-digests.json
+cat octopus-image-digests.json
+```
+
+```json
+{"image":"ghcr.io/xraph/octopus","version":"0.5.0","index_digest":"sha256:<64 hex>","digests":{"amd64":"sha256:<64 hex>","arm64":"sha256:<64 hex>"}}
+```
+
+Pull `ghcr.io/xraph/octopus@<index_digest>` to let Docker pick the right architecture, or the
+`amd64` / `arm64` digest to force one. To print the same JSON for any published tag yourself, run
+`scripts/image-digests.sh ghcr.io/xraph/octopus 0.5.0` from a checkout.
+
 ## Mounting configuration
 
 The container expects a single file at `/etc/octopus/config.yaml`. Mount yours there. The image
@@ -101,7 +134,7 @@ directory. Every `*.yaml`, `*.yml`, `*.json`, and `*.toml` file in it is merged 
 docker run --rm \
   -p 8080:8080 \
   -v "$(pwd)/conf.d:/etc/octopus/conf.d:ro" \
-  ghcr.io/xraph/octopus:latest \
+  ghcr.io/xraph/octopus:0.5.0 \
   serve --config /etc/octopus/conf.d
 ```
 
@@ -144,7 +177,7 @@ docker run --rm \
   -e PORT=8080 \
   -e JWT_SECRET="$JWT_SECRET" \
   -v "$(pwd)/config.yaml:/etc/octopus/config.yaml:ro" \
-  ghcr.io/xraph/octopus:latest
+  ghcr.io/xraph/octopus:0.5.0
 ```
 
 </Tab>
@@ -181,7 +214,7 @@ when no route matches. See [Private admin listener](/docs/configuration/admin#pr
   ```bash
   docker run --rm -p 8080:8080 -p 127.0.0.1:9090:9090 \
     -v "$(pwd)/config.yaml:/etc/octopus/config.yaml:ro" \
-    ghcr.io/xraph/octopus:latest
+    ghcr.io/xraph/octopus:0.5.0
   ```
 
   In production, let only containers on the same private network reach it (Prometheus, the
