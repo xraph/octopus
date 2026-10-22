@@ -12,9 +12,6 @@ use tracing::{debug, info, warn};
 #[cfg(any(feature = "consul-backend", feature = "etcd-backend"))]
 use std::sync::Arc;
 
-#[cfg(feature = "consul-backend")]
-use consul::Client as ConsulClient;
-
 #[cfg(feature = "etcd-backend")]
 use etcd_client::Client as EtcdClient;
 
@@ -26,7 +23,7 @@ pub enum RegistryBackend {
 
     #[cfg(feature = "consul-backend")]
     /// Consul KV store
-    Consul(Arc<ConsulClient>),
+    Consul(Arc<ConsulKvClient>),
 
     #[cfg(feature = "etcd-backend")]
     /// etcd key-value store
@@ -42,6 +39,72 @@ impl std::fmt::Debug for RegistryBackend {
             #[cfg(feature = "etcd-backend")]
             Self::Etcd(_) => f.write_str("RegistryBackend::Etcd"),
         }
+    }
+}
+
+/// Async client for the Consul KV HTTP API.
+///
+/// It reads a key with `GET /v1/kv/<key>?raw`, which hands back the stored
+/// value as-is. We talk to the HTTP API directly instead of going through the
+/// `consul` crate: that crate's client is blocking and pins reqwest 0.11
+/// (hyper 0.14, h2 0.3), which carries open advisories.
+#[cfg(feature = "consul-backend")]
+#[derive(Debug, Clone)]
+pub struct ConsulKvClient {
+    http: reqwest::Client,
+    address: String,
+    token: Option<String>,
+}
+
+#[cfg(feature = "consul-backend")]
+impl ConsulKvClient {
+    /// Create a client for the Consul agent at `address`
+    /// (for example `http://127.0.0.1:8500`).
+    pub fn new(http: reqwest::Client, address: impl Into<String>) -> Self {
+        Self {
+            http,
+            address: address.into().trim_end_matches('/').to_string(),
+            token: None,
+        }
+    }
+
+    /// Send this ACL token with every request (`X-Consul-Token`).
+    #[must_use]
+    pub fn with_token(mut self, token: impl Into<String>) -> Self {
+        self.token = Some(token.into());
+        self
+    }
+
+    /// Read the raw value stored at `key`. Returns `Ok(None)` when the key
+    /// does not exist.
+    pub async fn get_raw(&self, key: &str) -> Result<Option<String>> {
+        let url = format!("{}/v1/kv/{}?raw", self.address, key.trim_start_matches('/'));
+
+        let mut request = self.http.get(&url);
+        if let Some(token) = &self.token {
+            request = request.header("X-Consul-Token", token);
+        }
+
+        let response = request
+            .send()
+            .await
+            .map_err(|e| Error::Farp(format!("Consul KV read failed for '{key}': {e}")))?;
+
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !response.status().is_success() {
+            return Err(Error::Farp(format!(
+                "Consul KV read for '{key}' failed with status {}",
+                response.status()
+            )));
+        }
+
+        let body = response
+            .text()
+            .await
+            .map_err(|e| Error::Farp(format!("Failed to read Consul KV value for '{key}': {e}")))?;
+        Ok(Some(body))
     }
 }
 
@@ -82,10 +145,10 @@ impl SchemaFetcher {
 
     #[cfg(feature = "consul-backend")]
     /// Create a fetcher with Consul backend
-    pub async fn with_consul(timeout: Duration, _consul_addr: &str) -> Result<Self> {
-        // TODO: Implement Consul client once consul crate API is stabilized
-        warn!("Consul backend not fully implemented yet");
-        Ok(Self::with_timeout(timeout))
+    pub async fn with_consul(timeout: Duration, consul_addr: &str) -> Result<Self> {
+        let fetcher = Self::with_timeout(timeout);
+        let client = ConsulKvClient::new(fetcher.http_client.clone(), consul_addr);
+        Ok(fetcher.with_registry_backend(RegistryBackend::Consul(Arc::new(client))))
     }
 
     #[cfg(feature = "etcd-backend")]
@@ -231,7 +294,7 @@ impl SchemaFetcher {
     /// Fetch schema from Consul KV store
     async fn fetch_from_consul(
         &self,
-        client: &ConsulClient,
+        client: &ConsulKvClient,
         path: &str,
         descriptor: &SchemaDescriptor,
     ) -> Result<Value> {
@@ -241,15 +304,10 @@ impl SchemaFetcher {
             "Fetching schema from Consul KV"
         );
 
-        // Use the consul crate's KV read API (synchronous)
-        let (kv_pair, _meta) = consul::kv::KV::get(client, path, None)
-            .map_err(|e| Error::Farp(format!("Consul KV read failed for '{path}': {e}")))?;
-
-        let kv = kv_pair
+        let value_str = client
+            .get_raw(path)
+            .await?
             .ok_or_else(|| Error::Farp(format!("Schema not found in Consul KV at path: {path}")))?;
-
-        // The consul crate returns KV values already decoded into a String
-        let value_str = kv.Value;
 
         let schema: Value = serde_json::from_str(&value_str)
             .map_err(|e| Error::Farp(format!("Invalid JSON in Consul KV at '{path}': {e}")))?;
@@ -376,5 +434,52 @@ mod tests {
 
         let result = fetcher.fetch_inline(&descriptor);
         assert!(result.is_err());
+    }
+
+    #[cfg(feature = "consul-backend")]
+    #[tokio::test]
+    async fn test_fetch_from_consul_kv() {
+        use wiremock::matchers::{header, method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let schema = json!({"openapi": "3.1.0", "info": {"title": "KV API"}});
+
+        Mock::given(method("GET"))
+            .and(path("/v1/kv/farp/orders/openapi"))
+            .and(query_param("raw", ""))
+            .and(header("X-Consul-Token", "secret"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(schema.to_string()))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v1/kv/farp/missing"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+
+        let fetcher = SchemaFetcher::new();
+        let client = ConsulKvClient::new(fetcher.http_client.clone(), format!("{}/", server.uri()))
+            .with_token("secret");
+        let fetcher = fetcher.with_registry_backend(RegistryBackend::Consul(Arc::new(client)));
+
+        let descriptor = |key: &str| SchemaDescriptor {
+            schema_type: SchemaType::OpenAPI,
+            spec_version: "3.1.0".to_string(),
+            location: SchemaLocation::registry(key),
+            content_type: "application/json".to_string(),
+            inline_schema: None,
+            hash: String::new(),
+            size: 0,
+        };
+
+        let fetched = fetcher
+            .fetch_schema(&descriptor("/farp/orders/openapi"))
+            .await
+            .unwrap();
+        assert_eq!(fetched, schema);
+
+        let missing = fetcher.fetch_schema(&descriptor("farp/missing")).await;
+        assert!(missing.unwrap_err().to_string().contains("not found"));
     }
 }

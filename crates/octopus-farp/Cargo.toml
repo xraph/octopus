@@ -50,7 +50,6 @@ arc-swap.workspace = true
 reqwest = { version = "0.13", features = ["json"] }
 
 # Registry backends (optional)
-consul = { version = "0.4", optional = true }
 etcd-client = { version = "0.17", optional = true }
 
 # Kubernetes (optional)
@@ -65,7 +64,7 @@ governor = "0.6"
 
 [features]
 default = []
-consul-backend = ["consul"]
+consul-backend = []
 etcd-backend = ["etcd-client"]
 kubernetes = ["kube", "k8s-openapi"]
 validation = ["jsonschema"]
