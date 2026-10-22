@@ -1992,7 +1992,10 @@ mod tests {
             "test premise: no content-length, so only the streaming cap can catch this"
         );
 
-        let resp = handler.handle(req).await.expect("limit is a response, not an error");
+        let resp = handler
+            .handle(req)
+            .await
+            .expect("limit is a response, not an error");
         assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 
