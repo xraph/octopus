@@ -81,7 +81,7 @@ kube = { version = "0.96", features = ["runtime", "derive", "client"] }
 k8s-openapi = { version = "0.23", features = ["v1_30"] }
 schemars = "0.8"
 consul = "0.5"
-etcd-client = "0.13"
+etcd-client = "0.17"
 
 # GraphQL parsing / AST (MIT OR Apache-2.0) — foundation for GraphQL + future federation
 apollo-compiler = "1.31"
