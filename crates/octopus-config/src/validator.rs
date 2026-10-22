@@ -35,6 +35,23 @@ fn validate_gateway(config: &Config) -> Result<()> {
         return Err(Error::Config("max_body_size must be > 0".to_string()));
     }
 
+    // A zero limit would reject every request, which is never the intent —
+    // `enabled: false` is how you turn a limit off.
+    let limits = &config.gateway.request_limits;
+    for (value, name) in [
+        (limits.max_body_size, "max_body_size"),
+        (limits.max_header_size, "max_header_size"),
+        (limits.max_uri_length, "max_uri_length"),
+    ] {
+        if value == Some(0) {
+            return Err(Error::Config(format!(
+                "gateway.request_limits.{name} must be > 0 \
+                 (omit it to leave the limit unenforced, or set \
+                 gateway.request_limits.enabled to false)"
+            )));
+        }
+    }
+
     // QUIC has no plaintext mode — it mandates TLS 1.3. Without a TLS config
     // the UDP listener could only fail at bind time, long after the operator
     // has stopped reading logs, so reject it here.
@@ -165,6 +182,7 @@ mod tests {
                 shutdown_timeout: Duration::from_secs(30),
                 pre_stop_delay: Duration::from_secs(5),
                 max_body_size: 1024 * 1024,
+                request_limits: crate::types::RequestLimitsConfig::default(),
                 tls: None,
                 compression: CompressionConfig::default(),
                 internal_route_prefix: Some("__".to_string()),

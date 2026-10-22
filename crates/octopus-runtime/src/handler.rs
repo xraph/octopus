@@ -118,6 +118,9 @@ pub struct RequestHandler {
     /// Whether to reject requests where `Host`/`:authority` disagrees with the
     /// negotiated TLS SNI (anti host-spoofing). Default `true`.
     enforce_sni_check: bool,
+    /// Gateway-wide request limits, enforced before the body is buffered
+    /// (`None` = disabled).
+    request_limits: Option<Arc<octopus_middleware::RequestLimits>>,
     /// Bounded cache of `host` → resolved convention target (skips re-derivation).
     resolve_cache: moka::sync::Cache<String, ConventionTarget>,
     /// Keeps EndpointSlice-backed convention upstreams' pod instances live
@@ -194,6 +197,7 @@ impl RequestHandler {
             lifecycle: None,
             probe_routes: ProbeRoutes::default(),
             enforce_sni_check: true,
+            request_limits: None,
             resolve_cache: new_resolve_cache(),
             gateway_index: Arc::new(ArcSwap::from_pointee(VirtualGatewayIndex::default())),
             backend_watcher: None,
@@ -245,6 +249,7 @@ impl RequestHandler {
             lifecycle: None,
             probe_routes: ProbeRoutes::default(),
             enforce_sni_check: true,
+            request_limits: None,
             resolve_cache: new_resolve_cache(),
             gateway_index: Arc::new(ArcSwap::from_pointee(VirtualGatewayIndex::default())),
             backend_watcher: None,
@@ -300,6 +305,7 @@ impl RequestHandler {
             lifecycle: None,
             probe_routes: ProbeRoutes::default(),
             enforce_sni_check: true,
+            request_limits: None,
             resolve_cache: new_resolve_cache(),
             gateway_index: Arc::new(ArcSwap::from_pointee(VirtualGatewayIndex::default())),
             backend_watcher: None,
@@ -336,6 +342,7 @@ impl RequestHandler {
             lifecycle: None,
             probe_routes: ProbeRoutes::default(),
             enforce_sni_check: true,
+            request_limits: None,
             resolve_cache: new_resolve_cache(),
             gateway_index: Arc::new(ArcSwap::from_pointee(VirtualGatewayIndex::default())),
             backend_watcher: None,
@@ -422,6 +429,11 @@ impl RequestHandler {
     /// Enable/disable the `Host == TLS SNI` anti-spoof check (default enabled).
     pub fn set_enforce_sni_check(&mut self, enforce: bool) {
         self.enforce_sni_check = enforce;
+    }
+
+    /// Set the gateway-wide request limits (`None` disables enforcement).
+    pub fn set_request_limits(&mut self, limits: Option<octopus_middleware::RequestLimits>) {
+        self.request_limits = limits.map(Arc::new);
     }
 
     /// Install the backend watcher used to keep EndpointSlice-backed convention
@@ -817,13 +829,56 @@ impl RequestHandler {
             return self.handle_grpc_proxy(req).await;
         }
 
-        // Convert Incoming body to Full<Bytes>
+        // Enforce request limits BEFORE buffering. The middleware chain runs on
+        // an already-collected Full<Bytes> body, so a limit checked there would
+        // report on memory that has already been allocated.
         let (parts, body) = req.into_parts();
-        let body_bytes = body
-            .collect()
-            .await
-            .map_err(|e| Error::InvalidRequest(format!("Failed to read request body: {e}")))?
-            .to_bytes();
+        let body_bytes = if let Some(limits) = self.request_limits.clone() {
+            if let Err(violation) = limits.check_parts(&parts.uri, &parts.headers) {
+                warn!(%violation, "Rejecting request that exceeds gateway limits");
+                return Ok(limits.violation_response(&violation).map(Either::Left));
+            }
+
+            // Content-Length is absent on chunked, HTTP/2 and HTTP/3 requests,
+            // so the check above cannot bound the body on its own. Accumulate
+            // frame by frame and stop the moment the cap is passed, so an
+            // oversize body is never fully held and its stream is not drained.
+            let max = limits.max_body_size();
+            let mut buf = bytes::BytesMut::new();
+            let mut oversize = None;
+            let mut body = std::pin::pin!(body);
+
+            while let Some(frame) = body.frame().await {
+                let frame = frame.map_err(|e| {
+                    Error::InvalidRequest(format!("Failed to read request body: {e}"))
+                })?;
+
+                if let Some(data) = frame.data_ref() {
+                    let total = buf.len().saturating_add(data.len());
+                    if total > max {
+                        oversize = Some(total);
+                        break;
+                    }
+                }
+
+                if let Ok(data) = frame.into_data() {
+                    buf.extend_from_slice(&data);
+                }
+            }
+
+            if let Some(len) = oversize {
+                let violation = octopus_middleware::LimitViolation::BodyTooLarge { len, max };
+                warn!(%violation, "Rejecting oversize request body");
+                return Ok(limits.violation_response(&violation).map(Either::Left));
+            }
+
+            buf.freeze()
+        } else {
+            body.collect()
+                .await
+                .map_err(|e| Error::InvalidRequest(format!("Failed to read request body: {e}")))?
+                .to_bytes()
+        };
         let mut req = Request::from_parts(parts, Full::new(body_bytes));
 
         // Handle FARP v1 push protocol routes (/_farp/v1/*)
@@ -1911,6 +1966,69 @@ mod tests {
             .await
             .expect("a non-hyper body should route like any other");
 
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// The Content-Length check cannot see this request: no such header is
+    /// set. Only the streaming cap at the buffering site bounds it, which is
+    /// the case that chunked, HTTP/2 and HTTP/3 traffic actually hits.
+    #[tokio::test]
+    async fn oversize_body_without_content_length_is_rejected() {
+        let mut handler = create_test_handler();
+        handler.set_request_limits(Some(octopus_middleware::RequestLimits::with_config(
+            octopus_middleware::RequestLimitsConfig {
+                max_body_size: 16,
+                ..Default::default()
+            },
+        )));
+
+        let req = Request::builder()
+            .method(http::Method::POST)
+            .uri("/no-such-route")
+            .body(Full::new(Bytes::from(vec![b'x'; 4096])))
+            .unwrap();
+        assert!(
+            req.headers().get(http::header::CONTENT_LENGTH).is_none(),
+            "test premise: no content-length, so only the streaming cap can catch this"
+        );
+
+        let resp = handler.handle(req).await.expect("limit is a response, not an error");
+        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    /// A body under the cap must still route normally.
+    #[tokio::test]
+    async fn body_within_limit_is_routed() {
+        let mut handler = create_test_handler();
+        handler.set_request_limits(Some(octopus_middleware::RequestLimits::with_config(
+            octopus_middleware::RequestLimitsConfig {
+                max_body_size: 4096,
+                ..Default::default()
+            },
+        )));
+
+        let req = Request::builder()
+            .method(http::Method::POST)
+            .uri("/no-such-route")
+            .body(Full::new(Bytes::from(vec![b'x'; 16])))
+            .unwrap();
+
+        let resp = handler.handle(req).await.unwrap();
+        // Reaches routing and 404s, rather than being rejected at the limit.
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// With limits unset the previous uncapped behavior is preserved.
+    #[tokio::test]
+    async fn no_limits_configured_leaves_body_uncapped() {
+        let handler = create_test_handler();
+        let req = Request::builder()
+            .method(http::Method::POST)
+            .uri("/no-such-route")
+            .body(Full::new(Bytes::from(vec![b'x'; 4096])))
+            .unwrap();
+
+        let resp = handler.handle(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
 

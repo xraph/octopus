@@ -143,8 +143,15 @@ pub struct GatewayConfig {
     pub pre_stop_delay: Duration,
 
     /// Max request body size (bytes)
+    ///
+    /// Enforced before the body is buffered. `gateway.request_limits` can
+    /// override this and adds header/URI limits.
     #[serde(default = "default_max_body_size")]
     pub max_body_size: usize,
+
+    /// Gateway-wide request limits (body, headers, URI)
+    #[serde(default)]
+    pub request_limits: RequestLimitsConfig,
 
     /// TLS configuration
     #[serde(default)]
@@ -1577,9 +1584,91 @@ impl Default for GraphQLConfig {
     }
 }
 
+/// Gateway-wide request limits, enforced before the request body is buffered.
+///
+/// Each limit is opt-in via `Option`. `None` means "not enforced", so upgrading
+/// an existing deployment cannot start rejecting traffic that worked before.
+/// The one exception is the body limit, which falls back to the long-documented
+/// `gateway.max_body_size` when unset — that knob already promised enforcement.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct RequestLimitsConfig {
+    /// Enforce these limits. Disable to opt out entirely.
+    pub enabled: bool,
+    /// Max request body size in bytes. When `None`, falls back to
+    /// `gateway.max_body_size`.
+    pub max_body_size: Option<usize>,
+    /// Max total size of all request headers in bytes. `None` = not enforced.
+    ///
+    /// 8192 is a common choice, but large cookies or JWT-bearing
+    /// `Authorization` headers can exceed it, so there is no default.
+    pub max_header_size: Option<usize>,
+    /// Max request URI length in bytes. `None` = not enforced.
+    pub max_uri_length: Option<usize>,
+    /// Body-too-large message. Defaults to "Request body too large".
+    pub body_size_error_message: Option<String>,
+    /// Headers-too-large message. Defaults to "Request headers too large".
+    pub header_size_error_message: Option<String>,
+    /// URI-too-long message. Defaults to "Request URI too long".
+    pub uri_length_error_message: Option<String>,
+}
+
+impl Default for RequestLimitsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_body_size: None,
+            max_header_size: None,
+            max_uri_length: None,
+            body_size_error_message: None,
+            header_size_error_message: None,
+            uri_length_error_message: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn request_limits_default_is_enabled_and_falls_back_for_body() {
+        let limits = RequestLimitsConfig::default();
+        assert!(limits.enabled);
+        // None everywhere: only the body limit is active, via the
+        // gateway.max_body_size fallback resolved at construction time.
+        assert_eq!(limits.max_body_size, None);
+        assert_eq!(limits.max_header_size, None);
+        assert_eq!(limits.max_uri_length, None);
+    }
+
+    #[test]
+    fn gateway_config_defaults_request_limits_when_absent() {
+        // An existing config file with no request_limits block must still parse.
+        let yaml = "listen: \"0.0.0.0:8080\"\n";
+        let gateway: GatewayConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(gateway.request_limits.enabled);
+        assert_eq!(gateway.request_limits.max_body_size, None);
+    }
+
+    #[test]
+    fn gateway_config_parses_request_limits_block() {
+        let yaml = r#"
+listen: "0.0.0.0:8080"
+request_limits:
+  max_body_size: 2048
+  max_header_size: 16384
+  body_size_error_message: "too big"
+"#;
+        let gateway: GatewayConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(gateway.request_limits.max_body_size, Some(2048));
+        assert_eq!(gateway.request_limits.max_header_size, Some(16384));
+        assert_eq!(gateway.request_limits.max_uri_length, None);
+        assert_eq!(
+            gateway.request_limits.body_size_error_message.as_deref(),
+            Some("too big")
+        );
+    }
 
     #[test]
     fn route_config_parses_proxy_fields() {
