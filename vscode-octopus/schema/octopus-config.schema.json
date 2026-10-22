@@ -55,6 +55,53 @@
     }
   },
   "definitions": {
+    "FarpGatewayConfig": {
+      "type": "object",
+      "description": "Binds every FARP route to a set of hostnames and, optionally, a virtual gateway",
+      "additionalProperties": false,
+      "properties": {
+        "hostnames": {
+          "type": "array",
+          "description": "Hostnames every FARP route lands on: exact lowercase hostnames or *.zone wildcards. FARP routes match these hosts and no other. Empty means any host. Wins over hostname",
+          "default": [],
+          "items": { "type": "string" },
+          "examples": [
+            [
+              "api.acme.dev",
+              "*.acme.dev"
+            ]
+          ]
+        },
+        "hostname": {
+          "type": "string",
+          "description": "Legacy single hostname for FARP routes. Still read; ignored when hostnames is set",
+          "examples": [
+            "api.example.cloud"
+          ]
+        },
+        "gateway_id": {
+          "type": "string",
+          "description": "Virtual gateway id attached to each FARP route"
+        },
+        "default_auth_provider": {
+          "type": "string",
+          "description": "Auth provider applied to FARP routes that do not set their own"
+        },
+        "default_rate_limit_per_minute": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Rate-limit cap (requests per minute) applied to FARP routes"
+        },
+        "default_timeout": {
+          "type": "string",
+          "description": "Per-request timeout applied to FARP routes",
+          "pattern": "^[0-9]+(ms|s|m|h)$",
+          "examples": [
+            "30s"
+          ]
+        }
+      }
+    },
     "GatewayConfig": {
       "type": "object",
       "description": "Core gateway server settings",
@@ -357,6 +404,29 @@
       "required": ["path", "upstream"],
       "additionalProperties": false,
       "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable route name, unique across routes. Every method and host copy of the route carries it, and PUT or DELETE /admin/api/routes/{id} act on it. route-<digits> is reserved",
+          "not": {
+            "pattern": "^route-[0-9]+$"
+          },
+          "examples": [
+            "billing-api"
+          ]
+        },
+        "hosts": {
+          "type": "array",
+          "description": "Hosts this route matches: exact lowercase hostnames or *.zone wildcards (never the apex). Empty means any host",
+          "default": [],
+          "items": { "type": "string" },
+          "examples": [
+            [
+              "api.acme.dev",
+              "*.acme.dev"
+            ]
+          ]
+        },
         "path": {
           "type": "string",
           "description": "Route path pattern. Supports wildcards (*) and path parameters",
@@ -511,6 +581,17 @@
       "description": "FARP (Forge API Registration Protocol) service discovery and auto-routing",
       "additionalProperties": false,
       "properties": {
+        "registration_token": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Token FARP callers must present to register, update or remove services (Authorization: Bearer or X-Octopus-Farp-Token). Leave it out to keep registration open; render it from the environment",
+          "examples": [
+            "${OCTOPUS_FARP_TOKEN}"
+          ]
+        },
+        "gateway": {
+          "$ref": "#/definitions/FarpGatewayConfig"
+        },
         "enabled": {
           "type": "boolean",
           "description": "Enable FARP service discovery",
@@ -868,6 +949,18 @@
       "description": "Admin dashboard configuration",
       "additionalProperties": false,
       "properties": {
+        "listen": {
+          "type": "string",
+          "description": "Address of a private, plain-HTTP listener for the admin UI and API, FARP registration and metrics. When set, the gateway port stops serving those paths",
+          "examples": [
+            "0.0.0.0:9090"
+          ]
+        },
+        "require_auth": {
+          "type": "boolean",
+          "description": "Refuse to start unless admin credentials are configured: OCTOPUS_ADMIN_PASSWORD, OCTOPUS_ADMIN_API_TOKEN or auth_provider",
+          "default": false
+        },
         "auth_provider": {
           "type": "string",
           "description": "Auth provider name for protecting admin dashboard"
