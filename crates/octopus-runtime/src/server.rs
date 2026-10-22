@@ -799,16 +799,7 @@ impl Server {
 
                     // 2. Re-register upstreams
                     for upstream_config in &new_config.upstreams {
-                        let mut cluster = octopus_core::UpstreamCluster::new(&upstream_config.name);
-                        for instance_config in &upstream_config.instances {
-                            let instance = octopus_core::UpstreamInstance::new(
-                                &instance_config.id,
-                                &instance_config.host,
-                                instance_config.port,
-                            );
-                            cluster.add_instance(instance);
-                        }
-                        self.router.register_upstream(cluster);
+                        self.router.register_upstream(upstream_config.to_cluster());
                     }
 
                     tracing::info!(
@@ -1018,18 +1009,7 @@ impl ServerBuilder {
 
         // Register upstreams
         for upstream_config in &config.upstreams {
-            let mut cluster = octopus_core::UpstreamCluster::new(&upstream_config.name);
-
-            for instance_config in &upstream_config.instances {
-                let instance = octopus_core::UpstreamInstance::new(
-                    &instance_config.id,
-                    &instance_config.host,
-                    instance_config.port,
-                );
-                cluster.add_instance(instance);
-            }
-
-            router.register_upstream(cluster);
+            router.register_upstream(upstream_config.to_cluster());
         }
 
         // Register routes (with auth config)
@@ -1422,13 +1402,7 @@ impl ServerBuilder {
 
         let mut upstreams = Vec::new();
         for uc in &config.upstreams {
-            let mut cluster = octopus_core::UpstreamCluster::new(&uc.name);
-            for ic in &uc.instances {
-                cluster.add_instance(octopus_core::UpstreamInstance::new(
-                    &ic.id, &ic.host, ic.port,
-                ));
-            }
-            upstreams.push(cluster);
+            upstreams.push(uc.to_cluster());
         }
 
         (routes, upstreams)

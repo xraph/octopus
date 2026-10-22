@@ -93,9 +93,8 @@ graph TD
 <Callout type="info" title="Not every box is enforced today">
   The auth gateway runs only when auth providers are configured (or global
   enforcement is on). Per-route rate limiting and CORS are parsed but not
-  enforced in the live chain, and load-balancing policy / health checks /
-  circuit breaking are wired on the Kubernetes operator path — see the notes on
-  each concept page below.
+  enforced in the live chain, and health checks and circuit breaking are wired
+  on the Kubernetes operator path. See the notes on each concept page below.
 </Callout>
 
 ## Key Components
@@ -121,7 +120,7 @@ Matches incoming requests to routes:
 ### 3. Middleware
 
 An ordered Rust chain that wraps the request/response path. The live chain today
-holds at most two entries — compression and the auth gateway — assembled in code
+holds at most two entries (compression and the auth gateway), assembled in code
 (there is no `middleware:` config array). A larger catalogue of middleware exists
 in the `octopus-middleware` crate but is builder-only. See [Middleware](/docs/middleware).
 
@@ -138,9 +137,9 @@ See [Service Discovery](/docs/concepts/service-discovery) and [FARP](/docs/farp)
 ### 5. Load Balancer
 
 Selects an instance per request. Policies: round-robin, least-connections,
-weighted, random, and IP-hash. The policy and instance weights are honored on the
-Kubernetes/operator path; static-config upstreams currently balance round-robin
-regardless of `lb_policy`. See [Load Balancing](/docs/concepts/load-balancing).
+weighted, random, and IP-hash. Each upstream's `lb_policy` and instance weights
+are honored, whether the upstream comes from the config file or the Kubernetes
+operator. See [Load Balancing](/docs/concepts/load-balancing).
 
 ### 6. Health Tracker
 

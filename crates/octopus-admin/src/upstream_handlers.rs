@@ -19,18 +19,10 @@ use crate::handlers::AppState;
 use crate::models::{UpstreamClusterInfo, UpstreamConfig, UpstreamInstanceInfo};
 
 /// Parse a load-balancing strategy string (tolerant of common aliases).
+/// Anything unrecognized falls back to round-robin.
 fn parse_strategy(raw: Option<&str>) -> LoadBalanceStrategy {
-    match raw.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
-        Some("least_connections" | "least_conn" | "leastconnections") => {
-            LoadBalanceStrategy::LeastConnections
-        }
-        Some("weighted_round_robin" | "weighted" | "weighted_round" | "weightedroundrobin") => {
-            LoadBalanceStrategy::WeightedRoundRobin
-        }
-        Some("random") => LoadBalanceStrategy::Random,
-        Some("ip_hash" | "iphash") => LoadBalanceStrategy::IpHash,
-        _ => LoadBalanceStrategy::RoundRobin,
-    }
+    raw.and_then(LoadBalanceStrategy::from_policy)
+        .unwrap_or_default()
 }
 
 /// Map a JSON body rejection to a `400` with a JSON `{"error": ...}` body,

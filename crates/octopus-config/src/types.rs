@@ -701,6 +701,29 @@ pub struct UpstreamConfig {
     pub circuit_breaker: Option<CircuitBreakerConfig>,
 }
 
+impl UpstreamConfig {
+    /// The load-balancing strategy `lb_policy` names. An unrecognized value
+    /// falls back to round-robin, as every value did before the policy was
+    /// honored.
+    pub fn strategy(&self) -> octopus_core::LoadBalanceStrategy {
+        octopus_core::LoadBalanceStrategy::from_policy(&self.lb_policy).unwrap_or_default()
+    }
+
+    /// The router cluster for this upstream: its instances with their
+    /// weights, balanced by `lb_policy`.
+    pub fn to_cluster(&self) -> octopus_core::UpstreamCluster {
+        let mut cluster = octopus_core::UpstreamCluster::new(&self.name);
+        cluster.strategy = self.strategy();
+        for instance in &self.instances {
+            let mut upstream =
+                octopus_core::UpstreamInstance::new(&instance.id, &instance.host, instance.port);
+            upstream.weight = instance.weight;
+            cluster.add_instance(upstream);
+        }
+        cluster
+    }
+}
+
 /// Instance configuration
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct InstanceConfig {
@@ -2037,6 +2060,33 @@ http3:
         assert_eq!(default_max_body_size(), 10 * 1024 * 1024);
         assert_eq!(default_lb_policy(), "round_robin");
         assert_eq!(default_weight(), 1);
+    }
+
+    #[test]
+    fn upstream_to_cluster_carries_lb_policy_and_weights() {
+        use octopus_core::LoadBalanceStrategy;
+        let upstream: UpstreamConfig = serde_yaml::from_str(
+            "name: web\nlb_policy: Weighted\ninstances:\n  - {id: a, host: h, port: 1, weight: 5}\n  - {id: b, host: h, port: 2}\n",
+        )
+        .unwrap();
+        let cluster = upstream.to_cluster();
+        assert_eq!(cluster.name, "web");
+        assert_eq!(cluster.strategy, LoadBalanceStrategy::WeightedRoundRobin);
+        let weights: Vec<u32> = cluster.instances.iter().map(|i| i.weight).collect();
+        assert_eq!(weights, [5, 1]);
+
+        for (policy, strategy) in [
+            ("round_robin", LoadBalanceStrategy::RoundRobin),
+            ("least_conn", LoadBalanceStrategy::LeastConnections),
+            ("least_connections", LoadBalanceStrategy::LeastConnections),
+            ("random", LoadBalanceStrategy::Random),
+            ("ip_hash", LoadBalanceStrategy::IpHash),
+            ("no-such-policy", LoadBalanceStrategy::RoundRobin),
+        ] {
+            let mut u = upstream.clone();
+            u.lb_policy = policy.to_string();
+            assert_eq!(u.to_cluster().strategy, strategy, "{policy}");
+        }
     }
 
     #[test]

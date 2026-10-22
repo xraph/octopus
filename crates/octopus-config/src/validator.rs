@@ -131,6 +131,14 @@ fn validate_upstreams(config: &Config) -> Result<()> {
             return Err(Error::Config("upstream name cannot be empty".to_string()));
         }
 
+        if octopus_core::LoadBalanceStrategy::from_policy(&upstream.lb_policy).is_none() {
+            tracing::warn!(
+                upstream = %upstream.name,
+                lb_policy = %upstream.lb_policy,
+                "Unknown lb_policy; balancing round-robin"
+            );
+        }
+
         if upstream.instances.is_empty() {
             tracing::warn!(
                 upstream = %upstream.name,

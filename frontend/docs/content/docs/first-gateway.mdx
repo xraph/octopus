@@ -115,9 +115,9 @@ upstreams:
 ```
 
 <Callout type="warn">
-  When upstreams come from a **static config file**, the gateway currently uses round-robin
-  regardless of `lb_policy`, and `health_check` / `circuit_breaker` are parsed and validated but not
-  yet wired into the static path. Both are honored on the Kubernetes/operator-driven path. See
+  `lb_policy` and instance weights apply to upstreams from a config file. `health_check` and
+  `circuit_breaker` are parsed and validated but not yet wired into the static path; they are
+  honored on the Kubernetes/operator-driven path. See
   [Upstreams](/docs/configuration/upstreams), [Load balancing](/docs/concepts/load-balancing), and
   [Health checks](/docs/concepts/health-checks).
 </Callout>
