@@ -21,8 +21,8 @@ use std::sync::Arc;
 use crate::handlers::AppState;
 use crate::models::{
     ActivityLogEntry, AnalyticsMetrics, ConfigItem, FarpServiceInfo, LatencyPercentiles, LogQuery,
-    PerformanceMetrics, RouteConfig, RouteInfo, RouteMetric, SecurityEvent, SystemInfo,
-    TimeSeriesPoint, UpstreamClusterInfo, UpstreamInstanceInfo,
+    PerformanceMetrics, RouteConfig, RouteMetric, SecurityEvent, SystemInfo, TimeSeriesPoint,
+    UpstreamClusterInfo, UpstreamInstanceInfo,
 };
 
 /// Lazily-initialized system info provider for CPU/memory metrics
@@ -193,17 +193,182 @@ pub async fn api_routes_list_handler(State(state): State<Arc<AppState>>) -> impl
     Json(routes)
 }
 
+/// A failed admin API call: the status and JSON body to answer with.
+#[derive(Debug)]
+pub(crate) struct ApiError {
+    pub status: StatusCode,
+    pub body: serde_json::Value,
+}
+
+impl ApiError {
+    /// An error answering `status` with `{"error": message}`.
+    fn new(status: StatusCode, message: impl Into<String>) -> Self {
+        Self {
+            status,
+            body: serde_json::json!({ "error": message.into() }),
+        }
+    }
+
+    /// The router is not wired into the admin state.
+    fn router_unavailable() -> Self {
+        Self::new(StatusCode::SERVICE_UNAVAILABLE, "Router not available")
+    }
+}
+
+impl IntoResponse for ApiError {
+    fn into_response(self) -> axum::response::Response {
+        (self.status, Json(self.body)).into_response()
+    }
+}
+
+/// Whether `a` and `b` are the same router entry: the key the trie keeps
+/// unique per method.
+fn same_entry(a: &octopus_router::Route, b: &octopus_router::Route) -> bool {
+    a.method == b.method && a.path == b.path && a.host == b.host && a.id == b.id
+}
+
+/// The id-less route the list shows as `route-{i}`, when `id` is such a
+/// positional id.
+fn positional_route(router: &octopus_router::Router, id: &str) -> Option<octopus_router::Route> {
+    let index: usize = id.strip_prefix("route-")?.parse().ok()?;
+    router
+        .get_all_routes()
+        .into_iter()
+        .nth(index)
+        .filter(|route| route.id.is_none())
+}
+
+/// Every router entry `id` names: the routes carrying that id, or the one
+/// id-less route at that position for a legacy `route-{i}` id.
+fn entries_for_id(router: &octopus_router::Router, id: &str) -> Vec<octopus_router::Route> {
+    let entries = router.routes_by_id(id);
+    if entries.is_empty() {
+        positional_route(router, id).into_iter().collect()
+    } else {
+        entries
+    }
+}
+
+/// Create or replace the route `id` from an admin API body.
+///
+/// Every new entry (one per method and host, origin [`RouteOrigin::Admin`])
+/// is built and checked before the router changes. An unknown upstream is a
+/// 400, and an entry on the same method, path and host as a declared route of
+/// another id is a 409 naming that route's listed id in `conflict`. The old
+/// entries for `id` (whatever their origin) are then swapped for the new
+/// ones. If an insert fails, the router is put back exactly as it was.
+///
+/// [`RouteOrigin::Admin`]: octopus_router::RouteOrigin::Admin
+pub(crate) fn upsert_admin_route(
+    router: &octopus_router::Router,
+    id: &str,
+    body: &RouteConfig,
+) -> Result<Vec<octopus_router::Route>, ApiError> {
+    let new_entries = body
+        .to_config_route(id)
+        .to_routes(octopus_router::RouteOrigin::Admin)
+        .map_err(|e| ApiError::new(StatusCode::BAD_REQUEST, format!("Invalid route: {e}")))?;
+
+    if router.get_upstream(&body.upstream).is_none() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            format!("Unknown upstream: {}", body.upstream),
+        ));
+    }
+
+    let old_entries = entries_for_id(router, id);
+
+    for (index, existing) in router.get_all_routes().into_iter().enumerate() {
+        if !existing.origin.is_declared()
+            || existing.id.as_deref() == Some(id)
+            || old_entries.iter().any(|old| same_entry(old, &existing))
+        {
+            continue;
+        }
+        let clashes = new_entries.iter().any(|new| {
+            new.method == existing.method && new.path == existing.path && new.host == existing.host
+        });
+        if clashes {
+            let other = crate::handlers::listed_route_id(index, &existing);
+            return Err(ApiError {
+                status: StatusCode::CONFLICT,
+                body: serde_json::json!({
+                    "error": format!(
+                        "Route {other} already serves {} {} on {}",
+                        existing.method,
+                        existing.path,
+                        existing.host.pattern().as_deref().unwrap_or("any host"),
+                    ),
+                    "conflict": other,
+                }),
+            });
+        }
+    }
+
+    for old in &old_entries {
+        router.remove_route_exact(&old.method, &old.path, &old.host, old.id.as_deref());
+    }
+
+    for (inserted, route) in new_entries.iter().enumerate() {
+        if let Err(e) = router.add_route(route.clone()) {
+            for new in &new_entries[..inserted] {
+                router.remove_route_exact(&new.method, &new.path, &new.host, new.id.as_deref());
+            }
+            for old in &old_entries {
+                if let Err(restore) = router.add_route(old.clone()) {
+                    tracing::error!(id = %id, error = %restore, "Could not restore route");
+                }
+            }
+            return Err(ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to add route: {e}"),
+            ));
+        }
+    }
+
+    tracing::info!(
+        id = %id,
+        path = %body.path,
+        upstream = %body.upstream,
+        entries = new_entries.len(),
+        replaced = old_entries.len(),
+        "Route upserted through the admin API"
+    );
+
+    Ok(new_entries)
+}
+
+/// The `RouteInfo` of the first entry of a freshly upserted route.
+fn upserted_info(id: &str, entries: &[octopus_router::Route]) -> serde_json::Value {
+    entries.first().map_or(serde_json::Value::Null, |route| {
+        serde_json::to_value(crate::handlers::route_to_info(
+            id.to_string(),
+            route,
+            0,
+            0,
+            0.0,
+            true,
+        ))
+        .unwrap_or_default()
+    })
+}
+
 /// Get single route by ID
 /// GET /admin/api/routes/:id
 pub async fn api_route_get_handler(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
+    if state.router.is_none() {
+        return Err(ApiError::router_unavailable());
+    }
     let routes = crate::handlers::build_routes_from_state(&state);
-    if let Some(route) = routes.into_iter().find(|r| r.id == id) {
-        Json(serde_json::to_value(route).unwrap())
-    } else {
-        Json(serde_json::json!({"error": "Route not found", "id": id}))
+    match routes.into_iter().find(|r| r.id == id) {
+        Some(route) => Ok(Json(route)),
+        None => Err(ApiError {
+            status: StatusCode::NOT_FOUND,
+            body: serde_json::json!({"error": "Route not found", "id": id}),
+        }),
     }
 }
 
@@ -214,73 +379,31 @@ pub async fn api_route_create_handler(
     Json(config): Json<RouteConfig>,
 ) -> impl IntoResponse {
     let Some(ref router) = state.router else {
-        return (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({"error": "Router not available"})),
-        );
+        return Err(ApiError::router_unavailable());
     };
 
-    let method: http::Method = match config.method.parse() {
-        Ok(m) => m,
-        Err(_) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(
-                    serde_json::json!({"error": format!("Invalid HTTP method: {}", config.method)}),
-                ),
-            );
-        }
-    };
+    let id = config
+        .id
+        .clone()
+        .filter(|id| !id.trim().is_empty())
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-    let route = match octopus_router::RouteBuilder::new()
-        .method(method.clone())
-        .path(&config.path)
-        .upstream_name(&config.upstream)
-        .build()
-    {
-        Ok(r) => r,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({"error": format!("Invalid route: {}", e)})),
-            );
-        }
-    };
-
-    if let Err(e) = router.add_route(route) {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": format!("Failed to add route: {}", e)})),
-        );
+    if !entries_for_id(router, &id).is_empty() {
+        return Err(ApiError {
+            status: StatusCode::CONFLICT,
+            body: serde_json::json!({
+                "error": format!("Route {id} already exists"),
+                "conflict": id,
+            }),
+        });
     }
 
-    tracing::info!(
-        "Created route: {} {} -> {}",
-        config.method,
-        config.path,
-        config.upstream
-    );
-
-    let info = RouteInfo {
-        id: uuid::Uuid::new_v4().to_string(),
-        path: config.path,
-        method: method.to_string(),
-        upstream: config.upstream,
-        request_count: 0,
-        is_healthy: true,
-        avg_latency_ms: 0.0,
-        error_count: 0,
-        last_accessed: None,
-        ..Default::default()
-    };
-
-    (
-        StatusCode::CREATED,
-        Json(serde_json::to_value(info).unwrap()),
-    )
+    let entries = upsert_admin_route(router, &id, &config)?;
+    Ok((StatusCode::CREATED, Json(upserted_info(&id, &entries))))
 }
 
-/// Update existing route (remove old, add new)
+/// Create or replace a route by id (idempotent upsert; the path id wins over
+/// a body id)
 /// PUT /admin/api/routes/:id
 pub async fn api_route_update_handler(
     State(state): State<Arc<AppState>>,
@@ -288,87 +411,41 @@ pub async fn api_route_update_handler(
     Json(config): Json<RouteConfig>,
 ) -> impl IntoResponse {
     let Some(ref router) = state.router else {
-        return Json(serde_json::json!({"error": "Router not available"}));
+        return Err(ApiError::router_unavailable());
     };
 
-    // Find existing route by ID
-    let routes = crate::handlers::build_routes_from_state(&state);
-    if let Some(old_route) = routes.iter().find(|r| r.id == id) {
-        // Remove old route
-        if let Ok(old_method) = old_route.method.parse::<http::Method>() {
-            let _ = router.remove_route(&old_method, &old_route.path);
-        }
-    }
-
-    // Add new route
-    let method: http::Method = match config.method.parse() {
-        Ok(m) => m,
-        Err(_) => {
-            return Json(
-                serde_json::json!({"error": format!("Invalid HTTP method: {}", config.method)}),
-            );
-        }
-    };
-
-    let route = match octopus_router::RouteBuilder::new()
-        .method(method.clone())
-        .path(&config.path)
-        .upstream_name(&config.upstream)
-        .build()
-    {
-        Ok(r) => r,
-        Err(e) => {
-            return Json(serde_json::json!({"error": format!("Invalid route: {}", e)}));
-        }
-    };
-
-    if let Err(e) = router.add_route(route) {
-        return Json(serde_json::json!({"error": format!("Failed to update route: {}", e)}));
-    }
-
-    tracing::info!(
-        "Updated route {}: {} {} -> {}",
-        id,
-        config.method,
-        config.path,
-        config.upstream
-    );
-
-    let info = RouteInfo {
-        id,
-        path: config.path,
-        method: method.to_string(),
-        upstream: config.upstream,
-        request_count: 0,
-        is_healthy: true,
-        avg_latency_ms: 0.0,
-        error_count: 0,
-        last_accessed: None,
-        ..Default::default()
-    };
-
-    Json(serde_json::to_value(info).unwrap())
+    let entries = upsert_admin_route(router, &id, &config)?;
+    Ok(Json(upserted_info(&id, &entries)))
 }
 
-/// Delete route
+/// Delete every entry of a route by id, or one id-less route by its legacy
+/// positional id
 /// DELETE /admin/api/routes/:id
 pub async fn api_route_delete_handler(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     let Some(ref router) = state.router else {
-        return StatusCode::SERVICE_UNAVAILABLE;
+        return Err(ApiError::router_unavailable());
     };
 
-    let routes = crate::handlers::build_routes_from_state(&state);
-    if let Some(route) = routes.iter().find(|r| r.id == id) {
-        if let Ok(method) = route.method.parse::<http::Method>() {
-            let _ = router.remove_route(&method, &route.path);
-            tracing::info!("Deleted route: {} {} {}", id, route.method, route.path);
+    let removed = router.remove_routes_by_id(&id);
+    if removed > 0 {
+        tracing::info!(id = %id, removed, "Route deleted through the admin API");
+        return Ok(StatusCode::NO_CONTENT);
+    }
+
+    if let Some(route) = positional_route(router, &id) {
+        if router.remove_route_exact(&route.method, &route.path, &route.host, None) {
+            tracing::info!(id = %id, method = %route.method, path = %route.path, "Route deleted through the admin API");
+            return Ok(StatusCode::NO_CONTENT);
         }
     }
 
-    StatusCode::NO_CONTENT
+    Err(ApiError {
+        status: StatusCode::NOT_FOUND,
+        body: serde_json::json!({"error": "Route not found", "id": id}),
+    })
 }
 
 // ============================================================================

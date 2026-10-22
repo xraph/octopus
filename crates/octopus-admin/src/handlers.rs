@@ -555,7 +555,7 @@ pub(crate) fn build_routes_from_state(state: &AppState) -> Vec<RouteInfo> {
                 .is_none_or(|ht| ht.is_healthy(&route.upstream_name, 0.5));
 
             route_to_info(
-                format!("route-{i}"),
+                listed_route_id(i, &route),
                 &route,
                 request_count,
                 error_count,
@@ -564,6 +564,15 @@ pub(crate) fn build_routes_from_state(state: &AppState) -> Vec<RouteInfo> {
             )
         })
         .collect()
+}
+
+/// The id the route list shows for the entry at position `index`: the
+/// route's own id, or a positional `route-{index}` for a route without one.
+pub(crate) fn listed_route_id(index: usize, route: &octopus_router::Route) -> String {
+    route
+        .id
+        .as_deref()
+        .map_or_else(|| format!("route-{index}"), str::to_string)
 }
 
 /// Map a router [`octopus_router::Route`] plus operational metrics into a
@@ -578,8 +587,11 @@ pub(crate) fn route_to_info(
 ) -> RouteInfo {
     RouteInfo {
         id,
+        route_id: route.id.as_deref().map(str::to_string),
         path: route.path.clone(),
         method: route.method.to_string(),
+        host: route.host.pattern(),
+        origin: route.origin.as_str().to_string(),
         upstream: route.upstream_name.clone(),
         request_count,
         is_healthy,
