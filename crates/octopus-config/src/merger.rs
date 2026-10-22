@@ -107,14 +107,26 @@ fn merge_upstreams(
     upstream_map.into_values().collect()
 }
 
-/// Merge routes by path
+/// The identity two layers' routes are matched by when merging: the `id`
+/// when set, otherwise the path plus the sorted, lowercased hosts. The same
+/// path on different hosts is two routes, not an override.
+fn route_merge_key(route: &RouteConfig) -> String {
+    if let Some(id) = &route.id {
+        return id.clone();
+    }
+    let mut hosts: Vec<String> = route.hosts.iter().map(|h| h.to_ascii_lowercase()).collect();
+    hosts.sort();
+    format!("{}|{}", route.path, hosts.join(","))
+}
+
+/// Merge routes by [`route_merge_key`]
 fn merge_routes(mut base: Vec<RouteConfig>, overlay: Vec<RouteConfig>) -> Vec<RouteConfig> {
     let mut route_map: HashMap<String, RouteConfig> =
-        base.drain(..).map(|r| (r.path.clone(), r)).collect();
+        base.drain(..).map(|r| (route_merge_key(&r), r)).collect();
 
     // Override or add routes from overlay
     for route in overlay {
-        route_map.insert(route.path.clone(), route);
+        route_map.insert(route_merge_key(&route), route);
     }
 
     route_map.into_values().collect()
@@ -242,5 +254,54 @@ mod tests {
     fn test_merge_empty_configs() {
         let result = merge_configs(vec![]);
         assert!(result.is_err());
+    }
+
+    fn route(yaml: &str) -> RouteConfig {
+        serde_yaml::from_str(yaml).unwrap()
+    }
+
+    #[test]
+    fn merge_keeps_same_path_on_different_hosts() {
+        let base = vec![route("{path: /x, upstream: a, hosts: [a.dev]}")];
+        let overlay = vec![route("{path: /x, upstream: b, hosts: [b.dev]}")];
+
+        let merged = merge_routes(base, overlay);
+
+        assert_eq!(merged.len(), 2);
+    }
+
+    #[test]
+    fn merge_overrides_same_path_and_hosts_in_any_order_or_case() {
+        let base = vec![route("{path: /x, upstream: a, hosts: [a.dev, B.dev]}")];
+        let overlay = vec![route("{path: /x, upstream: b, hosts: [b.dev, a.dev]}")];
+
+        let merged = merge_routes(base, overlay);
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].upstream, "b");
+    }
+
+    #[test]
+    fn merge_matches_routes_by_id_when_set() {
+        let base = vec![route("{id: web, path: /old, upstream: a}")];
+        let overlay = vec![route("{id: web, path: /new, upstream: b}")];
+
+        let merged = merge_routes(base, overlay);
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].path, "/new");
+    }
+
+    #[test]
+    fn route_merge_key_uses_id_then_path_and_sorted_hosts() {
+        assert_eq!(
+            route_merge_key(&route("{id: web, path: /x, upstream: a}")),
+            "web"
+        );
+        assert_eq!(
+            route_merge_key(&route("{path: /x, upstream: a, hosts: [B.dev, a.dev]}")),
+            "/x|a.dev,b.dev"
+        );
+        assert_eq!(route_merge_key(&route("{path: /x, upstream: a}")), "/x|");
     }
 }

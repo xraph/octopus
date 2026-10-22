@@ -405,16 +405,19 @@ impl RequestHandler {
     /// Extract the request host used for host-aware routing.
     ///
     /// Prefers the HTTP/2 `:authority` (exposed as the URI host), falling back
-    /// to the `Host` header. Any port is stripped and the result is lowercased;
-    /// empty when no host is present. Host-agnostic routes match any value.
+    /// to the `Host` header. Both go through
+    /// [`octopus_router::host::normalize_request_host`]: the port and one
+    /// trailing dot are dropped and the result is lowercased, while a bracketed
+    /// IPv6 literal stays whole. Empty when no host is present. Host-agnostic
+    /// routes match any value.
     fn request_host<B>(req: &Request<B>) -> String {
         if let Some(h) = req.uri().host() {
-            return h.to_ascii_lowercase();
+            return octopus_router::host::normalize_request_host(h);
         }
         req.headers()
             .get("host")
             .and_then(|v| v.to_str().ok())
-            .map(|s| s.split(':').next().unwrap_or(s).trim().to_ascii_lowercase())
+            .map(octopus_router::host::normalize_request_host)
             .unwrap_or_default()
     }
 
@@ -1992,7 +1995,10 @@ mod tests {
             "test premise: no content-length, so only the streaming cap can catch this"
         );
 
-        let resp = handler.handle(req).await.expect("limit is a response, not an error");
+        let resp = handler
+            .handle(req)
+            .await
+            .expect("limit is a response, not an error");
         assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 
@@ -2079,6 +2085,29 @@ mod tests {
             "evil.com",
             "foo.acme.com"
         ));
+    }
+
+    fn host_of(uri: &str, host_header: Option<&str>) -> String {
+        let mut builder = Request::builder().uri(uri);
+        if let Some(h) = host_header {
+            builder = builder.header("host", h);
+        }
+        RequestHandler::request_host(&builder.body(()).unwrap())
+    }
+
+    #[test]
+    fn request_host_is_lowercased_without_port_or_trailing_dot() {
+        // The Host header shapes Caddy and ingress controllers send.
+        assert_eq!(host_of("/", Some("API.Acme.Dev.:8443")), "api.acme.dev");
+        assert_eq!(host_of("/", Some("api.acme.dev")), "api.acme.dev");
+        assert_eq!(host_of("/", Some("[::1]:8080")), "[::1]");
+        assert_eq!(host_of("/", None), "");
+        // An absolute URI (HTTP/2 `:authority`) goes through the same rules.
+        assert_eq!(
+            host_of("https://API.Acme.Dev.:8443/x", Some("other.dev")),
+            "api.acme.dev"
+        );
+        assert_eq!(host_of("http://[::1]:8080/x", None), "[::1]");
     }
 
     #[test]

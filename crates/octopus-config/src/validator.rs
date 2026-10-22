@@ -137,7 +137,17 @@ fn validate_upstreams(config: &Config) -> Result<()> {
 }
 
 fn validate_routes(config: &Config) -> Result<()> {
+    let mut ids = std::collections::HashSet::new();
     for route in &config.routes {
+        if let Some(id) = &route.id {
+            if id.is_empty() {
+                return Err(Error::Config("route id cannot be empty".to_string()));
+            }
+            if !ids.insert(id.as_str()) {
+                return Err(Error::Config(format!("duplicate route id: {id}")));
+            }
+        }
+
         if route.path.is_empty() {
             return Err(Error::Config("route path cannot be empty".to_string()));
         }
@@ -157,6 +167,10 @@ fn validate_routes(config: &Config) -> Result<()> {
                 route.upstream
             )));
         }
+
+        // Hosts and methods must parse; this is the same expansion the
+        // runtime performs when it loads the route.
+        route.to_routes(octopus_router::RouteOrigin::Config)?;
     }
 
     Ok(())
@@ -301,8 +315,10 @@ mod tests {
     fn test_route_invalid_upstream() {
         let mut config = minimal_config();
         config.routes.push(RouteConfig {
+            id: None,
             path: "/test".to_string(),
             methods: vec!["GET".to_string()],
+            hosts: vec![],
             upstream: "nonexistent".to_string(),
             priority: 0,
             strip_prefix: None,
@@ -324,5 +340,59 @@ mod tests {
         });
 
         assert!(validate_config(&config).is_err());
+    }
+
+    /// A config with one upstream (`web`) and the routes parsed from `yaml`.
+    fn config_with_routes(yaml: &str) -> Config {
+        let mut config = minimal_config();
+        config.upstreams.push(UpstreamConfig {
+            name: "web".to_string(),
+            instances: vec![],
+            lb_policy: "round_robin".to_string(),
+            health_check: None,
+            circuit_breaker: None,
+        });
+        config.routes = serde_yaml::from_str(yaml).unwrap();
+        config
+    }
+
+    #[test]
+    fn test_route_accepts_valid_hosts() {
+        let config = config_with_routes(
+            "- {path: /x, upstream: web, hosts: [api.acme.dev, '*.acme.dev', 10.0.0.1]}\n",
+        );
+        assert!(validate_config(&config).is_ok());
+    }
+
+    #[test]
+    fn test_route_rejects_invalid_host() {
+        let config = config_with_routes("- {path: /x, upstream: web, hosts: ['api.*.dev']}\n");
+        let err = validate_config(&config).unwrap_err();
+        assert!(err.to_string().contains("api.*.dev"), "{err}");
+    }
+
+    #[test]
+    fn test_route_rejects_invalid_method() {
+        let config = config_with_routes("- {path: /x, upstream: web, methods: ['G T']}\n");
+        let err = validate_config(&config).unwrap_err();
+        assert!(err.to_string().contains("G T"), "{err}");
+    }
+
+    #[test]
+    fn test_route_rejects_duplicate_ids() {
+        let config = config_with_routes(
+            "- {id: web, path: /a, upstream: web}\n- {id: web, path: /b, upstream: web}\n",
+        );
+        let err = validate_config(&config).unwrap_err();
+        assert!(err.to_string().contains("duplicate route id: web"), "{err}");
+    }
+
+    #[test]
+    fn test_route_allows_distinct_ids_and_unnamed_routes() {
+        let config = config_with_routes(
+            "- {id: a, path: /a, upstream: web}\n- {id: b, path: /b, upstream: web}\n\
+             - {path: /c, upstream: web}\n- {path: /d, upstream: web}\n",
+        );
+        assert!(validate_config(&config).is_ok());
     }
 }

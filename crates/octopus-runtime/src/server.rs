@@ -707,60 +707,16 @@ impl Server {
                     self.router.clear();
 
                     for route_config in &new_config.routes {
-                        for method_str in &route_config.methods {
-                            let method: http::Method = match method_str.parse() {
-                                Ok(m) => m,
-                                Err(_) => {
-                                    tracing::error!(method = %method_str, "Invalid HTTP method in reloaded config, skipping");
-                                    continue;
-                                }
-                            };
-
-                            let mut builder = octopus_router::RouteBuilder::new()
-                                .path(&route_config.path)
-                                .method(method)
-                                .upstream_name(&route_config.upstream)
-                                .priority(route_config.priority)
-                                .auth_provider(route_config.auth_provider.as_deref())
-                                .skip_auth(route_config.skip_auth)
-                                .require_roles(&route_config.require_roles)
-                                .require_scopes(&route_config.require_scopes)
-                                .authz_rule(route_config.authz_rule.as_deref());
-
-                            if let Some(ref pfx) = route_config.strip_prefix {
-                                builder = builder.strip_prefix(pfx);
+                        let routes = match route_config.to_routes(octopus_router::RouteOrigin::Config) {
+                            Ok(routes) => routes,
+                            Err(e) => {
+                                tracing::error!(path = %route_config.path, error = %e, "Invalid route in reloaded config, skipping");
+                                continue;
                             }
-                            if let Some(ref pfx) = route_config.add_prefix {
-                                builder = builder.add_prefix(pfx);
-                            }
-                            if let Some(ref rl) = route_config.rate_limit {
-                                builder = builder.rate_limit(rl.requests_per_window, rl.window_size);
-                            }
-                            if let Some(timeout) = route_config.timeout {
-                                builder = builder.timeout(Some(timeout));
-                            }
-                            if let Some(ref cors_cfg) = route_config.cors {
-                                builder = builder.cors(Some(octopus_router::RouteCorsOverride {
-                                    allowed_origins: cors_cfg.allowed_origins.clone(),
-                                    allowed_methods: cors_cfg.allowed_methods.clone(),
-                                    allowed_headers: cors_cfg.allowed_headers.clone(),
-                                    allow_credentials: cors_cfg.allow_credentials,
-                                    max_age: cors_cfg.max_age,
-                                }));
-                            }
-                            if let Some(spec) = route_config.proxy_spec() {
-                                builder = builder.proxy(Some(spec));
-                            }
-
-                            match builder.build() {
-                                Ok(route) => {
-                                    if let Err(e) = self.router.add_route(route) {
-                                        tracing::error!(error = %e, "Failed to add route during reload");
-                                    }
-                                }
-                                Err(e) => {
-                                    tracing::error!(error = %e, "Failed to build route during reload");
-                                }
+                        };
+                        for route in routes {
+                            if let Err(e) = self.router.add_route(route) {
+                                tracing::error!(error = %e, "Failed to add route during reload");
                             }
                         }
                     }
@@ -981,48 +937,8 @@ impl ServerBuilder {
 
         // Register routes (with auth config)
         for route_config in &config.routes {
-            for method_str in &route_config.methods {
-                let method = method_str
-                    .parse()
-                    .map_err(|_| Error::Config(format!("Invalid HTTP method: {method_str}")))?;
-
-                let mut builder = octopus_router::RouteBuilder::new()
-                    .path(&route_config.path)
-                    .method(method)
-                    .upstream_name(&route_config.upstream)
-                    .priority(route_config.priority)
-                    .auth_provider(route_config.auth_provider.as_deref())
-                    .skip_auth(route_config.skip_auth)
-                    .require_roles(&route_config.require_roles)
-                    .require_scopes(&route_config.require_scopes)
-                    .authz_rule(route_config.authz_rule.as_deref());
-
-                if let Some(ref pfx) = route_config.strip_prefix {
-                    builder = builder.strip_prefix(pfx);
-                }
-                if let Some(ref pfx) = route_config.add_prefix {
-                    builder = builder.add_prefix(pfx);
-                }
-                if let Some(ref rl) = route_config.rate_limit {
-                    builder = builder.rate_limit(rl.requests_per_window, rl.window_size);
-                }
-                if let Some(timeout) = route_config.timeout {
-                    builder = builder.timeout(Some(timeout));
-                }
-                if let Some(ref cors_cfg) = route_config.cors {
-                    builder = builder.cors(Some(octopus_router::RouteCorsOverride {
-                        allowed_origins: cors_cfg.allowed_origins.clone(),
-                        allowed_methods: cors_cfg.allowed_methods.clone(),
-                        allowed_headers: cors_cfg.allowed_headers.clone(),
-                        allow_credentials: cors_cfg.allow_credentials,
-                        max_age: cors_cfg.max_age,
-                    }));
-                }
-                if let Some(spec) = route_config.proxy_spec() {
-                    builder = builder.proxy(Some(spec));
-                }
-
-                router.add_route(builder.build()?)?;
+            for route in route_config.to_routes(octopus_router::RouteOrigin::Config)? {
+                router.add_route(route)?;
             }
         }
 

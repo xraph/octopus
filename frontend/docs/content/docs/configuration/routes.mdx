@@ -1,6 +1,6 @@
 ---
 title: Routes
-description: The routes section — path matching, method filtering, prefix rewriting, priority, per-route authentication and authorization, per-route timeout, rate limiting, and CORS.
+description: "The routes section: path and host matching, method filtering, prefix rewriting, priority, per-route authentication and authorization, per-route timeout, rate limiting, and CORS."
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -13,8 +13,10 @@ empty. Each route must reference an upstream that exists in [`upstreams`](/docs/
 
 ```yaml
 routes:
-  - path: /api/users
+  - id: users-api
+    path: /api/users
     methods: [GET, POST]
+    hosts: [api.example.com]
     upstream: user-service
     priority: 10
     strip_prefix: /api
@@ -33,8 +35,10 @@ routes:
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
+| `id` | string | none | Stable name for the route. Must be unique across `routes`. See [Route ids](#route-ids). |
 | `path` | string | — | Path pattern to match. **Required** (must start with `/`). |
-| `methods` | array of string | `[]` | HTTP methods to match. Empty means all methods. |
+| `methods` | array of string | `[]` | HTTP methods to match. Empty means all methods: `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE` and `OPTIONS`. |
+| `hosts` | array of string | `[]` | Request hosts to match, exact (`api.example.com`) or wildcard (`*.example.com`). Empty means any host. See [Host matching](#host-matching). |
 | `upstream` | string | — | Target upstream name. **Required** (must exist in `upstreams`). |
 | `priority` | integer | `0` | Higher priority routes are matched first. |
 | `strip_prefix` | string | none | Prefix removed from the path before proxying. |
@@ -54,6 +58,66 @@ routes:
   evaluated by the auth middleware — see [Authentication & authorization](/docs/configuration/auth)
   and the [Security](/docs/security) section for the request flow.
 </Callout>
+
+## Host matching
+
+`hosts` scopes a route to the request host: the HTTP/2 `:authority`, or the `Host` header on
+HTTP/1.1. Leave it empty (or leave it out) and the route answers any host, which is how routes
+behaved before `hosts` existed.
+
+```yaml
+routes:
+  - path: /billing/*
+    hosts: [api.acme.dev, "*.acme.dev"]
+    upstream: billing
+```
+
+Each entry is one of two shapes:
+
+- An exact host such as `api.acme.dev`. It matches that host and nothing else.
+- A wildcard such as `*.acme.dev`. It matches any subdomain, at any depth (`eu.acme.dev`,
+  `a.b.acme.dev`), but **never the apex**. `*.acme.dev` does not match `acme.dev`; list `acme.dev`
+  as well if you want both.
+
+A host pattern is a DNS name or an IPv4 address (`10.0.0.5`). IPv6 literals can't be written in
+`hosts`, so a request that reaches the gateway at `[::1]` only matches routes with an empty `hosts`
+list. `*` is only allowed as the first label (`api.*.dev` is rejected), and a bare `*` is rejected
+too: an empty list already means any host. Patterns are trimmed and lowercased and lose one trailing
+dot, so `API.Acme.Dev.` is the same as `api.acme.dev`.
+
+The request host goes through the same normalization before it is compared. The port is dropped,
+the value is lowercased and one trailing dot is removed, so `Host: API.Acme.Dev.:8443` matches a
+route for `api.acme.dev`.
+
+When several routes match a request, the one with the most specific host wins (exact, then
+wildcard, then any host), and `priority` only breaks ties between routes whose hosts are equally
+specific.
+
+A route with several `methods` and several `hosts` is loaded as one route per method and host. All
+of those copies share the route's `id`.
+
+<Callout type="warn">
+  A trailing `/*` in `path` needs at least one more segment. `/billing/*` matches `/billing/x`
+  and `/billing/x/y`, but **not** `/billing` itself. Add a separate `/billing` route when the bare
+  prefix has to be served.
+</Callout>
+
+### Declared routes and FARP routes
+
+Routes from this file (and routes added through the admin API) are declared routes. Routes that
+[FARP](/docs/concepts/farp) or the Kubernetes operator discover are not. When a declared route and
+a discovered route have the same path and the same host pattern, the declared route wins whatever
+their priorities are, and the discovered route stays hidden for as long as the declared one exists.
+
+## Route ids
+
+`id` gives a route a stable name. Every method and host copy of the route carries it, so tooling
+can find, replace or remove the whole route by that one name. Ids are optional; when two routes set
+the same `id`, validation fails with `duplicate route id`.
+
+When several config files are [merged](/docs/configuration#loading-and-merging), a route with an
+`id` overrides the earlier route with the same `id`. A route without one overrides the earlier route
+with the same `path` and the same `hosts`.
 
 ## Rate limit
 

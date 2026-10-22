@@ -12,6 +12,9 @@ description = "Configuration management for Octopus API Gateway"
 octopus-core = { path = "../octopus-core" }
 octopus-router = { path = "../octopus-router" }
 
+# HTTP types (route methods)
+http.workspace = true
+
 # Serialization
 serde.workspace = true
 serde_json.workspace = true

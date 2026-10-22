@@ -162,9 +162,10 @@ octopus serve -c ./config.d
 
 **Merge semantics** (later file overrides earlier):
 
-- `upstreams`, `routes`, and `plugins` are merged **by key** — by `name` for upstreams and
-  plugins, by `path` for routes. A later entry with the same key replaces the earlier one;
-  new keys are added.
+- `upstreams`, `routes`, and `plugins` are merged **by key**. Upstreams and plugins use `name`.
+  A route uses its `id` when it has one, and otherwise its `path` together with its `hosts`
+  (compared without regard to order or case), so the same path on different hosts is two routes.
+  A later entry with the same key replaces the earlier one; new keys are added.
 - `gateway` is overlaid field by field (the later file's values win; `workers: 0` is treated as
   "unset" and keeps the base value, and `tls` / `internal_route_prefix` fall back to the base when
   the overlay omits them).
@@ -194,7 +195,8 @@ things:
 - Each upstream has a non-empty `name`; each instance has a non-empty `id`, non-empty `host`, and
   a non-zero `port`.
 - Each route `path` starts with `/`, has a non-empty `upstream`, and **references an upstream that
-  exists**.
+  exists**. Every `methods` entry is a valid HTTP method, every `hosts` entry is a valid host
+  pattern, and no two routes share an `id`.
 
 A valid configuration prints a summary (listen address, upstream/route/plugin counts) and exits 0;
 an invalid one prints the error and exits 1.

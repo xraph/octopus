@@ -18,10 +18,10 @@ Octopus uses a trie-based router for efficient path matching. Routes are defined
   rewriting). Some examples below show fields and routing modes that are **not**
   part of the current configuration schema (for example `match_type`,
   `conditions`, `route_groups`, route-level `retries`, and
-  `rate_limit.requests_per_second`). For the source-verified `routes[]` schema —
-  `path`, `methods`, `upstream`, `priority`, `strip_prefix`, `add_prefix`,
-  `auth_provider`/`skip_auth`/`require_roles`/`require_scopes`/`authz_rule`,
-  `timeout`, `rate_limit` (`requests_per_window` + `window_size`), and `cors` —
+  `rate_limit.requests_per_second`). For the source-verified `routes[]` schema
+  (`id`, `path`, `methods`, `hosts`, `upstream`, `priority`, `strip_prefix`,
+  `add_prefix`, `auth_provider`/`skip_auth`/`require_roles`/`require_scopes`/`authz_rule`,
+  `timeout`, `rate_limit` (`requests_per_window` + `window_size`), and `cors`),
   always defer to [Routes](/docs/configuration/routes). Note `rate_limit` and
   `cors` are stored but not enforced in the live chain today (see
   [Middleware](/docs/middleware)).
@@ -191,22 +191,40 @@ routes:
 
 ## Host-Based Routing
 
-Route based on the Host header:
+Scope a route to request hosts with `hosts`. The request host is the HTTP/2 `:authority` or the
+`Host` header, lowercased, without its port and without one trailing dot.
 
 ```yaml
 routes:
-  - host: api.example.com
-    path: /*
+  - path: /*
+    hosts: [api.example.com]
     upstream: api-v1
-  
-  - host: api-v2.example.com
-    path: /*
+
+  - path: /*
+    hosts: [api-v2.example.com]
     upstream: api-v2
-  
-  - host: "*.staging.example.com"
-    path: /*
+
+  - path: /*
+    hosts: ["*.staging.example.com"]
     upstream: staging-api
+
+  # No hosts: answers any host
+  - path: /health
+    upstream: health-service
 ```
+
+- An empty or missing `hosts` list means any host.
+- `*.staging.example.com` matches `eu.staging.example.com` and `a.b.staging.example.com`, but
+  never the apex `staging.example.com`.
+- Patterns are DNS names or IPv4 addresses. IPv6 literal hosts can't be expressed in `hosts`.
+- When several routes match, the most specific host wins (exact, then wildcard, then any host)
+  and `priority` breaks ties only between equally specific hosts.
+- `path: /*` never matches the bare root `/`. In general `/p/*` needs a segment after `/p` and
+  does not match `/p` itself.
+
+A route in the config file (or one added through the admin API) shadows a route that FARP or the
+Kubernetes operator discovered on the same host and path, whatever their priorities. See
+[Host matching](/docs/configuration/routes#host-matching) for the full rules.
 
 ## Header-Based Routing
 
