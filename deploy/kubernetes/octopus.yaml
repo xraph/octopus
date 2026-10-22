@@ -1,4 +1,4 @@
-# Octopus API Gateway — raw Kubernetes manifests.
+# Octopus API Gateway: raw Kubernetes manifests.
 #
 # A self-contained, Helm-free deployment. Edit the namespace, image, and the
 # ConfigMap `config.yaml` to suit your environment, then:
@@ -172,6 +172,7 @@ spec:
           ports:
             - name: http
               containerPort: 8080
+            # Private admin listener (config.yaml admin.listen). Never publish it.
             - name: admin
               containerPort: 9090
           startupProbe:
@@ -237,6 +238,9 @@ spec:
     - name: http
       port: 8080
       targetPort: http
+    # Admin UI/API, FARP registration and metrics. Keep this Service
+    # ClusterIP and never publish or route port 9090 (no LoadBalancer,
+    # NodePort, Ingress or Gateway in front of it).
     - name: admin
       port: 9090
       targetPort: admin

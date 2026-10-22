@@ -77,6 +77,14 @@ admin:
     let (status, _) = get(gateway, "/admin/api/system/info").await;
     assert_eq!(status, 404, "gateway port must not serve the admin API");
 
+    let (status, body) = get(admin, "/metrics").await;
+    assert_eq!(status, 200, "admin port /metrics: {body}");
+    assert_eq!(
+        get(gateway, "/metrics").await.0,
+        404,
+        "gateway port must not serve /metrics"
+    );
+
     assert_eq!(get(gateway, "/livez").await.0, 200);
     assert_eq!(get(admin, "/livez").await.0, 200);
 

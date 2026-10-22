@@ -2185,6 +2185,69 @@ mod tests {
         }
     }
 
+    fn ws_upgrade(path: &str) -> Request<Full<Bytes>> {
+        Request::builder()
+            .method(http::Method::GET)
+            .uri(path)
+            .header(http::header::UPGRADE, "websocket")
+            .header(http::header::CONNECTION, "Upgrade")
+            .header(http::header::SEC_WEBSOCKET_VERSION, "13")
+            .header(http::header::SEC_WEBSOCKET_KEY, "dGhlIHNhbXBsZSBub25jZQ==")
+            .body(Full::new(Bytes::new()))
+            .unwrap()
+    }
+
+    /// The admin WebSocket is an admin path, so on the public role an upgrade
+    /// to it goes through the router like any other request and, with no
+    /// route, answers 404 (the accept loop maps `RouteNotFound` to 404).
+    #[tokio::test]
+    async fn public_role_routes_admin_websocket_upgrade() {
+        let mut handler = farp_test_handler();
+
+        // Combined: the admin handler takes it, so it is never a route miss.
+        let combined = handler.handle(ws_upgrade("/admin/ws")).await.unwrap();
+        assert_ne!(combined.status(), StatusCode::NOT_FOUND);
+
+        handler.set_listener_role(ListenerRole::Public);
+        for path in ["/admin/ws", "/__admin/ws"] {
+            match handler.handle(ws_upgrade(path)).await {
+                Err(e @ Error::RouteNotFound(_)) => {
+                    assert_eq!(e.to_status_code(), StatusCode::NOT_FOUND, "{path}")
+                }
+                Err(e) => panic!("{path}: expected a route miss, got {e}"),
+                Ok(resp) => panic!("{path}: expected a route miss, got {}", resp.status()),
+            }
+        }
+    }
+
+    /// A WebSocket upgrade is proxied traffic, which the private role never
+    /// serves: it gets the JSON 404 fallback, not the WebSocket proxy.
+    #[tokio::test]
+    async fn private_role_rejects_websocket_upgrade_to_proxy_path() {
+        let mut handler = farp_test_handler();
+        let mut cluster = UpstreamCluster::new("up");
+        cluster.add_instance(UpstreamInstance::new("u1", "127.0.0.1", 1));
+        handler.router.register_upstream(cluster);
+        handler
+            .router
+            .add_route(
+                octopus_router::RouteBuilder::new()
+                    .method(http::Method::GET)
+                    .path("/ws")
+                    .upstream_name("up")
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+        handler.set_listener_role(ListenerRole::Private);
+
+        let resp = handler.handle(ws_upgrade("/ws")).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        let body = body_json(resp).await;
+        assert_eq!(body["error"], "not_found");
+        assert_eq!(body["message"], PRIVATE_NOT_FOUND_MESSAGE);
+    }
+
     #[tokio::test]
     async fn private_role_serves_admin_and_metrics() {
         let mut handler = farp_test_handler();

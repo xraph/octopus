@@ -15,7 +15,7 @@ Get Octopus API Gateway up and running in a few minutes.
 ## Prerequisites
 
 <Callout title="Before you begin">
-  Make sure you have [installed Octopus](/docs/installation) — either the `octopus` binary or the
+  Make sure you have [installed Octopus](/docs/installation), either the `octopus` binary or the
   `ghcr.io/xraph/octopus` container image.
 </Callout>
 
@@ -90,7 +90,7 @@ curl http://localhost:8080/livez
 curl http://localhost:8080/readyz
 
 # Prometheus metrics
-curl http://localhost:9090/metrics
+curl http://localhost:8080/metrics
 ```
 
 </Step>
@@ -103,7 +103,7 @@ curl http://localhost:9090/metrics
 
 ```yaml
 gateway:
-  listen: "0.0.0.0:8080"   # address:port to bind — required
+  listen: "0.0.0.0:8080"   # address:port to bind (required)
   workers: 0               # worker threads; 0 = one per CPU core
   request_timeout: 30s     # per-request timeout
 ```
@@ -260,7 +260,7 @@ gateway:
 auth_providers:
   primary:
     type: jwt
-    secret: "${JWT_SECRET}"                 # required — startup fails if unset
+    secret: "${JWT_SECRET}"                 # required: startup fails if unset
 ```
 
 `${VAR}` fails to load when `VAR` is unset; `${VAR:-default}` falls back to the literal default.
@@ -284,7 +284,6 @@ services:
     image: ghcr.io/xraph/octopus:latest
     ports:
       - "8080:8080"
-      - "9090:9090"
     volumes:
       - ./config.yaml:/etc/octopus/config.yaml
 ```
@@ -323,21 +322,21 @@ before exiting. See [Graceful shutdown](/docs/deployment/graceful-shutdown).
 
 <Callout type="error" title="Common issues">
 
-**Port already in use** — change `gateway.listen` to a free port:
+**Port already in use?** Change `gateway.listen` to a free port:
 
 ```yaml
 gateway:
   listen: "0.0.0.0:8081"
 ```
 
-**Connection refused to upstream** — verify the backend is running and the instance `host`/`port`
+**Connection refused to upstream?** Verify the backend is running and the instance `host`/`port`
 are correct:
 
 ```bash
 curl http://127.0.0.1:8081/healthz
 ```
 
-**Config rejected on startup** — run `octopus validate -c config.yaml`; it reports the exact field
+**Config rejected on startup?** Run `octopus validate -c config.yaml`; it reports the exact field
 that failed (for example a route referencing an upstream that doesn't exist).
 
 </Callout>

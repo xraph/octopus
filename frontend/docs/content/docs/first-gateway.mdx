@@ -139,7 +139,7 @@ routes:
     upstream: user-service
     methods: [POST]
     strip_prefix: /api
-    skip_auth: true            # public — no authentication
+    skip_auth: true            # public: no authentication
     timeout: 10s
 
   - path: /api/orders
@@ -157,7 +157,7 @@ routes:
 <Callout type="info">
   `strip_prefix` removes the prefix before proxying, so `/api/users/123` reaches the upstream as
   `/users/123`. Routes also support `priority`, `add_prefix`, per-route `timeout`, and per-route
-  auth fields — see [Routes](/docs/configuration/routes).
+  auth fields. See [Routes](/docs/configuration/routes).
 </Callout>
 
 ## Add authentication
@@ -230,7 +230,7 @@ observability:
 
 <Callout type="info">
   Metrics are live on the `/metrics` endpoint. The JSON log format and distributed tracing are
-  parsed but not yet applied at runtime — see [Observability](/docs/observability).
+  parsed but not yet applied at runtime. See [Observability](/docs/observability).
 </Callout>
 
 ## Complete configuration
@@ -385,15 +385,15 @@ octopus serve -c config.yaml
 curl http://localhost:8080/livez
 curl http://localhost:8080/readyz
 
-# Public route (skip_auth) — reaches the upstream as /auth/login
+# Public route (skip_auth): reaches the upstream as /auth/login
 curl -X POST http://localhost:8080/api/auth/login
 
-# Authenticated route — requires a JWT signed with $JWT_SECRET
+# Authenticated route: requires a JWT signed with $JWT_SECRET
 export TOKEN="eyJhbGciOi..."
 curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/orders/456
 
 # Prometheus metrics
-curl http://localhost:9090/metrics
+curl http://localhost:8080/metrics
 ```
 </Step>
 
@@ -433,14 +433,14 @@ See the full [production checklist](/docs/deployment/production-checklist).
 
 <Callout type="error" title="Troubleshooting">
 
-**Upstream connection refused** — confirm the backend is running and the instance `host`/`port`
+**Upstream connection refused?** Confirm the backend is running and the instance `host`/`port`
 are correct; for FARP-discovered services, check the discovery backend.
 
-**JWT authentication failing** — verify `JWT_SECRET` is set, the token is sent as
+**JWT authentication failing?** Verify `JWT_SECRET` is set, the token is sent as
 `Authorization: Bearer <token>`, the algorithm matches the provider (`HS256`), and the token has
 not expired.
 
-**Config rejected on startup** — run `octopus validate -c config.yaml`; it names the exact field
+**Config rejected on startup?** Run `octopus validate -c config.yaml`; it names the exact field
 that failed (for example a route referencing an upstream that doesn't exist).
 
 </Callout>

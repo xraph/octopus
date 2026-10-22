@@ -11,7 +11,7 @@ import { Card, Cards } from 'fumadocs-ui/components/card';
 # Installation
 
 Octopus ships as a single binary, `octopus`, and as a multi-arch container image. The same binary
-serves traffic, validates configuration, generates clients, and — when `kubernetes.enabled` is set —
+serves traffic, validates configuration, generates clients, and (when `kubernetes.enabled` is set)
 runs the in-process operator.
 
 ## Prerequisites
@@ -40,12 +40,12 @@ Pull the image:
 docker pull ghcr.io/xraph/octopus:latest
 ```
 
-Run it, mounting your config and exposing the listen port (`8080`) and the metrics port (`9090`):
+Run it, mounting your config and exposing the listen port (`8080`), which also serves the probes and `/metrics`:
 
 ```bash
 docker run --rm \
   --name octopus \
-  -p 8080:8080 -p 9090:9090 \
+  -p 8080:8080 \
   -v "$(pwd)/config.yaml:/etc/octopus/config.yaml" \
   ghcr.io/xraph/octopus:latest
 ```
@@ -126,7 +126,7 @@ helm install octopus oci://ghcr.io/xraph/charts/octopus \
   --namespace octopus --create-namespace
 ```
 
-This is only an outline — the [Kubernetes install guide](/docs/kubernetes/install) covers the CRDs,
+This is only an outline. The [Kubernetes install guide](/docs/kubernetes/install) covers the CRDs,
 the Gateway API prerequisites, raw manifests, and the full Helm values reference.
 
 </div>
@@ -145,7 +145,7 @@ octopus --help
 
 ## Create a configuration file
 
-The only required section is `gateway` with a `listen` address. A minimal static config — one
+The only required section is `gateway` with a `listen` address. A minimal static config, one
 upstream and one route:
 
 ```yaml title="config.yaml"
@@ -187,10 +187,10 @@ Once running, the gateway serves Kubernetes-style health probes on the **listen 
 Prometheus metrics on the metrics endpoint:
 
 ```bash
-curl http://localhost:8080/livez      # liveness — 200 while the process is alive
-curl http://localhost:8080/readyz     # readiness — 200 when ready to serve traffic
-curl http://localhost:8080/startupz   # startup — 200 once the listener has bound
-curl http://localhost:9090/metrics    # Prometheus metrics
+curl http://localhost:8080/livez      # liveness: 200 while the process is alive
+curl http://localhost:8080/readyz     # readiness: 200 when ready to serve traffic
+curl http://localhost:8080/startupz   # startup: 200 once the listener has bound
+curl http://localhost:8080/metrics    # Prometheus metrics
 ```
 
 See [Health probes](/docs/observability/health-probes) and [Metrics](/docs/observability/metrics)

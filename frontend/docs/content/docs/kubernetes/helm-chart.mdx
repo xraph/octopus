@@ -1,6 +1,6 @@
 ---
 title: Helm chart
-description: The Octopus Helm chart values reference — image, replicas, resources, probes, RBAC/serviceAccount, autoscaling, PodDisruptionBudget, ServiceMonitor, and the embedded gateway config.
+description: The Octopus Helm chart values reference. Image, replicas, resources, probes, RBAC/serviceAccount, autoscaling, PodDisruptionBudget, ServiceMonitor, and the embedded gateway config.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -53,7 +53,8 @@ the chart defaults; only documented keys exist.
 | `config.gateway.probes.startup_path` | string | `/startupz` | Startup path. |
 | `config.gateway.probes.require_discovery_sync` | bool | `true` | Gate readiness on the first discovery sync. |
 | `config.farp.enabled` | bool | `true` | Enable FARP (hosts the discovery backends). |
-| `config.farp.discovery.backends` | list | _(kubernetes backend)_ | Discovery backends — see [Discovery](/docs/kubernetes/discovery). |
+| `config.farp.discovery.backends` | list | _(kubernetes backend)_ | Discovery backends. See [Discovery](/docs/kubernetes/discovery). |
+| `config.admin.listen` | string | `"0.0.0.0:9090"` | Private admin listener for the admin UI/API, FARP registration and metrics. While set, the chart adds the `admin` container port (its number is read from this address) and the `<fullname>-admin` ClusterIP Service. Remove the `admin` block to serve everything on the gateway port. See [Private admin listener](/docs/configuration/admin#private-admin-listener). |
 | `config.observability.logging.level` / `.format` | string | `info` / `json` | Logging level and format. |
 
 <Callout type="info">
@@ -89,13 +90,31 @@ the chart defaults; only documented keys exist.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `service.type` | string | `ClusterIP` | Service type. |
+| `service.type` | string | `ClusterIP` | Type of the gateway Service. Never applied to the admin Service. |
 | `service.port` | int | `8080` | Gateway port (`http`). |
-| `service.adminPort` | int | `9090` | Admin port (`admin`). |
-| `service.annotations` | map | `{}` | Service annotations. |
+| `service.adminPort` | int | `9090` | Port of the `<fullname>-admin` Service (`admin`). |
+| `service.annotations` | map | `{}` | Gateway Service annotations. |
 
-The Service sets `publishNotReadyAddresses: false` so draining pods leave the EndpointSlice — see
-[Probes & drain](/docs/kubernetes/probes-and-drain).
+The chart renders two Services. `<fullname>` carries only the gateway port (`http`, plus `http3`
+when enabled) and takes `service.type`, so it's the one you put a LoadBalancer or Ingress in
+front of. While `config.admin.listen` is set, `<fullname>-admin` carries the `admin` port. It is
+always `ClusterIP`, whatever `service.type` says, and has the label
+`app.kubernetes.io/component: admin`. Never publish or route it. Reach it from inside the cluster
+or with a port-forward:
+
+```bash
+kubectl port-forward svc/<fullname>-admin 9090:9090
+curl -i http://127.0.0.1:9090/admin/api/system/info
+```
+
+<Callout type="info">
+  The `admin` container port is derived from `config.admin.listen`, so if you move the listener
+  (say to `0.0.0.0:9191`) the container port follows. `service.adminPort` is only the Service
+  port in front of it and can stay `9090`.
+</Callout>
+
+The gateway Service sets `publishNotReadyAddresses: false` so draining pods leave the
+EndpointSlice. See [Probes & drain](/docs/kubernetes/probes-and-drain).
 
 ## Pod & container
 
@@ -107,7 +126,7 @@ The Service sets `publishNotReadyAddresses: false` so draining pods leave the En
 | `containerSecurityContext` | map | `allowPrivilegeEscalation: false`, `readOnlyRootFilesystem: true`, drop `ALL` caps | Container security context. |
 | `resources.requests` | map | `cpu: 100m`, `memory: 128Mi` | Resource requests. |
 | `resources.limits` | map | `cpu: "1"`, `memory: 512Mi` | Resource limits. |
-| `nodeSelector` / `tolerations` / `affinity` | — | `{}` / `[]` / `{}` | Scheduling. |
+| `nodeSelector` / `tolerations` / `affinity` | map / list | `{}` / `[]` / `{}` | Scheduling. |
 | `topologySpreadConstraints` | list | `[]` | Spread replicas across nodes/zones. |
 | `preStopHook.enabled` | bool | `false` | Add a `sleep` preStop hook (set `pre_stop_delay: 0` to avoid double-counting). |
 | `preStopHook.sleepSeconds` | int | `5` | preStop sleep duration. |
@@ -115,7 +134,8 @@ The Service sets `publishNotReadyAddresses: false` so draining pods leave the En
 ## Probes
 
 Kubernetes probe tuning (paths default to the gateway's probe paths). All three target the `http`
-port.
+port. Probes also answer on the admin port when `config.admin.listen` is set, but the chart keeps
+them on `http` so they follow the traffic port.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -133,8 +153,8 @@ port.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `metrics.path` | string | `/metrics` | Prometheus metrics path (served on the gateway port). |
-| `metrics.serviceMonitor.enabled` | bool | `false` | Create a `monitoring.coreos.com/v1` ServiceMonitor (needs the Prometheus Operator). |
+| `metrics.path` | string | `/metrics` | Prometheus metrics path. Served on the `<fullname>-admin` Service's `admin` port while `config.admin.listen` is set, otherwise on the gateway port. |
+| `metrics.serviceMonitor.enabled` | bool | `false` | Create a `monitoring.coreos.com/v1` ServiceMonitor (needs the Prometheus Operator). It selects the `-admin` Service and scrapes its `admin` port while `config.admin.listen` is set, and the gateway Service's `http` port otherwise. |
 | `metrics.serviceMonitor.interval` | duration | `30s` | Scrape interval. |
 | `metrics.serviceMonitor.scrapeTimeout` | duration | `10s` | Scrape timeout. |
 | `metrics.serviceMonitor.labels` | map | `{}` | Extra labels (e.g. to match your Prometheus selector). |

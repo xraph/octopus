@@ -8,29 +8,34 @@ import { Steps, Step } from 'fumadocs-ui/components/steps';
 
 # Metrics
 
-Octopus exposes gateway metrics in Prometheus text format. The endpoint is
-served directly on the gateway listen port, so a Prometheus scrape, a
-`ServiceMonitor`, or a `prometheus.io/scrape` pod annotation can reach it without
-a sidecar or a second port.
+Octopus exposes gateway metrics in Prometheus text format, with no sidecar. By
+default the endpoint is served on the gateway listen port. Once you set
+`admin.listen` (the Helm chart and bundled manifests set `0.0.0.0:9090`), it moves to
+that private admin port and the gateway port no longer answers `/metrics`, so point
+your scrape, `ServiceMonitor` or `prometheus.io/scrape` annotation at the admin port.
+See [Private admin listener](/docs/configuration/admin#private-admin-listener).
 
 ## The endpoint
 
-The metrics handler answers on two fixed paths on the gateway listener:
+The metrics handler answers on two fixed paths, on the admin listener when
+`admin.listen` is set and on the gateway listener otherwise:
 
 ```bash
 curl http://localhost:8080/metrics
 # alias:
 curl http://localhost:8080/__metrics
+# with admin.listen: "0.0.0.0:9090":
+curl http://localhost:9090/metrics
 ```
 
-The response is served with `Content-Type: text/plain; version=0.0.4` — the
+The response is served with `Content-Type: text/plain; version=0.0.4`, the
 Prometheus exposition format.
 
 <Callout type="warn">
   The path is **fixed** to `/metrics` (and its `/__metrics` alias). The
   [`observability.metrics.endpoint`](/docs/configuration/observability) field is
-  part of the config schema but does not currently re-route the metrics handler,
-  so scrape `/metrics` on the listen port. `observability.metrics.enabled` **does**
+  part of the config schema but does not open a listener or re-route the metrics
+  handler. Only `admin.listen` moves `/metrics` off the gateway port. `observability.metrics.enabled` **does**
   gate the endpoint: when set to `false`, `/metrics` returns `404`.
 </Callout>
 
@@ -77,7 +82,7 @@ octopus_requests_duration_seconds_bucket{le="+Inf"} 1024
 The exporter declares HELP/TYPE headers for per-route series
 (`octopus_route_requests_total`, `octopus_route_errors_total`,
 `octopus_route_latency_seconds`), but the current exporter does **not** emit the
-per-route data lines — it writes only a comment with the route count. Rich
+per-route data lines. It writes only a comment with the route count. Rich
 per-route data (request count, error count, p50/p95/p99 latency, error rate) is
 collected internally and is available through the
 [Admin API](/docs/observability/admin-api) (for example `GET /admin/api/routes`
@@ -104,7 +109,8 @@ scrape_configs:
   - job_name: octopus-gateway
     metrics_path: /metrics
     static_configs:
-      - targets: ['octopus-gateway:8080']
+      # the admin port when admin.listen is set, else the gateway port
+      - targets: ['octopus-gateway:9090']
 ```
 
 </Step>
@@ -113,7 +119,7 @@ scrape_configs:
 ### Verify the scrape
 
 ```bash
-curl -s http://octopus-gateway:8080/metrics | grep octopus_requests_total
+curl -s http://octopus-gateway:9090/metrics | grep octopus_requests_total
 ```
 
 </Step>
@@ -122,14 +128,17 @@ curl -s http://octopus-gateway:8080/metrics | grep octopus_requests_total
 
 ## Kubernetes ServiceMonitor
 
-In Kubernetes the metrics endpoint sits on the same container port as gateway
-traffic. The Helm chart documents how to expose it to the Prometheus Operator
-via a `ServiceMonitor`, and how to set scrape annotations. See
+The Helm chart sets `admin.listen: "0.0.0.0:9090"`, so in Kubernetes the metrics
+endpoint sits on the `admin` container port, behind the `<fullname>-admin` Service
+(always `ClusterIP`). With `metrics.serviceMonitor.enabled=true` the chart's
+`ServiceMonitor` selects that Service and scrapes its `admin` port. Drop
+`admin.listen` and metrics go back to the gateway's `http` port, which the
+`ServiceMonitor` then scrapes instead. See
 [Kubernetes → Helm chart](/docs/kubernetes/helm-chart) for the chart values that
 control metrics scraping.
 
 ## Related
 
-- [Configuration → Observability](/docs/configuration/observability) — the `metrics` block.
-- [Health probes](/docs/observability/health-probes) — liveness/readiness, also served on the listen port.
-- [Admin API](/docs/observability/admin-api) — per-route and analytics data not exposed via `/metrics`.
+- [Configuration → Observability](/docs/configuration/observability): the `metrics` block.
+- [Health probes](/docs/observability/health-probes): liveness/readiness, served on the listen port and on the admin port.
+- [Admin API](/docs/observability/admin-api): per-route and analytics data not exposed via `/metrics`.

@@ -39,9 +39,12 @@ config:
       startup_path: /startupz
       require_discovery_sync: true
   # Admin UI, admin API, FARP registration and metrics move to this private
-  # listener (service.adminPort); the gateway port then only proxies. Never
-  # publish or route port 9090. Probes answer on both ports. Remove this block
-  # to serve everything on the gateway port, as 0.4.x did.
+  # listener; the gateway port then only proxies. Probes answer on both ports.
+  # While this is set the chart adds the container port `admin` (the port is
+  # read from this address, so change it here only) and a separate
+  # `<fullname>-admin` Service that is always ClusterIP, whatever service.type
+  # says. Never publish or route that port. Remove this block to serve
+  # everything on the gateway port, as 0.4.x did.
   admin:
     listen: "0.0.0.0:9090"
   farp:
@@ -83,9 +86,12 @@ rbac:
 # ── Service ──────────────────────────────────────────────────────────────────
 service:
   type: ClusterIP
+  # service.type applies to this gateway Service only.
   port: 8080
-  # Private admin listener (config.admin.listen). Keep it off any Ingress,
-  # Gateway or LoadBalancer.
+  # Port of the `<fullname>-admin` ClusterIP Service in front of the private
+  # admin listener (config.admin.listen). That Service is rendered only while
+  # config.admin.listen is set and never takes service.type. Keep it off any
+  # Ingress, Gateway or LoadBalancer.
   adminPort: 9090
 
 # HTTP/3 (QUIC). Adds a UDP port to the Service and Deployment; the gateway
@@ -93,7 +99,7 @@ service:
 # cloud provider that supports mixed TCP/UDP listeners.
 http3:
   enabled: false
-  # Defaults to service.port when unset — clients expect h3 on the same port.
+  # Defaults to service.port when unset: clients expect h3 on the same port.
   port: null
   annotations: {}
 
@@ -157,8 +163,9 @@ probes:
 
 # ── Metrics ──────────────────────────────────────────────────────────────────
 metrics:
-  # Path Prometheus metrics are served on: the admin port when
-  # config.admin.listen is set, otherwise the gateway port.
+  # Path Prometheus metrics are served on: the `<fullname>-admin` Service's
+  # `admin` port when config.admin.listen is set, otherwise the gateway port.
+  # The ServiceMonitor follows the same rule.
   path: /metrics
   serviceMonitor:
     enabled: false
