@@ -103,14 +103,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     state.health_tracker = Some(Arc::new(octopus_health::HealthTracker::default_config()));
     state.circuit_breaker = Some(Arc::new(octopus_health::CircuitBreaker::default_config()));
 
-    // Optional admin authentication. Enabled only when OCTOPUS_ADMIN_PASSWORD is
-    // set; otherwise the dashboard remains open (historical behavior).
+    // Optional admin authentication. Enabled when OCTOPUS_ADMIN_PASSWORD or
+    // OCTOPUS_ADMIN_API_TOKEN is set; otherwise the dashboard remains open
+    // (historical behavior).
     if let Some(auth) = octopus_admin::auth::AdminAuth::from_env() {
-        tracing::info!("Admin authentication enabled — login required");
+        tracing::info!(
+            "Admin authentication enabled: {}",
+            auth.mechanisms().join(", ")
+        );
         state.admin_auth = Some(Arc::new(auth));
     } else {
         tracing::warn!(
-            "Admin authentication is DISABLED — set OCTOPUS_ADMIN_PASSWORD to require login"
+            "Admin authentication is DISABLED: set OCTOPUS_ADMIN_PASSWORD or OCTOPUS_ADMIN_API_TOKEN to require it"
         );
     }
 

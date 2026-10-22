@@ -177,6 +177,16 @@ impl AdminHandler {
         }
     }
 
+    /// Enforce `auth` (password login and/or API token) on the admin API and
+    /// the server-rendered pages. Rebuilds the dashboard router over a copy of
+    /// the current state, so every clone of the returned handler shares it.
+    pub fn with_admin_auth(mut self, auth: Arc<octopus_admin::auth::AdminAuth>) -> Self {
+        let state = (*self.app_state).clone().with_admin_auth(auth);
+        self.app_state = Arc::new(state);
+        self.admin_router = DashboardRouter::build(Arc::clone(&self.app_state));
+        self
+    }
+
     /// Handle admin routes using the Axum router
     ///
     /// This method now delegates to the DashboardRouter from octopus-admin,

@@ -1,6 +1,6 @@
 ---
 title: Admin dashboard
-description: The built-in Octopus admin dashboard — what it serves, where it lives, and how to protect it.
+description: The built-in Octopus admin dashboard. What it serves, where it lives, and how to protect it.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -10,7 +10,7 @@ import { Tabs } from 'fumadocs-ui/components/tabs';
 
 Octopus ships a built-in admin dashboard: a server-rendered web UI plus a JSON
 REST API for inspecting routes, health, metrics, plugins, configuration, and
-FARP services. It is served on the **gateway listen port** — there is no
+FARP services. It is served on the **gateway listen port**. There is no
 separate admin port or process.
 
 ## Where it lives
@@ -36,7 +36,7 @@ live refresh, and includes:
 
 | Page | Path | Shows |
 | --- | --- | --- |
-| Overview | `/admin` | Aggregate stats — requests, active routes, latency, health, connections. |
+| Overview | `/admin` | Aggregate stats: requests, active routes, latency, health, connections. |
 | Routes | `/admin/routes` | Configured routes with per-route request counts and health. |
 | Health | `/admin/health` | Upstream health-check status. |
 | Plugins | `/admin/plugins` | Installed plugins and their state. |
@@ -48,16 +48,50 @@ There is also a set of modern UI pages under `/admin/octopus-ui*` and an optiona
 React SPA mounted at `/admin/ui`. A WebSocket at `/admin/ws` drives real-time
 dashboard events.
 
-All of the data behind these pages is also available as JSON — see the
+<Callout type="info">
+  The published container image ships the server-rendered pages under `/admin`
+  but not the Next.js SPA. `/admin/ui` is not built into the image, so use
+  `/admin` there. Every origin-relative URL those pages emit starts with
+  `/admin`, and the nav highlighting matches on the end of the path, so a proxy
+  can serve them under a prefix by rewriting `/admin`.
+</Callout>
+
+All of the data behind these pages is also available as JSON. See the
 [Admin API](/docs/observability/admin-api) reference.
 
 ## Protecting the dashboard
 
 The dashboard is enabled by default and, out of the box, **requires no
-authentication**. You protect it with the [`admin`](/docs/configuration/admin)
-config block.
+authentication**. You protect it with built-in credentials from the environment,
+with the [`admin`](/docs/configuration/admin) config block, or both.
 
-<Tabs items={["Auth provider", "IP allowlist"]}>
+<Tabs items={["Password or API token", "Auth provider", "IP allowlist"]}>
+
+<div title="Password or API token">
+
+Set `OCTOPUS_ADMIN_PASSWORD` for people (login page, session cookie) and
+`OCTOPUS_ADMIN_API_TOKEN` for machine clients. Either one turns the gate on for
+`/admin/api/*`, `/admin/ws` and the server-rendered pages. Unauthenticated API
+calls get `401` with `{"error": "Authentication required"}`; pages get a `401`
+HTML page. `/admin/api/auth/*`, `/admin/ui/*` and `/admin/static/*` stay open so
+the login page can load.
+
+The token goes in `Authorization: Bearer <token>` or `X-Octopus-Admin-Token: <token>`:
+
+```bash
+curl -H "X-Octopus-Admin-Token: $OCTOPUS_ADMIN_API_TOKEN" http://localhost:8080/admin/api/system/info
+```
+
+Through the Kubernetes API service proxy you must use `X-Octopus-Admin-Token`,
+because the kube-apiserver strips `Authorization` after authenticating you. A
+proxy that adds the header to every request gets through both the page and the
+API gates.
+
+Add `admin.require_auth: true` and the gateway refuses to start when no
+credential is configured. The variables are listed in
+[Configuration → Admin](/docs/configuration/admin).
+
+</div>
 
 <div title="Auth provider">
 
@@ -106,14 +140,13 @@ admin:
 </Tabs>
 
 <Callout type="warn">
-  With no `auth_provider` configured, the admin dashboard and its JSON API are
-  reachable by anyone who can reach the gateway port. Always set an
-  `auth_provider` (and lock the port down at the network layer) in any non-local
-  deployment.
+  With no built-in credentials and no `auth_provider`, the admin dashboard and
+  its JSON API are reachable by anyone who can reach the gateway port. Always set
+  one (and lock the port down at the network layer) in any non-local deployment.
 </Callout>
 
 ## Related
 
-- [Admin API](/docs/observability/admin-api) — the full JSON REST reference.
-- [Configuration → Admin](/docs/configuration/admin) — the `admin` block schema.
-- [Security](/docs/security) — auth providers you can reference from `auth_provider`.
+- [Admin API](/docs/observability/admin-api): the full JSON REST reference.
+- [Configuration → Admin](/docs/configuration/admin): the `admin` block schema and credential variables.
+- [Security](/docs/security): auth providers you can reference from `auth_provider`.

@@ -162,6 +162,9 @@ pub struct Server {
     /// Shared virtual gateway index from the operator, handed to the request
     /// handler so it can resolve a request's gateway by host. `None` without k8s.
     gateway_index: Option<GatewayIndexHandle>,
+    /// Built-in admin auth (`OCTOPUS_ADMIN_PASSWORD` / `OCTOPUS_ADMIN_API_TOKEN`),
+    /// read once at build time. `None` = the admin dashboard stays open.
+    admin_session_auth: Option<Arc<octopus_admin::auth::AdminAuth>>,
 }
 
 impl std::fmt::Debug for Server {
@@ -557,6 +560,11 @@ impl Server {
             );
         }
 
+        // Built-in admin session auth (password login and/or API token).
+        if let Some(ref auth) = self.admin_session_auth {
+            handler.set_admin_session_auth(Arc::clone(auth));
+        }
+
         // Anti host-spoofing (Host == TLS SNI), gated by config.
         handler.set_enforce_sni_check(self.config.gateway.enforce_sni_check);
 
@@ -904,6 +912,21 @@ impl ServerBuilder {
             .config
             .ok_or_else(|| Error::Config("config is required".to_string()))?;
 
+        // Built-in admin auth from the environment, checked against
+        // `admin.require_auth` before anything else starts.
+        let admin_session_auth = octopus_admin::auth::AdminAuth::from_env().map(Arc::new);
+        ensure_admin_auth(&config.admin, admin_session_auth.is_some())?;
+        match admin_session_auth {
+            Some(ref auth) => tracing::info!(
+                "Admin authentication enabled: {}",
+                auth.mechanisms().join(", ")
+            ),
+            None if config.admin.auth_provider.is_none() => tracing::warn!(
+                "Admin authentication is disabled: set OCTOPUS_ADMIN_PASSWORD or OCTOPUS_ADMIN_API_TOKEN to require it"
+            ),
+            None => {}
+        }
+
         // Create worker pool (only if not in test mode)
         let worker_pool = Arc::new(WorkerPool::new(self.worker_config)?);
 
@@ -1062,6 +1085,7 @@ impl ServerBuilder {
             lifecycle,
             operator_tls,
             gateway_index,
+            admin_session_auth,
         })
     }
 
@@ -1404,6 +1428,23 @@ impl ServerBuilder {
     }
 }
 
+/// Fail fast when `admin.require_auth` is set but nothing would protect the
+/// admin surface: neither built-in session auth (`session_auth`) nor an
+/// `admin.auth_provider`.
+pub(crate) fn ensure_admin_auth(
+    admin: &octopus_config::types::AdminConfig,
+    session_auth: bool,
+) -> Result<()> {
+    if admin.require_auth && !session_auth && admin.auth_provider.is_none() {
+        return Err(Error::Config(
+            "admin.require_auth is true but no admin credentials are configured: \
+             set OCTOPUS_ADMIN_PASSWORD or OCTOPUS_ADMIN_API_TOKEN, or admin.auth_provider"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
 impl Default for ServerBuilder {
     fn default() -> Self {
         Self::new()
@@ -1455,6 +1496,34 @@ mod tests {
     async fn test_server_builder_no_config() {
         let result = ServerBuilder::new().build().await;
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn require_auth_without_credentials_fails() {
+        use octopus_config::types::AdminConfig;
+
+        let required = AdminConfig {
+            require_auth: true,
+            ..Default::default()
+        };
+        match ensure_admin_auth(&required, false) {
+            Err(Error::Config(msg)) => assert_eq!(
+                msg,
+                "admin.require_auth is true but no admin credentials are configured: \
+                 set OCTOPUS_ADMIN_PASSWORD or OCTOPUS_ADMIN_API_TOKEN, or admin.auth_provider"
+            ),
+            other => panic!("expected a config error, got {other:?}"),
+        }
+        assert!(ensure_admin_auth(&required, true).is_ok());
+
+        let with_provider = AdminConfig {
+            require_auth: true,
+            auth_provider: Some("x".to_string()),
+            ..Default::default()
+        };
+        assert!(ensure_admin_auth(&with_provider, false).is_ok());
+
+        assert!(ensure_admin_auth(&AdminConfig::default(), false).is_ok());
     }
 
     /// With the operator on, static routes reach the router only through

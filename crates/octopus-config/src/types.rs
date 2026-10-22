@@ -1567,6 +1567,10 @@ pub struct AdminConfig {
     pub auth_provider: Option<String>,
     /// IP allowlist for admin access (empty = all allowed)
     pub allowed_ips: Vec<String>,
+    /// Refuse to start unless admin credentials are configured: the
+    /// `OCTOPUS_ADMIN_PASSWORD` or `OCTOPUS_ADMIN_API_TOKEN` environment
+    /// variable, or `auth_provider`. Default `false`.
+    pub require_auth: bool,
 }
 
 // Auth config defaults

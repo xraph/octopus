@@ -359,6 +359,13 @@ impl RequestHandler {
         self.admin_auth_provider = admin_provider;
     }
 
+    /// Enforce the built-in admin session auth (`OCTOPUS_ADMIN_PASSWORD` and/or
+    /// `OCTOPUS_ADMIN_API_TOKEN`) on the admin API and server-rendered pages.
+    /// Lives in the admin handler, so a clone of this handler carries it.
+    pub fn set_admin_session_auth(&mut self, auth: Arc<octopus_admin::auth::AdminAuth>) {
+        self.admin_handler = self.admin_handler.clone().with_admin_auth(auth);
+    }
+
     /// Set the admin IP allowlist (empty = all allowed). Entries are parsed as
     /// IP / CIDR / range patterns; invalid entries are skipped with a warning.
     /// Enforced independently of admin auth.
@@ -1928,6 +1935,40 @@ mod tests {
     async fn test_handler_creation() {
         let handler = create_test_handler();
         assert_eq!(handler.request_count.load(Ordering::Relaxed), 0);
+    }
+
+    /// `octopus serve` enforces the admin session auth on the gateway listener,
+    /// and a cloned handler (as a second listener gets) carries it too.
+    #[tokio::test]
+    async fn gateway_admin_api_enforces_session_auth() {
+        let mut handler = create_test_handler();
+        handler.set_admin_session_auth(Arc::new(octopus_admin::auth::AdminAuth::api_token_only(
+            "tok",
+            b"session-secret".to_vec(),
+        )));
+
+        let get = |token: Option<&str>| {
+            let mut req = Request::builder()
+                .method(http::Method::GET)
+                .uri("/admin/api/routes");
+            if let Some(token) = token {
+                req = req.header(octopus_admin::auth::ADMIN_TOKEN_HEADER, token);
+            }
+            req.body(Full::new(Bytes::new())).unwrap()
+        };
+
+        let resp = handler.handle(get(None)).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let resp = handler.handle(get(Some("nope"))).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let resp = handler.handle(get(Some("tok"))).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let cloned = handler.clone();
+        let resp = cloned.handle(get(None)).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let resp = cloned.handle(get(Some("tok"))).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 
     /// The QUIC listener dispatches through the `H3Handler` trait. Wiring it

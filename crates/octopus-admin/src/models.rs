@@ -522,7 +522,8 @@ pub struct MeResponse {
     pub authenticated: bool,
     /// Whether the dashboard requires authentication at all.
     pub auth_required: bool,
-    /// Authenticated username.
+    /// Authenticated username, or `api-token` for a caller using the admin
+    /// API token.
     pub username: Option<String>,
     /// Role (currently always `admin`).
     pub role: Option<String>,

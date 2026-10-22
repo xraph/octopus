@@ -1,14 +1,15 @@
 ---
 title: Admin
-description: The admin section — protecting the admin dashboard with an auth provider and an IP allowlist.
+description: The admin section. Protect the admin dashboard with built-in credentials, an auth provider and an IP allowlist, and make startup fail when none is set.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
 # Admin
 
-The `admin` section controls access to the built-in admin dashboard. The block is optional; by
-default the dashboard has no auth provider and an empty IP allowlist (all IPs permitted).
+The `admin` section controls access to the built-in admin dashboard. The block is optional. By
+default the dashboard has no auth provider, an empty IP allowlist (all IPs permitted) and no
+startup check.
 
 ```yaml
 admin:
@@ -16,22 +17,72 @@ admin:
   allowed_ips:
     - 10.0.0.0/8
     - 192.168.1.10
+  require_auth: true
 ```
 
 ## `admin`
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `auth_provider` | string | none | Name of an [auth provider](/docs/configuration/auth) used to protect the dashboard. When unset, the dashboard requires no authentication. |
+| `auth_provider` | string | none | Name of an [auth provider](/docs/configuration/auth) used to protect the dashboard. When unset, only the built-in credentials below protect it. |
 | `allowed_ips` | array of string | `[]` | IP allowlist for admin access. Empty means all IPs are allowed. |
+| `require_auth` | bool | `false` | Refuse to start unless admin credentials exist: `OCTOPUS_ADMIN_PASSWORD`, `OCTOPUS_ADMIN_API_TOKEN` or `auth_provider`. |
+
+## Built-in credentials
+
+You don't need an auth provider to lock the dashboard down. `octopus serve` reads these
+environment variables at startup:
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `OCTOPUS_ADMIN_PASSWORD` | none | Turns on password login (`POST /admin/api/auth/login`), which sets a session cookie. |
+| `OCTOPUS_ADMIN_API_TOKEN` | none | Turns on a static API token for machine clients. |
+| `OCTOPUS_ADMIN_USERNAME` | `admin` | Username for password login. |
+| `OCTOPUS_ADMIN_SESSION_SECRET` | derived | Key that signs session tokens. Derived from the password when unset, else from the API token. |
+| `OCTOPUS_ADMIN_SESSION_TTL_SECS` | `28800` | Session lifetime in seconds. |
+
+Set either secret (or both) and the gateway enforces it on `/admin/api/*`, `/admin/ws` and the
+server-rendered pages (`/admin`, `/admin/routes`, `/admin/health`, `/admin/plugins`,
+`/admin/analytics`, `/admin/logs`, `/admin/config` and `/admin/octopus-ui*`). The startup log says
+which mechanisms are on, for example `Admin authentication enabled: password login, API token`.
+Secrets are compared by SHA-256 digest and never logged.
+
+You send the API token in either of two forms:
+
+```bash
+curl -H "Authorization: Bearer $OCTOPUS_ADMIN_API_TOKEN" http://localhost:8080/admin/api/routes
+curl -H "X-Octopus-Admin-Token: $OCTOPUS_ADMIN_API_TOKEN" http://localhost:8080/admin/api/routes
+```
+
+<Callout type="info">
+  Going through the Kubernetes API service proxy
+  (`/api/v1/namespaces/<ns>/services/<svc>:<port>/proxy/...`)? Use `X-Octopus-Admin-Token`. The
+  kube-apiserver strips `Authorization` after it authenticates you, so a bearer token never
+  reaches the gateway.
+</Callout>
+
+Without credentials, the API answers `401` with `{"error": "Authentication required"}` and the
+pages answer `401` with a short HTML page. `/admin/api/auth/*`, `/admin/ui/*` and
+`/admin/static/*` stay open so the login page can load. When only the API token is set, password
+login is off and `POST /admin/api/auth/login` answers `401` with
+`{"success": false, "message": "Password login is disabled"}`. `GET /admin/api/auth/me` reports
+`"username": "api-token"` for a caller using the token.
 
 <Callout type="warn">
-  With no `auth_provider` **and** an empty `allowed_ips`, the admin dashboard is reachable without
-  authentication. Both are enforced: `allowed_ips` matches the client address against each IP / CIDR
-  / range pattern and returns `403` on a miss, and `auth_provider` requires authentication (static
-  assets bypass the auth check). Set at least one in any non-local deployment. See
-  [Admin API](/docs/observability/admin-api).
+  With no credentials, no `auth_provider` **and** an empty `allowed_ips`, the admin dashboard is
+  reachable without authentication. Every control you set is enforced: `allowed_ips` matches the
+  client address against each IP / CIDR / range pattern and returns `403` on a miss,
+  `auth_provider` requires authentication (static assets bypass that check), and the built-in
+  credentials gate the API and pages as described above. Set at least one in any non-local
+  deployment, and set `require_auth: true` so a missing secret stops the gateway from starting
+  instead of leaving the dashboard open. See [Admin API](/docs/observability/admin-api).
 </Callout>
+
+With `require_auth: true` and nothing configured, `octopus serve` exits with:
+
+```text
+admin.require_auth is true but no admin credentials are configured: set OCTOPUS_ADMIN_PASSWORD or OCTOPUS_ADMIN_API_TOKEN, or admin.auth_provider
+```
 
 The dashboard is served under the gateway's internal route prefix (see
 `gateway.internal_route_prefix` in [Gateway](/docs/configuration/gateway)).
