@@ -820,14 +820,21 @@ pub struct RouteConfig {
 }
 
 impl RouteConfig {
-    /// The methods this route answers: `methods`, or every method in
-    /// [`ALL_METHODS`] when `methods` is empty.
+    /// The methods this route answers: `methods` uppercased and deduplicated
+    /// (first occurrence wins the order), or every method in [`ALL_METHODS`]
+    /// when `methods` is empty.
     pub fn effective_methods(&self) -> Vec<String> {
         if self.methods.is_empty() {
-            ALL_METHODS.iter().map(|m| (*m).to_string()).collect()
-        } else {
-            self.methods.clone()
+            return ALL_METHODS.iter().map(|m| (*m).to_string()).collect();
         }
+        let mut methods: Vec<String> = Vec::with_capacity(self.methods.len());
+        for method in &self.methods {
+            let method = method.to_ascii_uppercase();
+            if !methods.contains(&method) {
+                methods.push(method);
+            }
+        }
+        methods
     }
 
     /// Parse `hosts` into deduplicated host matchers, in declaration order.
@@ -1968,6 +1975,18 @@ http3:
             absent.effective_methods(),
             ALL_METHODS.map(String::from).to_vec()
         );
+    }
+
+    #[test]
+    fn effective_methods_are_uppercased_and_deduplicated() {
+        let r = route_from_yaml("path: /x\nmethods: [GET, get, post, GET, Post]\nupstream: web\n");
+        assert_eq!(r.effective_methods(), vec!["GET", "POST"]);
+        // The duplicates would otherwise collide in the router.
+        let router = octopus_router::Router::new();
+        for route in r.to_routes(RouteOrigin::Config).unwrap() {
+            router.add_route(route).unwrap();
+        }
+        assert_eq!(router.total_route_count(), 2);
     }
 
     #[test]

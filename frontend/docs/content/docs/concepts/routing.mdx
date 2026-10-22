@@ -13,7 +13,7 @@ Learn how Octopus routes incoming requests to upstream services.
 
 Octopus uses a trie-based router for efficient path matching. Routes are defined in configuration and can be dynamically updated through FARP, the Kubernetes operator, or the admin API.
 
-<Callout type="warn" title="This page is conceptual — see Routes for the real schema">
+<Callout type="warn" title="This page is conceptual: see Routes for the real schema">
   This page explains routing ideas (path matching, parameters, priority, prefix
   rewriting). Some examples below show fields and routing modes that are **not**
   part of the current configuration schema (for example `match_type`,

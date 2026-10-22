@@ -9,6 +9,7 @@
 
 use crate::types::{Config, GatewayConfig, PluginConfig, RouteConfig, UpstreamConfig};
 use octopus_core::Result;
+use octopus_router::HostMatch;
 use std::collections::HashMap;
 
 /// Merge multiple configurations together
@@ -108,14 +109,27 @@ fn merge_upstreams(
 }
 
 /// The identity two layers' routes are matched by when merging: the `id`
-/// when set, otherwise the path plus the sorted, lowercased hosts. The same
+/// when set, otherwise the path plus the sorted, deduplicated hosts. Hosts are
+/// normalized the way the router sees them (so `API.Acme.Dev.` and
+/// `api.acme.dev` are one host); a host that does not parse falls back to its
+/// trimmed, lowercased text and is left for validation to report. The same
 /// path on different hosts is two routes, not an override.
 fn route_merge_key(route: &RouteConfig) -> String {
     if let Some(id) = &route.id {
         return id.clone();
     }
-    let mut hosts: Vec<String> = route.hosts.iter().map(|h| h.to_ascii_lowercase()).collect();
+    let mut hosts: Vec<String> = route
+        .hosts
+        .iter()
+        .map(|h| {
+            HostMatch::parse_pattern(h)
+                .ok()
+                .and_then(|m| m.pattern())
+                .unwrap_or_else(|| h.trim().to_ascii_lowercase())
+        })
+        .collect();
     hosts.sort();
+    hosts.dedup();
     format!("{}|{}", route.path, hosts.join(","))
 }
 
@@ -282,6 +296,19 @@ mod tests {
     }
 
     #[test]
+    fn merge_overrides_hosts_that_differ_only_by_trailing_dot_case_or_repeats() {
+        let base = vec![route("{path: /x, upstream: a, hosts: [api.acme.dev]}")];
+        let overlay = vec![route(
+            "{path: /x, upstream: b, hosts: ['API.Acme.Dev.', ' api.acme.dev ']}",
+        )];
+
+        let merged = merge_routes(base, overlay);
+
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].upstream, "b");
+    }
+
+    #[test]
     fn merge_matches_routes_by_id_when_set() {
         let base = vec![route("{id: web, path: /old, upstream: a}")];
         let overlay = vec![route("{id: web, path: /new, upstream: b}")];
@@ -301,6 +328,17 @@ mod tests {
         assert_eq!(
             route_merge_key(&route("{path: /x, upstream: a, hosts: [B.dev, a.dev]}")),
             "/x|a.dev,b.dev"
+        );
+        assert_eq!(
+            route_merge_key(&route(
+                "{path: /x, upstream: a, hosts: ['*.A.dev.', a.dev, a.dev]}"
+            )),
+            "/x|*.a.dev,a.dev"
+        );
+        // An unparseable host still yields a key; validation reports it later.
+        assert_eq!(
+            route_merge_key(&route("{path: /x, upstream: a, hosts: [' API.*.Dev ']}")),
+            "/x|api.*.dev"
         );
         assert_eq!(route_merge_key(&route("{path: /x, upstream: a}")), "/x|");
     }

@@ -1277,29 +1277,45 @@ impl ServerBuilder {
 
         let mut routes = Vec::new();
         for rc in &config.routes {
-            for method_str in &rc.methods {
+            // Same expansion as `RouteConfig::to_routes`: every effective
+            // method on every declared host (empty `hosts` gives one `Any`).
+            let hosts = match rc.host_matches() {
+                Ok(hosts) => hosts,
+                Err(e) => {
+                    tracing::error!(path = %rc.path, error = %e, "Invalid route hosts, skipping");
+                    continue;
+                }
+            };
+            for method_str in rc.effective_methods() {
                 let Ok(method) = method_str.parse::<http::Method>() else {
                     continue;
                 };
-                let mut r =
-                    IntermediateRoute::new(method, &rc.path, &rc.upstream, RouteSource::Static);
-                r.priority = rc.priority;
-                r.strip_prefix = rc.strip_prefix.clone();
-                r.add_prefix = rc.add_prefix.clone();
-                r.auth_provider = rc.auth_provider.clone();
-                r.skip_auth = rc.skip_auth;
-                r.require_roles = rc.require_roles.clone();
-                r.require_scopes = rc.require_scopes.clone();
-                r.authz_rule = rc.authz_rule.clone();
-                r.timeout = rc.timeout;
-                r.proxy = rc.proxy_spec();
-                if let Some(rl) = &rc.rate_limit {
-                    r.rate_limit = Some(RateLimit {
-                        requests: rl.requests_per_window,
-                        window: rl.window_size,
-                    });
+                for host in &hosts {
+                    let mut r = IntermediateRoute::new(
+                        method.clone(),
+                        &rc.path,
+                        &rc.upstream,
+                        RouteSource::Static,
+                    )
+                    .with_host(host.clone());
+                    r.priority = rc.priority;
+                    r.strip_prefix = rc.strip_prefix.clone();
+                    r.add_prefix = rc.add_prefix.clone();
+                    r.auth_provider = rc.auth_provider.clone();
+                    r.skip_auth = rc.skip_auth;
+                    r.require_roles = rc.require_roles.clone();
+                    r.require_scopes = rc.require_scopes.clone();
+                    r.authz_rule = rc.authz_rule.clone();
+                    r.timeout = rc.timeout;
+                    r.proxy = rc.proxy_spec();
+                    if let Some(rl) = &rc.rate_limit {
+                        r.rate_limit = Some(RateLimit {
+                            requests: rl.requests_per_window,
+                            window: rl.window_size,
+                        });
+                    }
+                    routes.push(r);
                 }
-                routes.push(r);
             }
         }
 
@@ -1439,5 +1455,56 @@ mod tests {
     async fn test_server_builder_no_config() {
         let result = ServerBuilder::new().build().await;
         assert!(result.is_err());
+    }
+
+    /// With the operator on, static routes reach the router only through
+    /// `config_to_ir`, so it must expand `hosts` and empty `methods` exactly
+    /// like `RouteConfig::to_routes` does.
+    #[cfg(feature = "kubernetes")]
+    #[test]
+    fn config_to_ir_expands_hosts_and_empty_methods() {
+        use octopus_router::HostMatch;
+
+        let yaml = r#"
+gateway:
+  listen: "127.0.0.1:8080"
+upstreams:
+  - name: web
+    instances: [{id: w1, host: 127.0.0.1, port: 9000}]
+routes:
+  - path: /api/*
+    methods: [GET]
+    hosts: [api.acme.dev, "*.acme.dev", API.Acme.Dev.]
+    upstream: web
+  - path: /all
+    methods: []
+    upstream: web
+"#;
+        let config = octopus_config::load_str(yaml, octopus_config::ConfigFormat::Yaml).unwrap();
+        let (routes, _) = ServerBuilder::config_to_ir(&config);
+
+        let hosted: Vec<&HostMatch> = routes
+            .iter()
+            .filter(|r| r.path == "/api/*")
+            .map(|r| &r.host)
+            .collect();
+        assert_eq!(
+            hosted,
+            vec![
+                &HostMatch::Exact("api.acme.dev".to_string()),
+                &HostMatch::Wildcard(".acme.dev".to_string()),
+            ],
+            "one IR route per distinct host, never a catch-all"
+        );
+
+        let all: Vec<String> = routes
+            .iter()
+            .filter(|r| r.path == "/all")
+            .map(|r| {
+                assert_eq!(r.host, HostMatch::Any, "no hosts means any host");
+                r.method.to_string()
+            })
+            .collect();
+        assert_eq!(all, octopus_config::ALL_METHODS.map(String::from).to_vec());
     }
 }

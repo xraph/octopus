@@ -36,10 +36,10 @@ routes:
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `id` | string | none | Stable name for the route. Must be unique across `routes`. See [Route ids](#route-ids). |
-| `path` | string | — | Path pattern to match. **Required** (must start with `/`). |
-| `methods` | array of string | `[]` | HTTP methods to match. Empty means all methods: `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE` and `OPTIONS`. |
+| `path` | string | - | Path pattern to match. **Required** (must start with `/`). |
+| `methods` | array of string | `[]` | HTTP methods to match, case-insensitive (`get` is `GET`, and repeats are ignored). Empty means all methods: `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE` and `OPTIONS`. |
 | `hosts` | array of string | `[]` | Request hosts to match, exact (`api.example.com`) or wildcard (`*.example.com`). Empty means any host. See [Host matching](#host-matching). |
-| `upstream` | string | — | Target upstream name. **Required** (must exist in `upstreams`). |
+| `upstream` | string | - | Target upstream name. **Required** (must exist in `upstreams`). |
 | `priority` | integer | `0` | Higher priority routes are matched first. |
 | `strip_prefix` | string | none | Prefix removed from the path before proxying. |
 | `add_prefix` | string | none | Prefix prepended to the path before proxying. |
@@ -55,7 +55,7 @@ routes:
 
 <Callout type="info">
   Routes have no `retry` or `canary` fields. Authentication and authorization behavior set here is
-  evaluated by the auth middleware — see [Authentication & authorization](/docs/configuration/auth)
+  evaluated by the auth middleware. See [Authentication & authorization](/docs/configuration/auth)
   and the [Security](/docs/security) section for the request flow.
 </Callout>
 
@@ -123,7 +123,7 @@ with the same `path` and the same `hosts`.
 
 <Callout type="info">
   Per-route `rate_limit` and `cors` are **enforced**. `rate_limit` applies a fixed window per route
-  (keyed by the route's path), returning `429` with `Retry-After` when exceeded — note it currently
+  (keyed by the route's path), returning `429` with `Retry-After` when exceeded. It currently
   uses an in-process counter (per replica; a shared backend for cross-replica limits is planned).
   `cors` applies the matched route's override when a top-level [`cors`](/docs/configuration/auth)
   block is set (which adds the CORS middleware to the chain). See [Middleware](/docs/middleware).
@@ -140,8 +140,8 @@ rate_limit:
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `requests_per_window` | integer | — | Requests allowed per window. **Required.** |
-| `window_size` | duration | — | Window length. **Required.** |
+| `requests_per_window` | integer | - | Requests allowed per window. **Required.** |
+| `window_size` | duration | - | Window length. **Required.** |
 
 <Callout type="warn">
   This is the real schema. Older example files use `rate_limit: { requests_per_second: ... }`,
