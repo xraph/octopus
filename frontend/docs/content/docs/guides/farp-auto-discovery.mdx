@@ -162,7 +162,7 @@ Kubernetes, `instance.metadata` on push registration, and the metadata of the ot
 | `farp.health.path` | `/health` | Health check path. |
 | `farp.metrics.path` | _(unset)_ | Metrics path. |
 | `farp.capabilities` | `rest` | Protocols the service speaks, written as `rest websocket` or `[rest websocket]`. |
-| `farp.port` | _(unset)_ | Kubernetes only. A number keeps that port, any other value keeps the port with that name, unset keeps every port. |
+| `farp.port` | _(unset)_ | Kubernetes only. A name keeps the port with that name (recommended), a number keeps the Service port or container port with that number, unset keeps every port. |
 
 The older unprefixed keys (`openapi`, `asyncapi`, `graphql`, `grpc_reflection`, `health`,
 `metrics`) still work when the `farp.` key is absent.
@@ -178,8 +178,10 @@ Service.
 A service that pushes to `POST /farp/register` can leave out the manifest. Octopus then tries to
 fetch it from the service (`farp.manifest` in `instance.metadata`, or `/_farp/manifest` on the
 instance address). If that fails and `instance.metadata` contains `farp.openapi.path`, Octopus
-builds the manifest from the metadata, using the keys above and `http://{address}:{port}` as the
-base URL. A Docker service gets the same result as a Kubernetes one by sending the same keys:
+builds the manifest from the metadata, using the keys above. The base URL is
+`http://{address}:{port}` when `port` is above zero and `address` has no `:`, and `http://{address}`
+otherwise (an address such as `10.0.0.7:3000` already carries its port). A Docker service gets the same result as a Kubernetes one by sending
+the same keys:
 
 ```json
 {

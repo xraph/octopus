@@ -2135,11 +2135,9 @@ mod tests {
         );
     }
 
-    // Paused time lets the client's retry backoff elapse instantly.
-    #[tokio::test(start_paused = true)]
-    async fn push_without_manifest_or_openapi_path_keeps_the_empty_manifest() {
-        let registry = Arc::new(SchemaRegistry::new());
-        let handler = FarpApiHandler::new(Arc::clone(&registry));
+    /// Push a registration with no manifest and metadata that has no
+    /// `farp.openapi.path`.
+    fn push_without_openapi_path() -> Request<Full<Bytes>> {
         let body = serde_json::json!({
             "instance": {
                 "id": "web-1",
@@ -2149,24 +2147,105 @@ mod tests {
                 "metadata": {"unrelated": "x"}
             }
         });
+        Request::builder()
+            .method(Method::POST)
+            .uri("/farp/register")
+            .body(Full::new(Bytes::from(body.to_string())))
+            .unwrap()
+    }
+
+    // With the `validation` feature the empty manifest (no checksum) is
+    // rejected, as it was before the metadata fallback existed.
+    #[cfg(feature = "validation")]
+    #[tokio::test(start_paused = true)]
+    async fn push_without_manifest_or_openapi_path_is_rejected_with_validation() {
+        let registry = Arc::new(SchemaRegistry::new());
+        let handler = FarpApiHandler::new(Arc::clone(&registry));
+        assert!(handler.handle(push_without_openapi_path()).await.is_err());
+        assert!(registry.get_service("web").is_err());
+    }
+
+    // Without it the empty manifest registers and no schema is invented from
+    // metadata that has no OpenAPI path.
+    #[cfg(not(feature = "validation"))]
+    #[tokio::test(start_paused = true)]
+    async fn push_without_manifest_or_openapi_path_registers_the_empty_manifest() {
+        let registry = Arc::new(SchemaRegistry::new());
+        let handler = FarpApiHandler::new(Arc::clone(&registry));
+        let res = handler.handle(push_without_openapi_path()).await.unwrap();
+        assert_eq!(res.status(), StatusCode::CREATED);
+        assert!(registry
+            .get_service("web")
+            .unwrap()
+            .manifest
+            .schemas
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn push_fallback_serves_routes_from_the_metadata_openapi_path() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/_farp/manifest"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/openapi.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "openapi": "3.0.0",
+                "info": {"title": "Web", "version": "1.0.0"},
+                "paths": {"/items": {"get": {"summary": "List items"}}}
+            })))
+            .mount(&server)
+            .await;
+
+        let router = Arc::new(Router::new());
+        let registry = Arc::new(SchemaRegistry::new());
+        let mut handler =
+            FarpApiHandler::new(Arc::clone(&registry)).with_router(Arc::clone(&router));
+        // Retry the 404 manifest fetch without the default one second backoff.
+        handler.farp_client = Arc::new(FarpClient::new(crate::client::FarpClientConfig {
+            retry_backoff: std::time::Duration::from_millis(1),
+            ..Default::default()
+        }));
+
+        let addr = server.address();
+        let body = serde_json::json!({
+            "instance": {
+                "id": "Web-1",
+                "service_name": "Web",
+                "address": addr.ip().to_string(),
+                "port": addr.port(),
+                "metadata": {"farp.openapi.path": "/openapi.json"}
+            },
+            "manifest": null
+        });
         let req = Request::builder()
             .method(Method::POST)
             .uri("/farp/register")
             .body(Full::new(Bytes::from(body.to_string())))
             .unwrap();
-        // The empty manifest has no checksum, so a build with strict manifest
-        // validation rejects it, as it did before this fallback existed. Either
-        // way no schema is invented from metadata that has no OpenAPI path.
-        if let Ok(res) = handler.handle(req).await {
-            assert_eq!(res.status(), StatusCode::CREATED);
-            assert!(registry
-                .get_service("web")
-                .unwrap()
-                .manifest
-                .schemas
-                .is_empty());
-        } else {
-            assert!(registry.get_service("web").is_err());
-        }
+        assert_eq!(
+            handler.handle(req).await.unwrap().status(),
+            StatusCode::CREATED
+        );
+
+        let registered = registry.get_service("Web").unwrap();
+        assert_eq!(
+            registered.manifest.schemas[0].location.url,
+            Some(format!("http://{addr}/openapi.json"))
+        );
+        // The OpenAPI document was fetched and turned into a FARP route under
+        // the lowercase service prefix.
+        let m = router
+            .match_route("any.host", &Method::GET, "/web/items")
+            .expect("FARP route for /web/items");
+        assert_eq!(m.route.upstream_name, "Web");
+        assert_eq!(m.route.origin, octopus_router::RouteOrigin::Farp);
+        assert_eq!(m.route.id.as_deref(), Some("farp:Web"));
     }
 }

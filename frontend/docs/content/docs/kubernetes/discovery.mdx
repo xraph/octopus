@@ -94,9 +94,11 @@ spec:
     app: web
   ports:
     - name: http
-      port: 3000
+      port: 80
+      targetPort: 3000
     - name: metrics
-      port: 9100
+      port: 9090
+      targetPort: 9100
 ```
 
 `label_selector` is passed to the API server as written, so several terms can be joined with
@@ -111,11 +113,19 @@ or an annotation) to narrow that down:
 | `farp.port` | Instances kept |
 |-------------|----------------|
 | _(unset)_ | Every port. This is the behavior of 0.4.1. |
-| A number, such as `9100` | Only the port with that number. |
-| Anything else, such as `http` | Only the port with that name. |
+| A port name, such as `http` | Only the port with that name. **Recommended.** |
+| A number, such as `80` or `3000` | The Service port with that number, or the container port with that number. |
 
-In the example above, `farp.port: http` keeps `3000` and drops the metrics port, so Octopus
-fetches the OpenAPI document from the right place. A value that matches no port keeps nothing.
+Prefer the port name. EndpointSlices list the container (target) port numbers, and only the names
+come from the Service, so a name means the same thing on both sides. A number is read two ways: as a
+Service `port` (resolved through the Service to its name, or to its numeric `targetPort` when the
+Service port has no name), or as the container port itself. In the example above, `http`, `80` and
+`3000` all keep the one instance on container port `3000` and drop the metrics port, so Octopus
+fetches the OpenAPI document from the right place.
+
+The instance port is always the container port (`3000` here), because that is where the Pod
+listens. A value that matches no port keeps no instances, and Octopus logs a warning that names
+the Service and the selector.
 
 The full list of `farp.*` keys is in the
 [auto-discovery guide](/docs/guides/farp-auto-discovery#farp-metadata-keys).
