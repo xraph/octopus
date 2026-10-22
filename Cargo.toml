@@ -62,10 +62,10 @@ tower-http = { version = "0.5", features = ["full"] }
 axum = { version = "0.7", features = ["ws", "macros"] }
 
 # gRPC
-tonic = { version = "0.11", features = ["gzip"] }
-tonic-reflection = "0.11"
-prost = "0.12"
-prost-types = "0.12"
+tonic = { version = "0.14", features = ["gzip"] }
+tonic-reflection = "0.14"
+prost = "0.14"
+prost-types = "0.14"
 
 # WebSocket
 tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
@@ -185,7 +185,7 @@ wiremock = "0.6"
 tempfile = "3.8"
 
 # Build dependencies
-tonic-build = "0.11"
+tonic-build = "0.14"
 
 [profile.release]
 opt-level = 3
