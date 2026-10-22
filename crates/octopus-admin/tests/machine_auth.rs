@@ -39,6 +39,26 @@ impl Reply {
 }
 
 async fn send(method: Method, uri: &str, headers: &[(&str, &str)], body: Option<Value>) -> Reply {
+    send_to(app(), method, uri, headers, body).await
+}
+
+/// A dashboard router with password login (`admin` / `pw`) and the API token.
+fn password_app() -> axum::Router {
+    let auth =
+        AdminAuth::new("admin", "pw", b"session-secret".to_vec(), 3600).with_api_token(TOKEN);
+    let state = AppState::new()
+        .with_router(Arc::new(Router::new()))
+        .with_admin_auth(Arc::new(auth));
+    DashboardRouter::build(Arc::new(state))
+}
+
+async fn send_to(
+    app: axum::Router,
+    method: Method,
+    uri: &str,
+    headers: &[(&str, &str)],
+    body: Option<Value>,
+) -> Reply {
     let mut request = Request::builder().method(method).uri(uri);
     for (name, value) in headers {
         request = request.header(*name, *value);
@@ -50,7 +70,7 @@ async fn send(method: Method, uri: &str, headers: &[(&str, &str)], body: Option<
             .unwrap(),
         None => request.body(Body::empty()).unwrap(),
     };
-    let response = app().oneshot(request).await.unwrap();
+    let response = app.oneshot(request).await.unwrap();
     let status = response.status();
     let header_str = |name: header::HeaderName| {
         response
@@ -195,8 +215,9 @@ fn is_allowed(url: &str) -> bool {
         || !(url.starts_with('/') || url.starts_with("http:"))
 }
 
-#[tokio::test]
-async fn ssr_pages_only_reference_admin_paths() {
+/// Every URL-bearing attribute value and `fetch(...)`/`new WebSocket(...)`
+/// literal in `body`.
+fn referenced_urls(body: &str) -> Vec<String> {
     let attr_double = Regex::new(
         r#"(?i)[\s:@](?:href|src|action|hx-get|hx-post|hx-put|hx-delete|hx-patch)\s*=\s*"([^"]*)""#,
     )
@@ -206,7 +227,16 @@ async fn ssr_pages_only_reference_admin_paths() {
     )
     .unwrap();
     let call_literal = Regex::new(r#"(?:fetch|new\s+WebSocket)\(\s*(['"`])([^'"`]*)"#).unwrap();
+    attr_double
+        .captures_iter(body)
+        .chain(attr_single.captures_iter(body))
+        .map(|c| c[1].to_string())
+        .chain(call_literal.captures_iter(body).map(|c| c[2].to_string()))
+        .collect()
+}
 
+#[tokio::test]
+async fn ssr_pages_only_reference_admin_paths() {
     let mut violations = Vec::new();
     for page in SSR_PAGES {
         let reply = get(page, &[(ADMIN_TOKEN_HEADER, TOKEN)]).await;
@@ -219,28 +249,83 @@ async fn ssr_pages_only_reference_admin_paths() {
         }
         assert_eq!(reply.status, StatusCode::OK, "{page} should render");
 
-        let values = attr_double
-            .captures_iter(&reply.body)
-            .chain(attr_single.captures_iter(&reply.body))
-            .map(|c| c[1].to_string())
-            .chain(
-                call_literal
-                    .captures_iter(&reply.body)
-                    .map(|c| c[2].to_string()),
-            );
-        let mut scanned = 0;
+        let values = referenced_urls(&reply.body);
+        // Guard against a scan that silently matches nothing.
+        assert!(
+            !values.is_empty(),
+            "{page}: the scan found no URLs to check"
+        );
         for value in values {
-            scanned += 1;
             if !is_allowed(url_part(&value)) {
                 violations.push(format!("{page}: {value:?}"));
             }
         }
-        // Guard against a scan that silently matches nothing.
-        assert!(scanned > 0, "{page}: the scan found no URLs to check");
     }
     assert!(
         violations.is_empty(),
         "server-rendered pages reference non-/admin URLs:\n{}",
         violations.join("\n")
     );
+}
+
+#[tokio::test]
+async fn unauthorized_page_offers_a_login_form_when_password_login_is_on() {
+    for page in SSR_PAGES {
+        let reply = send_to(password_app(), Method::GET, page, &[], None).await;
+        assert_eq!(reply.status, StatusCode::UNAUTHORIZED, "{page}");
+        assert!(reply.content_type.starts_with("text/html"), "{page}");
+        let body = &reply.body;
+        assert!(body.contains("<form"), "{page}: no login form");
+        assert!(body.contains(r#"name="username""#), "{page}");
+        assert!(body.contains(r#"type="password""#), "{page}");
+        assert!(body.contains("/admin/api/auth/login"), "{page}");
+
+        // The 401 page follows the same rule as the pages it stands in for.
+        let values = referenced_urls(body);
+        assert!(
+            !values.is_empty(),
+            "{page}: the scan found no URLs to check"
+        );
+        let bad: Vec<_> = values.iter().filter(|v| !is_allowed(url_part(v))).collect();
+        assert!(bad.is_empty(), "{page}: 401 page references {bad:?}");
+    }
+}
+
+#[tokio::test]
+async fn token_only_setups_keep_the_plain_unauthorized_page() {
+    let reply = get("/admin", &[]).await;
+    assert_eq!(reply.status, StatusCode::UNAUTHORIZED);
+    assert!(!reply.body.contains("<form"), "{}", reply.body);
+    assert!(reply.body.contains("X-Octopus-Admin-Token"));
+}
+
+#[tokio::test]
+async fn the_login_form_endpoint_sets_a_cookie_that_opens_the_page() {
+    let login = Request::builder()
+        .method(Method::POST)
+        .uri("/admin/api/auth/login")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({"username": "admin", "password": "pw"}).to_string(),
+        ))
+        .unwrap();
+    let response = password_app().oneshot(login).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let cookie = response
+        .headers()
+        .get(header::SET_COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(';').next())
+        .expect("session cookie")
+        .to_string();
+
+    let page = send_to(
+        password_app(),
+        Method::GET,
+        "/admin",
+        &[("cookie", &cookie)],
+        None,
+    )
+    .await;
+    assert_eq!(page.status, StatusCode::OK);
 }

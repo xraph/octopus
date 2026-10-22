@@ -473,8 +473,81 @@ fn gate_for(path: &str) -> Option<Gate> {
     }
 }
 
-/// Body of the 401 a server-rendered page answers without credentials.
+/// Body of the 401 a server-rendered page answers without credentials when
+/// only the API token is configured.
 const PAGE_UNAUTHORIZED_HTML: &str = "<!DOCTYPE html>\n<html lang=\"en\">\n<head><meta charset=\"utf-8\"><title>Authentication required</title></head>\n<body>\n<h1>Authentication required</h1>\n<p>Sign in to the Octopus admin dashboard, or send the admin API token in the <code>X-Octopus-Admin-Token</code> header.</p>\n</body>\n</html>\n";
+
+/// Body of the 401 a server-rendered page answers without credentials when
+/// password login is on: a small sign-in form that posts JSON to
+/// `/admin/api/auth/login` and reloads the page once the session cookie is
+/// set. Every URL it uses starts with `/admin`, like the pages it stands in
+/// for, so a proxy that rewrites the `/admin` prefix keeps it working.
+const PAGE_LOGIN_HTML: &str = r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in to Octopus</title>
+<style>
+body{font-family:system-ui,sans-serif;background:#f5f5f7;color:#1d1d1f;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}
+form{background:#fff;padding:2rem;border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,.12);width:min(320px,90vw)}
+h1{font-size:1.25rem;margin:0 0 1rem}
+label{display:block;font-size:.875rem;margin:.75rem 0 .25rem}
+input{width:100%;box-sizing:border-box;padding:.5rem;border:1px solid #c7c7cc;border-radius:6px;font-size:1rem}
+button{margin-top:1.25rem;width:100%;padding:.6rem;border:0;border-radius:6px;background:#0a66c2;color:#fff;font-size:1rem;cursor:pointer}
+#login-error{color:#b00020;font-size:.875rem;min-height:1.2em;margin:.75rem 0 0}
+</style>
+</head>
+<body>
+<form id="login-form" novalidate>
+<h1>Sign in to Octopus</h1>
+<label for="login-username">Username</label>
+<input id="login-username" name="username" autocomplete="username" required>
+<label for="login-password">Password</label>
+<input id="login-password" name="password" type="password" autocomplete="current-password" required>
+<button type="submit">Sign in</button>
+<p id="login-error" role="alert"></p>
+</form>
+<script>
+document.getElementById('login-form').addEventListener('submit', async function (event) {
+  event.preventDefault();
+  var error = document.getElementById('login-error');
+  error.textContent = '';
+  try {
+    var response = await fetch('/admin/api/auth/login', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username: this.elements.username.value,
+        password: this.elements.password.value
+      })
+    });
+    var body = await response.json().catch(function () { return {}; });
+    if (response.ok && body.success) {
+      window.location.reload();
+      return;
+    }
+    error.textContent = body.message || 'Sign-in failed';
+  } catch (e) {
+    error.textContent = 'Could not reach the gateway';
+  }
+});
+</script>
+</body>
+</html>
+"#;
+
+/// The 401 a server-rendered page answers: the sign-in form when password
+/// login is on, the plain notice otherwise.
+fn page_unauthorized(auth: &AdminAuth) -> Response {
+    let body = if auth.password_login_enabled() {
+        PAGE_LOGIN_HTML
+    } else {
+        PAGE_UNAUTHORIZED_HTML
+    };
+    (StatusCode::UNAUTHORIZED, Html(body)).into_response()
+}
 
 /// Axum middleware enforcing admin credentials on protected admin endpoints.
 ///
@@ -482,7 +555,8 @@ const PAGE_UNAUTHORIZED_HTML: &str = "<!DOCTYPE html>\n<html lang=\"en\">\n<head
 /// gates `/admin/api/*` (except `/admin/api/auth/*`), `/admin/ws` and the
 /// server-rendered pages (`/admin`, `/admin/routes`, ..., `/admin/octopus-ui*`).
 /// The API answers `401` with a JSON body and pages answer `401` with an HTML
-/// body when [`AdminAuth::authenticate`] finds no credential. `/admin/ui/*`
+/// body (a sign-in form when password login is on) when
+/// [`AdminAuth::authenticate`] finds no credential. `/admin/ui/*`
 /// (the SPA, which hosts the login page) and `/admin/static/*` stay open;
 /// their data is gated at the API.
 pub async fn require_admin_session(
@@ -508,7 +582,7 @@ pub async fn require_admin_session(
             Json(serde_json::json!({ "error": "Authentication required" })),
         )
             .into_response(),
-        Gate::Page => (StatusCode::UNAUTHORIZED, Html(PAGE_UNAUTHORIZED_HTML)).into_response(),
+        Gate::Page => page_unauthorized(&auth),
     }
 }
 

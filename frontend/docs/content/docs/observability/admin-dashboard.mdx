@@ -10,8 +10,10 @@ import { Tabs } from 'fumadocs-ui/components/tabs';
 
 Octopus ships a built-in admin dashboard: a server-rendered web UI plus a JSON
 REST API for inspecting routes, health, metrics, plugins, configuration, and
-FARP services. It is served on the **gateway listen port**. There is no
-separate admin port or process.
+FARP services. By default it is served on the **gateway listen port**. Set
+[`admin.listen`](/docs/configuration/admin#private-admin-listener) to move it to
+a private listener (port 9090 in the image examples); the gateway port then stops
+serving `/admin*`.
 
 ## Where it lives
 
@@ -69,12 +71,18 @@ with the [`admin`](/docs/configuration/admin) config block, or both.
 
 <div title="Password or API token">
 
-Set `OCTOPUS_ADMIN_PASSWORD` for people (login page, session cookie) and
+Set `OCTOPUS_ADMIN_PASSWORD` for people (sign-in form, session cookie) and
 `OCTOPUS_ADMIN_API_TOKEN` for machine clients. Either one turns the gate on for
 `/admin/api/*`, `/admin/ws` and the server-rendered pages. Unauthenticated API
-calls get `401` with `{"error": "Authentication required"}`; pages get a `401`
-HTML page. `/admin/api/auth/*`, `/admin/ui/*` and `/admin/static/*` stay open so
-the login page can load.
+calls get `401` with `{"error": "Authentication required"}`.
+
+A page you open without a session answers `401` with HTML. With a password set,
+that page is a small sign-in form: it posts your username and password to
+`POST /admin/api/auth/login` and reloads once the session cookie is set, so you
+land on the page you asked for. This is how you sign in on the published image,
+which has no `/admin/ui` SPA. With only the API token set there is nothing to
+sign in with, so the page just says authentication is required.
+`/admin/api/auth/*`, `/admin/ui/*` and `/admin/static/*` stay open.
 
 The token goes in `Authorization: Bearer <token>` or `X-Octopus-Admin-Token: <token>`:
 

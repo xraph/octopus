@@ -10,9 +10,10 @@ import { Steps, Step } from 'fumadocs-ui/components/steps';
 
 Octopus ships a built-in [admin dashboard](/docs/observability/admin-dashboard):
 a web UI plus a JSON REST API for routes, health, metrics, plugins, config, and
-FARP services. It is served on the gateway's listen port and, out of the box,
-**requires no authentication**. Anyone who can reach the port can read your
-gateway's internals.
+FARP services. It is served on the gateway's listen port (or on the private
+`admin.listen` port when you set one) and, out of the box, **requires no
+authentication**. Anyone who can reach the port can read your gateway's
+internals.
 
 You have two ways to close it. The quick one is a password or API token in the
 environment, covered first. The other puts it behind one of your auth providers,
@@ -30,7 +31,7 @@ which the steps further down walk through.
 Set a secret and start the gateway:
 
 ```bash
-export OCTOPUS_ADMIN_PASSWORD=change-me          # people: login page and session cookie
+export OCTOPUS_ADMIN_PASSWORD=change-me          # people: sign-in form and session cookie
 export OCTOPUS_ADMIN_API_TOKEN=a-long-random-one  # machines: token on every request
 octopus serve -c gateway.yaml
 ```
@@ -48,6 +49,14 @@ curl -i http://localhost:8080/admin/api/routes
 # Either header form works
 curl -i -H "X-Octopus-Admin-Token: $OCTOPUS_ADMIN_API_TOKEN" http://localhost:8080/admin/api/routes
 ```
+
+Open `/admin` in a browser and, with a password set, the `401` page is a
+sign-in form. Enter `OCTOPUS_ADMIN_USERNAME` (default `admin`) and the password;
+the form posts them to `/admin/api/auth/login`, the gateway sets the session
+cookie, and the page reloads signed in. The published image serves only these
+server-rendered pages, not the `/admin/ui` SPA, so this form is the way in.
+With only `OCTOPUS_ADMIN_API_TOKEN` set the `401` page has no form, since
+there is no password to sign in with.
 
 If you reach the gateway through the Kubernetes API service proxy, use
 `X-Octopus-Admin-Token`. The kube-apiserver strips `Authorization` once it has
