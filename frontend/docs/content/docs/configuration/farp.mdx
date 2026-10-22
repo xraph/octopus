@@ -54,7 +54,8 @@ farp:
 Read the token from the environment rather than writing it into the file. A `${VAR}` that is not
 set fails the config load, so a missing secret stops the gateway instead of leaving registration
 open. The token is held as a SHA-256 digest, never serialized into config output, and never
-logged. An empty string counts as no token.
+logged. An empty token (after `${VAR}` interpolation) fails validation while FARP is enabled:
+remove the key to leave registration open, or give it a value.
 
 If FARP is enabled with no token, the gateway starts and logs a warning. See the
 [FARP registration API](/docs/api/farp#authentication) for the exact request and response shapes,

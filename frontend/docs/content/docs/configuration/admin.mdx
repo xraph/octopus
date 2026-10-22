@@ -86,6 +86,10 @@ With `require_auth: true` and nothing configured, `octopus serve` exits with:
 admin.require_auth is true but no admin credentials are configured: set OCTOPUS_ADMIN_PASSWORD or OCTOPUS_ADMIN_API_TOKEN, or admin.auth_provider
 ```
 
+With `require_auth: true`, an `auth_provider` must name an entry in
+[`auth_providers`](/docs/configuration/auth). A name that is not defined there fails validation
+instead of leaving the dashboard unprotected.
+
 ## Private admin listener
 
 By default everything shares `gateway.listen`: proxied traffic, the admin UI and API, FARP

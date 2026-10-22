@@ -109,11 +109,24 @@ Routes from this file (and routes added through the admin API) are declared rout
 a discovered route have the same path and the same host pattern, the declared route wins whatever
 their priorities are, and the discovered route stays hidden for as long as the declared one exists.
 
+With `kubernetes.enabled: true` this rule does not apply: each operator reconcile clears the router,
+the routes from this file come back with origin `kubernetes`, and admin API and FARP routes are gone.
+
 ## Route ids
 
 `id` gives a route a stable name. Every method and host copy of the route carries it, so tooling
 can find, replace or remove the whole route by that one name. Ids are optional; when two routes set
 the same `id`, validation fails with `duplicate route id`.
+
+Two more rules apply once you use ids:
+
+- `route-<digits>` (such as `route-3`) is reserved. The admin API lists a route without an id
+  under that positional name, so validation rejects it as a declared `id`.
+- Two routes with different ids cannot serve the same method, path and host. Paths that differ
+  only in parameter names (`/users/:id` and `/users/:uid`) or in a trailing slash count as the
+  same path, and an empty `methods` list covers every method. Validation names both routes, the
+  same pair the admin API answers with `409`. Two routes that both leave `id` out still load as
+  they did before ids existed.
 
 When several config files are [merged](/docs/configuration#loading-and-merging), a route with an
 `id` overrides the earlier route with the same `id`. A route without one overrides the earlier route

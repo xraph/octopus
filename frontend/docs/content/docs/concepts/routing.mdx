@@ -223,7 +223,9 @@ routes:
   does not match `/p` itself.
 
 A route in the config file (or one added through the admin API) shadows a route that FARP or the
-Kubernetes operator discovered on the same host and path, whatever their priorities. See
+Kubernetes operator discovered on the same host and path, whatever their priorities. With
+`kubernetes.enabled: true` the operator's reconcile clears the router and config routes come back
+with origin `kubernetes`, so this shadowing no longer applies. See
 [Host matching](/docs/configuration/routes#host-matching) for the full rules.
 
 ## Header-Based Routing
