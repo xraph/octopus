@@ -122,7 +122,7 @@ See [Health probes](/docs/observability/health-probes) and, on Kubernetes,
 ## Configuration hygiene
 
 - [ ] **Validate before rollout:** `octopus validate -c config.yaml`.
-- [ ] **Pin the image tag** (e.g. `ghcr.io/xraph/octopus:0.1.0`), not `:latest`.
+- [ ] **Pin the image tag** (e.g. `ghcr.io/xraph/octopus:0.5.0`). Releases never publish `:latest`.
 - [ ] **Mount config read-only** and roll Pods when it changes (the chart annotates Pods with a
   config checksum so updates trigger a rollout automatically).
 

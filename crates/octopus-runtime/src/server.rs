@@ -1479,9 +1479,6 @@ impl ServerBuilder {
     }
 }
 
-/// Fail fast when `admin.require_auth` is set but nothing would protect the
-/// admin surface: neither built-in session auth (`session_auth`) nor an
-/// `admin.auth_provider`.
 /// The FARP gateway binding `farp.gateway` describes: every effective
 /// hostname (none means host-agnostic routes) plus the gateway policy.
 fn farp_binding_from_config(
@@ -1497,6 +1494,9 @@ fn farp_binding_from_config(
         .with_timeout(g.default_timeout)
 }
 
+/// Fail fast when `admin.require_auth` is set but nothing would protect the
+/// admin surface: neither built-in session auth (`session_auth`) nor an
+/// `admin.auth_provider`.
 pub(crate) fn ensure_admin_auth(
     admin: &octopus_config::types::AdminConfig,
     session_auth: bool,
@@ -1519,6 +1519,10 @@ impl Default for ServerBuilder {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use octopus_config::{ConfigBuilder, GatewayConfig};
+    use std::time::Duration;
+
     #[test]
     fn legacy_star_hostname_binds_host_agnostic_routes_with_policy() {
         let config = octopus_config::load_from_str(
@@ -1545,10 +1549,6 @@ mod tests {
         assert_eq!(route.gateway_id.as_deref(), Some("g"));
         assert_eq!(route.auth_provider.as_deref(), Some("x"));
     }
-
-    use super::*;
-    use octopus_config::{ConfigBuilder, GatewayConfig};
-    use std::time::Duration;
 
     fn test_config() -> Config {
         use octopus_config::types::{CompressionConfig, ProbeConfig};
