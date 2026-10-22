@@ -1,6 +1,6 @@
 ---
 title: FARP & discovery
-description: The farp section — service discovery and auto-routing, with mDNS, DNS, Consul, and Kubernetes discovery backends.
+description: The farp section: service discovery and auto-routing, with mDNS, DNS, Consul, and Kubernetes discovery backends.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -35,6 +35,29 @@ farp:
 | `watch_interval` | duration | `5s` | Interval for discovering service changes. |
 | `schema_cache_ttl` | duration | `5m` | Schema cache time-to-live. |
 | `discovery` | object | none | Discovery backend configuration. See [below](#discovery). |
+| `registration_token` | string | none | Token callers must present to register, update or remove services. See [Registration token](#registration-token). |
+
+## Registration token
+
+With `registration_token` set, every FARP request whose method is not `GET` or `HEAD` needs the
+token, on all of the `/_farp/v1`, `/__farp`, `/__/farp` and `/farp` prefixes. Send it as
+`Authorization: Bearer <token>` or as `X-Octopus-Farp-Token: <token>`. A request without it gets
+a `401` with `WWW-Authenticate: Bearer realm="octopus-farp"`. Reads stay open.
+
+```yaml
+farp:
+  enabled: true
+  registration_token: "${OCTOPUS_FARP_TOKEN}"
+```
+
+Read the token from the environment rather than writing it into the file. A `${VAR}` that is not
+set fails the config load, so a missing secret stops the gateway instead of leaving registration
+open. The token is held as a SHA-256 digest, never serialized into config output, and never
+logged. An empty string counts as no token.
+
+If FARP is enabled with no token, the gateway starts and logs a warning. See the
+[FARP registration API](/docs/api/farp#authentication) for the exact request and response shapes,
+including what a service should do when a heartbeat comes back `404` after a gateway restart.
 
 ## Discovery
 
@@ -62,14 +85,14 @@ Each backend entry has a `type` (`mdns`, `dns`, `consul`, or `kubernetes`), an `
     enable_ipv6: true
 ```
 
-`type: mdns` — mDNS/Bonjour discovery.
+`type: mdns`: mDNS/Bonjour discovery.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `service_type` | string | — | Service type to discover. **Required.** |
-| `domain` | string | — | mDNS domain. **Required.** |
-| `watch_interval` | duration | — | Watch interval. **Required.** |
-| `query_timeout` | duration | — | Query timeout. **Required.** |
+| `service_type` | string | none | Service type to discover. **Required.** |
+| `domain` | string | none | mDNS domain. **Required.** |
+| `watch_interval` | duration | none | Watch interval. **Required.** |
+| `query_timeout` | duration | none | Query timeout. **Required.** |
 | `enable_ipv6` | boolean | `true` | Enable IPv6 discovery. |
 
 </div>
@@ -85,13 +108,13 @@ Each backend entry has a `type` (`mdns`, `dns`, `consul`, or `kubernetes`), an `
     watch_interval: 30s
 ```
 
-`type: dns` — DNS-based discovery.
+`type: dns`: DNS-based discovery.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `servers` | array of string | — | DNS server addresses. **Required.** |
-| `domain` | string | — | Domain to query. **Required.** |
-| `watch_interval` | duration | — | Watch interval. **Required.** |
+| `servers` | array of string | none | DNS server addresses. **Required.** |
+| `domain` | string | none | Domain to query. **Required.** |
+| `watch_interval` | duration | none | Watch interval. **Required.** |
 
 </div>
 
@@ -107,14 +130,14 @@ Each backend entry has a `type` (`mdns`, `dns`, `consul`, or `kubernetes`), an `
     watch_interval: 10s
 ```
 
-`type: consul` — Consul discovery.
+`type: consul`: Consul discovery.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `address` | string | — | Consul address. **Required.** |
-| `datacenter` | string | — | Datacenter. **Required.** |
+| `address` | string | none | Consul address. **Required.** |
+| `datacenter` | string | none | Datacenter. **Required.** |
 | `token` | string | none | ACL token. |
-| `watch_interval` | duration | — | Watch interval. **Required.** |
+| `watch_interval` | duration | none | Watch interval. **Required.** |
 
 </div>
 
@@ -131,13 +154,13 @@ Each backend entry has a `type` (`mdns`, `dns`, `consul`, or `kubernetes`), an `
     include_not_ready: false
 ```
 
-`type: kubernetes` — Kubernetes discovery.
+`type: kubernetes`: Kubernetes discovery.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `namespace` | string | — | Namespace to watch. **Required.** |
+| `namespace` | string | none | Namespace to watch. **Required.** |
 | `label_selector` | string | none | Label selector for filtering. |
-| `watch_interval` | duration | — | Watch interval. **Required.** |
+| `watch_interval` | duration | none | Watch interval. **Required.** |
 | `use_endpoint_slices` | boolean | `true` | Prefer the `discovery.k8s.io/v1` EndpointSlice API (falls back to Endpoints if unavailable). |
 | `include_not_ready` | boolean | `false` | Include endpoints whose `ready` condition is false/unknown. |
 

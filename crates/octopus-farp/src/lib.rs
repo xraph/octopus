@@ -71,7 +71,7 @@ pub mod validation;
 // Re-export key adapter types (avoiding conflicts with local types)
 pub use adapter::{EventType, ManifestEvent, RegistryAdapter, SchemaManifestAdapter};
 
-pub use api::{FarpApiHandler, RegistrationRequest, RegistrationResponse};
+pub use api::{FarpApiHandler, RegistrationRequest, RegistrationResponse, FARP_TOKEN_HEADER};
 pub use binding::{apply_gateway_binding, new_binding_cell, BindingCell, GatewayBinding};
 pub use client::{FarpClient, FarpClientConfig};
 pub use discovery::DiscoveryWatcher;

@@ -13,7 +13,7 @@ register themselves, keep their registration alive with heartbeats, and deregist
 The same handler serves the **federated schemas** (OpenAPI / AsyncAPI / GraphQL / gRPC) merged
 from every registered service, plus Swagger UI and ReDoc.
 
-For the concepts — how discovery, schema fetching, and route generation fit together — see
+For the concepts (how discovery, schema fetching, and route generation fit together), see
 [Service Discovery & FARP](/docs/farp) and [Schema federation](/docs/farp/schema-federation).
 
 ## Path prefixes
@@ -33,14 +33,50 @@ documentation UIs.
 
 <Callout type="info">
   The endpoint tables below are written with the canonical `/farp/...` paths. To call them over
-  the v1 push prefix, swap `/farp` for `/_farp/v1` — for example `POST /_farp/v1/register`.
+  the v1 push prefix, swap `/farp` for `/_farp/v1`. For example, `POST /_farp/v1/register`.
 </Callout>
 
 ## Authentication
 
-The FARP endpoints are not authenticated by the handler itself. Treat them as internal: restrict
-access with network policy, run them on a non-public listener, or front them with an auth
-middleware. Do not expose registration to untrusted clients.
+Set `farp.registration_token` (see [FARP configuration](/docs/configuration/farp)) and every request
+that changes state needs the token. That means every method except `GET` and `HEAD`: registering,
+updating and deregistering services, heartbeats, and `POST /farp/federate`. Send the token in
+either header:
+
+```http
+Authorization: Bearer <token>
+```
+
+```http
+X-Octopus-Farp-Token: <token>
+```
+
+The second header exists for callers whose `Authorization` header does not survive the trip. The
+Kubernetes API service proxy, for one, removes it after authenticating the caller. If both headers
+are present, either one matching the token is enough.
+
+A request without a valid token gets **`401 Unauthorized`**:
+
+```http
+HTTP/1.1 401 Unauthorized
+WWW-Authenticate: Bearer realm="octopus-farp"
+Content-Type: application/json
+```
+
+```json
+{
+  "error": "unauthorized",
+  "message": "FARP registration requires a token"
+}
+```
+
+The check sits at the top of the handler, so it covers the `/_farp/v1/...`, `/__farp/...`,
+`/__/farp/...` and `/farp/...` prefixes alike. Reads (`GET`, `HEAD`) stay open, so the federated
+schemas and the service list are readable without a token.
+
+Without `farp.registration_token` (or with an empty one), registration is open and the gateway
+logs a warning at startup. In that case, restrict access with network policy or serve FARP only on
+the private listener, and do not expose registration to untrusted clients.
 
 ---
 
@@ -87,7 +123,7 @@ Only `id`, `service_name`, `address`, and `port` are required; `service_version`
 `metadata`, and `status` are optional. When `manifest` is `null` (or absent) the gateway fetches
 it from the service.
 
-**Response — `201 Created`** (a push registration acknowledgement):
+**Response (`201 Created`)** (a push registration acknowledgement):
 
 ```json
 {
@@ -136,7 +172,7 @@ Content-Type: application/json
 and `custom` are rejected with an "unsupported schema format" error (see
 [Schema federation](/docs/farp/schema-federation) for the full support matrix).
 
-**Response — `201 Created`**:
+**Response (`201 Created`)**:
 
 ```json
 {
@@ -178,7 +214,7 @@ Content-Type: application/json
 they differ (or the gateway holds no schemas), it re-fetches the manifest so the two sides
 reconcile.
 
-**Response — `200 OK`**:
+**Response (`200 OK`)**:
 
 ```json
 {
@@ -188,8 +224,8 @@ reconcile.
 }
 ```
 
-If the gateway has no record of the instance — for example after a restart that lost in-memory
-state — it returns **`404 Not Found`** with a re-registration hint:
+If the gateway has no record of the instance, for example after a restart that lost its in-memory
+state, it returns **`404 Not Found`** with a re-registration hint:
 
 ```json
 {
@@ -198,6 +234,11 @@ state — it returns **`404 Not Found`** with a re-registration hint:
   "message": "Gateway has no record of this instance. Please re-register with full manifest."
 }
 ```
+
+Treat that 404 as the cue to send a full `POST /farp/register` again. The gateway keeps
+registrations in memory, so after a restart every instance gets this answer on its next heartbeat
+until it re-registers. A heartbeat still needs the registration token when one is configured, so a
+missing token answers 401 before the instance lookup happens.
 
 ---
 
@@ -209,7 +250,7 @@ Deregister a single instance by ID (FARP v1 push protocol). Send on graceful shu
 DELETE /farp/deregister/user-service-7f9c
 ```
 
-**Response — `200 OK`**:
+**Response (`200 OK`)**:
 
 ```json
 { "status": "deregistered" }
@@ -239,7 +280,7 @@ Content-Type: application/json
 }
 ```
 
-**Response — `200 OK`**:
+**Response (`200 OK`)**:
 
 ```json
 {
@@ -258,7 +299,7 @@ Deregister a service by name (removes the whole service, not a single instance).
 DELETE /farp/services/user-service
 ```
 
-**Response — `200 OK`**:
+**Response (`200 OK`)**:
 
 ```json
 {
@@ -279,7 +320,7 @@ List all registered services.
 curl http://gateway:8080/__/farp/services
 ```
 
-**Response — `200 OK`**:
+**Response (`200 OK`)**:
 
 ```json
 {
@@ -300,13 +341,13 @@ curl http://gateway:8080/__/farp/services
 
 ### GET /farp/services/\{service_name\}
 
-Get the full record for one service — its manifest, stored schemas, and timestamps.
+Get the full record for one service: its manifest, stored schemas, and timestamps.
 
 ```bash
 curl http://gateway:8080/__/farp/services/user-service
 ```
 
-**Response — `200 OK`**:
+**Response (`200 OK`)**:
 
 ```json
 {
@@ -373,8 +414,8 @@ List which federated formats are currently available and their source services.
 Fetch one federated schema by format. `{format}` is `openapi`, `asyncapi`, `graphql`, or `grpc`.
 OpenAPI and AsyncAPI return `application/json`; GraphQL and gRPC return `text/plain`.
 
-- `400 Bad Request` — `{"error": "invalid_format", ...}` for an unknown format.
-- `404 Not Found` — `{"error": "not_found", ...}` if that format has not been federated.
+- `400 Bad Request`: `{"error": "invalid_format", ...}` for an unknown format.
+- `404 Not Found`: `{"error": "not_found", ...}` if that format has not been federated.
 
 ### POST /farp/federate
 
@@ -384,7 +425,7 @@ Manually trigger federation of all registered service schemas.
 curl -X POST http://gateway:8080/__/farp/federate
 ```
 
-**Response — `200 OK`**:
+**Response (`200 OK`)**:
 
 ```json
 {
@@ -432,7 +473,7 @@ status with a message describing the cause.
 
 ## Next steps
 
-- [Service Discovery & FARP](/docs/farp) — the protocol and discovery backends.
-- [Schema federation](/docs/farp/schema-federation) — which formats generate routes and how merging works.
-- [FARP configuration](/docs/configuration/farp) — enabling FARP and configuring discovery.
-- [Admin REST API](/docs/observability/admin-api) — the gateway's management API.
+- [Service Discovery & FARP](/docs/farp): the protocol and discovery backends.
+- [Schema federation](/docs/farp/schema-federation): which formats generate routes and how merging works.
+- [FARP configuration](/docs/configuration/farp): enabling FARP and configuring discovery.
+- [Admin REST API](/docs/observability/admin-api): the gateway's management API.

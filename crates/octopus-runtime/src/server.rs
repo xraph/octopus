@@ -1072,7 +1072,19 @@ impl ServerBuilder {
             // the controller then reaches both the push and discovery paths.
             let mut handler =
                 FarpApiHandler::with_federation(Arc::clone(&registry), Arc::clone(&federation))
-                    .with_router(Arc::clone(&router));
+                    .with_router(Arc::clone(&router))
+                    .with_registration_token(config.farp.registration_token.as_deref());
+            if config
+                .farp
+                .registration_token
+                .as_deref()
+                .is_none_or(str::is_empty)
+            {
+                tracing::warn!(
+                    "FARP is enabled without farp.registration_token: anyone who can reach \
+                     the FARP endpoints can register services and take over routes"
+                );
+            }
             if let Some(binding) = farp_binding {
                 handler = handler.with_binding(binding);
             }

@@ -451,7 +451,7 @@ impl Default for SecurityHeadersConfig {
 }
 
 /// FARP (Forge API Gateway Registration Protocol) configuration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct FarpConfig {
     /// Enable FARP service discovery and auto-routing
@@ -474,6 +474,31 @@ pub struct FarpConfig {
     /// them for policy inheritance. When unset, FARP routes are host-agnostic.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gateway: Option<FarpGatewayConfig>,
+
+    /// Token that FARP callers must present to register, update or remove
+    /// services (`Authorization: Bearer <token>` or `X-Octopus-Farp-Token`).
+    /// Reads (GET, HEAD) stay open. Unset or empty leaves registration open.
+    /// Never serialized: render it from the environment with
+    /// `"${OCTOPUS_FARP_TOKEN}"`.
+    #[serde(default, skip_serializing)]
+    pub registration_token: Option<String>,
+}
+
+impl std::fmt::Debug for FarpConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FarpConfig")
+            .field("enabled", &self.enabled)
+            .field("watch_interval", &self.watch_interval)
+            .field("schema_cache_ttl", &self.schema_cache_ttl)
+            .field("discovery", &self.discovery)
+            .field("gateway", &self.gateway)
+            // The token itself must never reach a log line.
+            .field(
+                "registration_token",
+                &self.registration_token.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
 }
 
 impl Default for FarpConfig {
@@ -484,6 +509,7 @@ impl Default for FarpConfig {
             schema_cache_ttl: Duration::from_secs(300), // 5 minutes
             discovery: None,
             gateway: None,
+            registration_token: None,
         }
     }
 }
@@ -1766,6 +1792,21 @@ impl Default for RequestLimitsConfig {
 mod tests {
     use super::*;
     use octopus_router::{HostMatch, RouteOrigin};
+
+    #[test]
+    fn farp_registration_token_is_read_but_never_serialized_or_debugged() {
+        let farp: FarpConfig =
+            serde_yaml::from_str("enabled: true\nregistration_token: s3cret-farp\n").unwrap();
+        assert_eq!(farp.registration_token.as_deref(), Some("s3cret-farp"));
+        assert!(!serde_yaml::to_string(&farp)
+            .unwrap()
+            .contains("s3cret-farp"));
+        assert!(!serde_json::to_string(&farp)
+            .unwrap()
+            .contains("s3cret-farp"));
+        assert!(!format!("{farp:?}").contains("s3cret-farp"));
+        assert_eq!(FarpConfig::default().registration_token, None);
+    }
 
     #[test]
     fn request_limits_default_is_enabled_and_falls_back_for_body() {

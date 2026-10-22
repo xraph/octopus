@@ -2185,6 +2185,72 @@ mod tests {
         }
     }
 
+    /// A FARP handler that requires a token, on a handler with the given role.
+    fn farp_token_handler(role: ListenerRole) -> RequestHandler {
+        let router = Arc::new(Router::new());
+        let client = HttpClient::with_timeout(Duration::from_secs(30));
+        let proxy = Arc::new(HttpProxy::new(client, ProxyConfig::default()));
+        let farp = Arc::new(
+            FarpApiHandler::new(Arc::new(octopus_farp::SchemaRegistry::new()))
+                .with_registration_token(Some("farp-tok")),
+        );
+        let mut handler = RequestHandler::with_features(
+            router,
+            proxy,
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new([]),
+            Some(farp),
+            Arc::new([]),
+        );
+        handler.set_listener_role(role);
+        handler
+    }
+
+    /// Every FARP alias reaches the same token check, on both roles that
+    /// serve FARP.
+    #[tokio::test]
+    async fn farp_token_is_enforced_on_every_alias() {
+        for role in [ListenerRole::Combined, ListenerRole::Private] {
+            let handler = farp_token_handler(role);
+            for prefix in ["/_farp/v1", "/__farp", "/__/farp", "/farp"] {
+                let path = format!("{prefix}/heartbeat/nope");
+                let put = |header: Option<(&str, &str)>| {
+                    let mut builder = Request::builder().method(http::Method::PUT).uri(&path);
+                    if let Some((name, value)) = header {
+                        builder = builder.header(name, value);
+                    }
+                    builder
+                        .body(Full::new(Bytes::from(r#"{"status":"healthy"}"#)))
+                        .unwrap()
+                };
+
+                let resp = handler.handle(put(None)).await.unwrap();
+                assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "{role:?} {path}");
+                assert_eq!(
+                    resp.headers().get(http::header::WWW_AUTHENTICATE).unwrap(),
+                    "Bearer realm=\"octopus-farp\""
+                );
+
+                // With the token the request reaches the handler: an unknown
+                // instance answers 404 so the caller re-registers.
+                for header in [
+                    ("authorization", "Bearer farp-tok"),
+                    ("x-octopus-farp-token", "farp-tok"),
+                ] {
+                    let resp = handler.handle(put(Some(header))).await.unwrap();
+                    assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{role:?} {path}");
+                    assert_eq!(body_json(resp).await["action"], "re-register");
+                }
+
+                let resp = handler
+                    .handle(get(&format!("{prefix}/services")))
+                    .await
+                    .unwrap();
+                assert_eq!(resp.status(), StatusCode::OK, "{role:?} {prefix}");
+            }
+        }
+    }
+
     fn ws_upgrade(path: &str) -> Request<Full<Bytes>> {
         Request::builder()
             .method(http::Method::GET)

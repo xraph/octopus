@@ -13,9 +13,37 @@ use http_body_util::{BodyExt, Full};
 use octopus_core::{Error, Result};
 use octopus_router::Router;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
+
+/// Header that carries the FARP registration token, for clients whose
+/// `Authorization` header does not survive the trip (the Kubernetes API service
+/// proxy strips it after authenticating the caller).
+pub const FARP_TOKEN_HEADER: &str = "x-octopus-farp-token";
+
+/// SHA-256 digest of the FARP registration token. Only the digest is kept, and
+/// the `Debug` output never shows it.
+#[derive(Clone, Copy)]
+struct TokenDigest([u8; 32]);
+
+impl std::fmt::Debug for TokenDigest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TokenDigest(..)")
+    }
+}
+
+fn sha256(data: &[u8]) -> [u8; 32] {
+    Sha256::digest(data).into()
+}
+
+/// The credential of an `Authorization: Bearer <credential>` value.
+fn bearer_token(value: &str) -> Option<&str> {
+    let (scheme, credential) = value.trim().split_once(' ')?;
+    let credential = credential.trim();
+    (scheme.eq_ignore_ascii_case("bearer") && !credential.is_empty()).then_some(credential)
+}
 
 /// FARP API handler
 #[derive(Clone, Debug)]
@@ -32,6 +60,9 @@ pub struct FarpApiHandler {
     /// (e.g. `api.example.cloud`) and attach them to that gateway. Shared cell so
     /// the k8s controller can update it from the `OctopusGateway` CRD at runtime.
     binding: crate::binding::BindingCell,
+    /// SHA-256 digest of the registration token. When set, every request other
+    /// than GET and HEAD must present the token.
+    registration_token: Option<TokenDigest>,
 }
 
 /// Registration request
@@ -168,6 +199,7 @@ impl FarpApiHandler {
             farp_client: Arc::new(FarpClient::default()),
             router: None,
             binding: crate::binding::new_binding_cell(),
+            registration_token: None,
         }
     }
 
@@ -185,7 +217,53 @@ impl FarpApiHandler {
             farp_client: Arc::new(FarpClient::default()),
             router: None,
             binding: crate::binding::new_binding_cell(),
+            registration_token: None,
         }
+    }
+
+    /// Require a token on every request that changes state (anything other than
+    /// GET and HEAD). The token travels as `Authorization: Bearer <token>` or in
+    /// the [`FARP_TOKEN_HEADER`] header. `None` or an empty string leaves
+    /// registration open. Only the SHA-256 digest is stored.
+    #[must_use]
+    pub fn with_registration_token(mut self, token: Option<&str>) -> Self {
+        self.registration_token = token
+            .filter(|t| !t.is_empty())
+            .map(|t| TokenDigest(sha256(t.as_bytes())));
+        self
+    }
+
+    /// Whether `req` presents the configured registration token.
+    fn token_presented(&self, req: &Request<Full<Bytes>>, expected: &TokenDigest) -> bool {
+        let headers = req.headers();
+        let bearer = headers
+            .get(http::header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(bearer_token);
+        let custom = headers
+            .get(FARP_TOKEN_HEADER)
+            .and_then(|v| v.to_str().ok())
+            .map(str::trim)
+            .filter(|t| !t.is_empty());
+        // Fixed-size digest comparison avoids leaking the token length.
+        [bearer, custom]
+            .into_iter()
+            .flatten()
+            .any(|presented| sha256(presented.as_bytes()) == expected.0)
+    }
+
+    /// The 401 answer for a request that lacks a valid registration token.
+    fn unauthorized(&self) -> Result<Response<Full<Bytes>>> {
+        let json = serde_json::json!({
+            "error": "unauthorized",
+            "message": "FARP registration requires a token"
+        });
+        let mut response = self.json_response(StatusCode::UNAUTHORIZED, &json)?;
+        response.headers_mut().insert(
+            http::header::WWW_AUTHENTICATE,
+            http::HeaderValue::from_static("Bearer realm=\"octopus-farp\""),
+        );
+        Ok(response)
     }
 
     /// Set the router for supplementing the federated spec with registered routes
@@ -234,6 +312,18 @@ impl FarpApiHandler {
         let path = req.uri().path().to_string();
 
         debug!(method = %method, path = %path, "FARP API request");
+
+        // Every alias (`/_farp/v1/*`, `/__farp/*`, `/farp/*`) is rewritten to
+        // `/farp/*` before it gets here, so this one check covers them all.
+        if let Some(expected) = &self.registration_token {
+            if method != Method::GET
+                && method != Method::HEAD
+                && !self.token_presented(&req, expected)
+            {
+                debug!(method = %method, path = %path, "FARP request rejected: missing or wrong token");
+                return self.unauthorized();
+            }
+        }
 
         match (method, path.as_str()) {
             // Service registration (supports both legacy and FARP v1 push payloads)
@@ -1718,5 +1808,162 @@ mod tests {
         assert!(!paths.is_empty(), "Federated schema should have paths");
         // Verify it's a valid OpenAPI 3.1.0 schema
         assert_eq!(json["openapi"], "3.1.0");
+    }
+
+    fn token_handler(token: &str) -> FarpApiHandler {
+        FarpApiHandler::new(Arc::new(SchemaRegistry::new())).with_registration_token(Some(token))
+    }
+
+    fn register_request(header: Option<(&str, &str)>) -> Request<Full<Bytes>> {
+        let registration = RegistrationRequest {
+            manifest: create_test_manifest("test-service", "1.0.0", "test-instance"),
+            schemas: None,
+        };
+        let mut builder = Request::builder()
+            .method(Method::POST)
+            .uri("/farp/register");
+        if let Some((name, value)) = header {
+            builder = builder.header(name, value);
+        }
+        builder
+            .body(Full::new(Bytes::from(
+                serde_json::to_string(&registration).unwrap(),
+            )))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn register_requires_token_when_configured() {
+        let res = token_handler("t")
+            .handle(register_request(None))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            res.headers().get("www-authenticate").unwrap(),
+            "Bearer realm=\"octopus-farp\""
+        );
+        assert_eq!(
+            res.headers().get("content-type").unwrap(),
+            "application/json"
+        );
+        let body = res.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "error": "unauthorized",
+                "message": "FARP registration requires a token"
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn register_accepts_bearer_token() {
+        let res = token_handler("t")
+            .handle(register_request(Some(("authorization", "Bearer t"))))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn register_accepts_custom_header_token() {
+        let res = token_handler("t")
+            .handle(register_request(Some((FARP_TOKEN_HEADER, "t"))))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn wrong_token_is_rejected() {
+        let handler = token_handler("t");
+        for header in [
+            ("authorization", "Bearer x"),
+            ("authorization", "Basic t"),
+            ("authorization", "Bearer "),
+            (FARP_TOKEN_HEADER, "x"),
+            (FARP_TOKEN_HEADER, ""),
+        ] {
+            let res = handler
+                .handle(register_request(Some(header)))
+                .await
+                .unwrap();
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED, "{header:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn every_write_method_needs_the_token() {
+        let handler = token_handler("t");
+        for (method, uri) in [
+            (Method::PUT, "/farp/services/svc"),
+            (Method::DELETE, "/farp/services/svc"),
+            (Method::PUT, "/farp/heartbeat/inst"),
+            (Method::DELETE, "/farp/deregister/inst"),
+            (Method::POST, "/farp/federate"),
+            (Method::PATCH, "/farp/services/svc"),
+        ] {
+            let req = Request::builder()
+                .method(method.clone())
+                .uri(uri)
+                .body(Full::new(Bytes::new()))
+                .unwrap();
+            let res = handler.handle(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED, "{method} {uri}");
+        }
+    }
+
+    #[tokio::test]
+    async fn reads_stay_open_with_token_configured() {
+        let handler = token_handler("t");
+        let get = Request::builder()
+            .method(Method::GET)
+            .uri("/farp/services")
+            .body(Full::new(Bytes::new()))
+            .unwrap();
+        assert_eq!(handler.handle(get).await.unwrap().status(), StatusCode::OK);
+
+        // HEAD is not routed to any endpoint, but the token check lets it through.
+        let head = Request::builder()
+            .method(Method::HEAD)
+            .uri("/farp/services")
+            .body(Full::new(Bytes::new()))
+            .unwrap();
+        assert_ne!(
+            handler.handle(head).await.unwrap().status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+
+    #[tokio::test]
+    async fn no_token_configured_keeps_registration_open() {
+        let handler = FarpApiHandler::new(Arc::new(SchemaRegistry::new()));
+        let res = handler.handle(register_request(None)).await.unwrap();
+        assert_eq!(res.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn empty_token_means_no_token() {
+        let handler =
+            FarpApiHandler::new(Arc::new(SchemaRegistry::new())).with_registration_token(Some(""));
+        let res = handler.handle(register_request(None)).await.unwrap();
+        assert_eq!(res.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn heartbeat_for_unknown_instance_returns_404() {
+        let req = Request::builder()
+            .method(Method::PUT)
+            .uri("/farp/heartbeat/nope")
+            .header("authorization", "Bearer t")
+            .body(Full::new(Bytes::from(r#"{"status":"healthy"}"#)))
+            .unwrap();
+        let res = token_handler("t").handle(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+        let body = res.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["action"], "re-register");
     }
 }
