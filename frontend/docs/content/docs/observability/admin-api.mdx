@@ -343,10 +343,47 @@ Keys surfaced today include `server.listen`, `server.workers`,
 | Method | Path | Returns |
 | --- | --- | --- |
 | `GET` | `/admin/api/upstreams` | Upstream clusters with per-instance health (`UpstreamClusterInfo`). |
+| `GET` | `/admin/api/upstreams/:name` | One cluster as `UpstreamClusterInfo`, or `404`. |
+| `POST` | `/admin/api/upstreams` | `201` with `UpstreamClusterInfo`. `400` when `name` is missing or the body is malformed, `409` when the name is taken. |
+| `PUT` | `/admin/api/upstreams/:name` | Idempotent upsert: `200` with `UpstreamClusterInfo`. `400` for a malformed body. |
+| `DELETE` | `/admin/api/upstreams/:name` | `204`, or `404` when no cluster has that name. |
 | `GET` | `/admin/api/services` | Configured services. |
 | `GET` | `/admin/api/circuits` | Circuit-breaker state per upstream. |
 | `GET` | `/admin/api/health/checks` | Detailed health-check results. |
 | `GET` | `/admin/api/openapi.json` | Generated OpenAPI document for the gateway. |
+
+### Writing an upstream
+
+`POST` and `PUT` take an `UpstreamConfig` body:
+
+```json
+{
+  "strategy": "round_robin",
+  "instances": [
+    { "id": "lp-billing-0", "address": "billing", "port": 8080, "weight": 1 }
+  ]
+}
+```
+
+On `PUT` the `:name` path segment is the cluster name. You can leave `name`
+out of the body, and when you send one the path still wins. `POST` has no
+path name, so it needs `"name"` in the body.
+
+`strategy` takes `round_robin` (the default), `least_connections`,
+`weighted_round_robin`, `random` or `ip_hash`. Each instance needs `address`
+and `port`. `id` defaults to `<name>-<index>` and `weight` to `1`.
+
+<Callout type="info">
+  The admin API calls the instance host `address`. The `upstreams[].instances[]`
+  config block calls the same field `host`.
+</Callout>
+
+`PUT` replaces the whole cluster, instances included. A malformed body (not
+JSON, or an instance without `port`) answers `400` with
+`{"error": "Invalid upstream body: ..."}`, the same shape the route endpoints
+use. FARP names its upstreams after the registered `service_name` and replaces
+them on every registration, so give the clusters you manage by hand names a
+service will never register under.
 
 ## FARP
 

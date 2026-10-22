@@ -402,7 +402,9 @@ impl Default for DashboardStats {
 /// Upstream cluster create/update payload.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpstreamConfig {
-    /// Cluster name (unique key).
+    /// Cluster name (unique key). Required on `POST`; on `PUT` the path
+    /// segment wins and the body may leave it out.
+    #[serde(default)]
     pub name: String,
     /// Load-balancing strategy: `round_robin`, `least_connections`,
     /// `weighted_round_robin`, `random`, or `ip_hash`. Defaults to round-robin.
