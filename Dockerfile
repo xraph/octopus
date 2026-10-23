@@ -64,7 +64,9 @@ LABEL org.opencontainers.image.title="octopus" \
 
 USER octopus
 
-# 8080/tcp gateway, 9090/tcp admin, 8080/udp HTTP/3 (QUIC)
+# 8080/tcp gateway (public), 9090/tcp private admin listener when the config
+# sets admin.listen (admin UI/API, FARP registration, metrics; never publish
+# it), 8080/udp HTTP/3 (QUIC)
 EXPOSE 8080 9090
 EXPOSE 8080/udp
 

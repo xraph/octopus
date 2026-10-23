@@ -31,7 +31,7 @@ So the one thing you must provide is a config file at `/etc/octopus/config.yaml`
 ### Write a config file
 
 Create a `config.yaml` on the host. The only required section is `gateway` with a `listen`
-address — bind to `0.0.0.0` inside the container, not `127.0.0.1`, or the port will not be
+address. Bind to `0.0.0.0` inside the container, not `127.0.0.1`, or the port will not be
 reachable from outside:
 
 ```yaml title="config.yaml"
@@ -66,10 +66,10 @@ Mount the config read-only and publish the listen port:
 docker run --rm \
   -p 8080:8080 \
   -v "$(pwd)/config.yaml:/etc/octopus/config.yaml:ro" \
-  ghcr.io/xraph/octopus:latest
+  ghcr.io/xraph/octopus:0.5.0
 ```
 
-Pin a release tag (for example `:0.1.0`) instead of `:latest` for reproducible deployments.
+Always name a release tag. There is no moving `latest` to follow. See [Image tags](#image-tags).
 
 </Step>
 
@@ -89,19 +89,52 @@ curl -s   http://localhost:8080/metrics   # Prometheus text-format metrics
 
 </Steps>
 
+## Image tags
+
+Every release pushes three tags for the same multi-arch image. For release `0.5.0` that is:
+
+| Tag | Example | Moves? |
+|-----|---------|--------|
+| `{{version}}` | `0.5.0` | No. Fixed to that release. |
+| `{{major}}.{{minor}}` | `0.5` | Yes. Follows the newest patch release of that minor line. |
+| `sha-<7 hex>` | `sha-1a2b3c4` | No. Fixed to that commit. |
+
+Octopus does not publish a `latest` tag. The `latest` tag you can still see on ghcr is left over
+from an older workflow. It is frozen at the 0.4.1 index
+(`sha256:84624c71f16423edea9753a24acd15cd3287adc5b39100c4fe416aeb7363458f`) and will not move
+again, so pulling the `latest` tag gives you 0.4.1 forever. Use a version tag.
+
+### Pin by digest
+
+A tag can be re-pushed. A digest cannot. Each release uploads a small asset,
+`octopus-image-digests.json`, with the digest of the multi-arch index and of each architecture:
+
+```bash
+gh release download v0.5.0 --repo xraph/octopus --pattern octopus-image-digests.json
+cat octopus-image-digests.json
+```
+
+```json
+{"image":"ghcr.io/xraph/octopus","version":"0.5.0","index_digest":"sha256:<64 hex>","digests":{"amd64":"sha256:<64 hex>","arm64":"sha256:<64 hex>"}}
+```
+
+Pull `ghcr.io/xraph/octopus@<index_digest>` to let Docker pick the right architecture, or the
+`amd64` / `arm64` digest to force one. To print the same JSON for any published tag yourself, run
+`scripts/image-digests.sh ghcr.io/xraph/octopus 0.5.0` from a checkout.
+
 ## Mounting configuration
 
 The container expects a single file at `/etc/octopus/config.yaml`. Mount yours there. The image
 also ships an annotated reference at `/etc/octopus/config.example.yaml` you can copy from.
 
 To split a config across several files (a base plus environment overrides), point `serve` at a
-directory — every `*.yaml`, `*.yml`, `*.json`, and `*.toml` file in it is merged in order:
+directory. Every `*.yaml`, `*.yml`, `*.json`, and `*.toml` file in it is merged in order:
 
 ```bash
 docker run --rm \
   -p 8080:8080 \
   -v "$(pwd)/conf.d:/etc/octopus/conf.d:ro" \
-  ghcr.io/xraph/octopus:latest \
+  ghcr.io/xraph/octopus:0.5.0 \
   serve --config /etc/octopus/conf.d
 ```
 
@@ -130,7 +163,7 @@ gateway:
 auth_providers:
   internal-jwt:
     type: jwt
-    secret: "${JWT_SECRET}"          # required — fails to load if unset and no default
+    secret: "${JWT_SECRET}"          # required: fails to load if unset and no default
     algorithm: "${JWT_ALG:-HS256}"
 ```
 
@@ -144,7 +177,7 @@ docker run --rm \
   -e PORT=8080 \
   -e JWT_SECRET="$JWT_SECRET" \
   -v "$(pwd)/config.yaml:/etc/octopus/config.yaml:ro" \
-  ghcr.io/xraph/octopus:latest
+  ghcr.io/xraph/octopus:0.5.0
 ```
 
 </Tab>
@@ -156,27 +189,46 @@ Set the log level with the `RUST_LOG` environment variable (for example `RUST_LO
 
 ## Ports
 
-Octopus serves **everything on one listener** — proxied traffic, the `/livez`, `/readyz`, and
-`/startupz` probes, and the `/metrics` endpoint all share the gateway's `listen` address
-(default `0.0.0.0:8080`). Publishing `8080` is all you need.
+By default Octopus serves **everything on one listener**: proxied traffic, the `/livez`,
+`/readyz` and `/startupz` probes, the admin UI and API, FARP registration and `/metrics` all
+share `gateway.listen` (default `0.0.0.0:8080`). Publishing `8080` is all you need.
 
-The image declares `EXPOSE 8080 9090`, and you may see older examples publish `-p 9090:9090`.
-That second port is reserved for an **admin** surface — the manifests label it `admin`, and the
-default `observability.metrics.endpoint` in the example config is `0.0.0.0:9090`. **Nothing
-binds a second listener on `9090` today:**
+Set `admin.listen` and the internal endpoints move to a second, plain-HTTP listener:
 
-- The admin dashboard the `9090` port is named for is not fully wired yet.
-- `observability.metrics.endpoint` is **inert** — metrics are served at the fixed `/metrics`
-  path on the gateway listen port regardless of that value (and `observability.metrics.enabled`
-  does not gate it). See the [metrics endpoint](/docs/observability/metrics) and the
-  [configuration implementation status](/docs/configuration).
+```yaml
+gateway:
+  listen: "0.0.0.0:8080"
+admin:
+  listen: "0.0.0.0:9090"
+```
 
-So mapping `9090` is harmless but unnecessary; scrape `/metrics` on `8080`.
+With that config, `9090` serves the admin UI, the admin API, FARP registration and `/metrics`
+(probes answer on both ports). The gateway port stops serving those paths: `/admin*`,
+`/metrics`, `/farp*` and the rest go through the router like any other path, and answer `404`
+when no route matches. See [Private admin listener](/docs/configuration/admin#private-admin-listener).
+
+<Callout type="warn">
+  Never publish `9090` on a host interface. `-p 9090:9090` puts the admin API and FARP
+  registration on every address the host has. For local debugging bind it to loopback at most:
+
+  ```bash
+  docker run --rm -p 8080:8080 -p 127.0.0.1:9090:9090 \
+    -v "$(pwd)/config.yaml:/etc/octopus/config.yaml:ro" \
+    ghcr.io/xraph/octopus:0.5.0
+  ```
+
+  In production, let only containers on the same private network reach it (Prometheus, the
+  service that registers over FARP, your admin tooling).
+</Callout>
+
+`observability.metrics.endpoint` (the `0.0.0.0:9090` you may see in the example config) does not
+open a listener. Only `admin.listen` does. Setting `observability.metrics.enabled: false` turns
+`/metrics` off on whichever port serves it. See the [metrics endpoint](/docs/observability/metrics).
 
 | Port | What it is | What to do |
 |------|------------|------------|
-| `8080` | Gateway listener: traffic, probes, `/metrics`. | Publish it. The exact number follows `gateway.listen`. |
-| `9090` | Reserved `admin` port (admin dashboard / inert metrics-endpoint default). | No active listener today; you can omit it. |
+| `8080` | Gateway listener: proxied traffic and probes, plus admin, FARP and `/metrics` when `admin.listen` is unset. | Publish it. The exact number follows `gateway.listen`. |
+| `9090` | Private admin listener when `admin.listen` is set: admin UI/API, FARP registration, `/metrics`, probes. Nothing listens on it otherwise. | Never publish it. `127.0.0.1:9090:9090` at most, for local debugging. |
 
 ## Health check
 
@@ -186,7 +238,7 @@ you change `gateway.listen` to a different port, override or disable the built-i
 
 ## Next steps
 
-- [Kubernetes deployment](/docs/deployment/kubernetes) — the recommended way to run in a cluster.
-- [Production checklist](/docs/deployment/production-checklist) — before you go live.
-- [Graceful shutdown](/docs/deployment/graceful-shutdown) — send SIGTERM, don't kill the container.
-- [TLS configuration](/docs/configuration/tls) — terminate HTTPS on the gateway.
+- [Kubernetes deployment](/docs/deployment/kubernetes): the recommended way to run in a cluster.
+- [Production checklist](/docs/deployment/production-checklist): before you go live.
+- [Graceful shutdown](/docs/deployment/graceful-shutdown): send SIGTERM, don't kill the container.
+- [TLS configuration](/docs/configuration/tls): terminate HTTPS on the gateway.

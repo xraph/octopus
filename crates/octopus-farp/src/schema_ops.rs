@@ -76,14 +76,33 @@ pub async fn fetch_and_store_schema(
     Ok(())
 }
 
+/// What one pass over a manifest's HTTP schema locations got.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SchemaFetchOutcome {
+    /// HTTP schema locations the pass tried.
+    pub attempted: usize,
+    /// Locations that answered with a schema the registry stored.
+    pub fetched: usize,
+}
+
+impl SchemaFetchOutcome {
+    /// The manifest listed schemas and none of them could be fetched. This is
+    /// different from a fetch that worked and declared no routes.
+    #[must_use]
+    pub const fn all_failed(&self) -> bool {
+        self.attempted > 0 && self.fetched == 0
+    }
+}
+
 /// Iterate a manifest's schema descriptors, fetch each HTTP-located schema,
-/// and store them in the registry.
+/// and store them in the registry. Returns how many were tried and fetched.
 pub async fn fetch_manifest_schemas(
     client: &FarpClient,
     registry: &SchemaRegistry,
     manifest: &SchemaManifest,
-) {
+) -> SchemaFetchOutcome {
     let service_name = &manifest.service_name;
+    let mut outcome = SchemaFetchOutcome::default();
 
     for manifest_schema in &manifest.schemas {
         if manifest_schema.location.location_type != LocationType::HTTP {
@@ -92,8 +111,9 @@ pub async fn fetch_manifest_schemas(
 
         if let Some(ref url) = manifest_schema.location.url {
             let format = schema_type_to_format(&manifest_schema.schema_type);
+            outcome.attempted += 1;
 
-            if let Err(e) = fetch_and_store_schema(
+            match fetch_and_store_schema(
                 client,
                 registry,
                 service_name,
@@ -103,15 +123,17 @@ pub async fn fetch_manifest_schemas(
             )
             .await
             {
-                warn!(
+                Ok(()) => outcome.fetched += 1,
+                Err(e) => warn!(
                     service = %service_name,
                     url = %url,
                     error = %e,
                     "Failed to fetch schema content, skipping"
-                );
+                ),
             }
         }
     }
+    outcome
 }
 
 /// Collect all schemas from registered services and trigger federation.

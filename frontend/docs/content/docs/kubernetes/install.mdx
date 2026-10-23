@@ -19,7 +19,7 @@ Gateway API CRDs.
 
 - A Kubernetes cluster and `kubectl` configured for it.
 - Helm 3.8+ (OCI support is on by default) if you use the chart.
-- The **upstream Gateway API CRDs** (`gateway.networking.k8s.io`) installed separately — only if you
+- The **upstream Gateway API CRDs** (`gateway.networking.k8s.io`) installed separately, only if you
   plan to use `HTTPRoute`, `GRPCRoute`, `Gateway`, or `ReferenceGrant`. Octopus does **not** ship
   those CRDs; it reconciles them but the schemas come from the Gateway API release. The Octopus CRDs
   (`gateway.octopus.io`) are separate and are installed below.
@@ -65,6 +65,19 @@ kubectl apply -f deploy/kubernetes/octopus.yaml
 The gateway configuration lives in the `octopus-config` `ConfigMap` and is mounted at
 `/etc/octopus/config.yaml`. Edit it to add upstreams, routes, plugins, and auth.
 
+The manifest runs `ghcr.io/xraph/octopus:0.5.0`. Octopus publishes `0.5.0`, `0.5` and
+`sha-<7 hex>` tags and no `latest` (the old `latest` on ghcr is frozen at 0.4.1 and will not move
+again). To pin the image by digest instead of by tag, download the release asset and use the index
+digest it lists:
+
+```bash
+gh release download v0.5.0 --repo xraph/octopus --pattern octopus-image-digests.json
+jq -r '.index_digest' octopus-image-digests.json
+```
+
+Then set `image: ghcr.io/xraph/octopus@<index_digest>`. The same file also lists the `amd64` and
+`arm64` digests. See [Docker image tags](/docs/deployment/docker#image-tags).
+
 </div>
 </Tabs>
 
@@ -84,7 +97,7 @@ The `octopus crd` command prints all four CRDs as a single multi-document YAML s
 octopus crd | kubectl apply -f -
 ```
 
-This is the source of truth — the YAML is generated directly from the Rust CRD types.
+This is the source of truth. The YAML is generated directly from the Rust CRD types.
 
 </Step>
 <Step>
@@ -117,7 +130,7 @@ kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/downloa
 
 Octopus reconciles `Gateway`/`HTTPRoute`/`GRPCRoute` (`gateway.networking.k8s.io/v1`) and
 `ReferenceGrant` (`gateway.networking.k8s.io/v1beta1`). If these CRDs are absent, the operator's
-Gateway API watchers have nothing to watch — the Octopus CRDs still work on their own.
+Gateway API watchers have nothing to watch. The Octopus CRDs still work on their own.
 
 ## Enable the operator
 

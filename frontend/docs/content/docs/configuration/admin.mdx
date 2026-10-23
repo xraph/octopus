@@ -1,37 +1,157 @@
 ---
 title: Admin
-description: The admin section — protecting the admin dashboard with an auth provider and an IP allowlist.
+description: The admin section. Move the admin dashboard, FARP and metrics to a private listener, protect it with built-in credentials, an auth provider and an IP allowlist, and make startup fail when none is set.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
 # Admin
 
-The `admin` section controls access to the built-in admin dashboard. The block is optional; by
-default the dashboard has no auth provider and an empty IP allowlist (all IPs permitted).
+The `admin` section controls access to the built-in admin dashboard. The block is optional. By
+default the dashboard has no auth provider, an empty IP allowlist (all IPs permitted) and no
+startup check.
 
 ```yaml
 admin:
+  listen: "0.0.0.0:9090"
   auth_provider: client-certs
   allowed_ips:
     - 10.0.0.0/8
     - 192.168.1.10
+  require_auth: true
 ```
 
 ## `admin`
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `auth_provider` | string | none | Name of an [auth provider](/docs/configuration/auth) used to protect the dashboard. When unset, the dashboard requires no authentication. |
+| `listen` | socket address | none | Address of a private, plain-HTTP listener for the admin UI, admin API, FARP registration and metrics. When set, the gateway port stops serving those paths. See [Private admin listener](#private-admin-listener). |
+| `auth_provider` | string | none | Name of an [auth provider](/docs/configuration/auth) used to protect the dashboard. When unset, only the built-in credentials below protect it. |
 | `allowed_ips` | array of string | `[]` | IP allowlist for admin access. Empty means all IPs are allowed. |
+| `require_auth` | bool | `false` | Refuse to start unless admin credentials exist: `OCTOPUS_ADMIN_PASSWORD`, `OCTOPUS_ADMIN_API_TOKEN` or `auth_provider`. |
 
-<Callout type="warn">
-  With no `auth_provider` **and** an empty `allowed_ips`, the admin dashboard is reachable without
-  authentication. Both are enforced: `allowed_ips` matches the client address against each IP / CIDR
-  / range pattern and returns `403` on a miss, and `auth_provider` requires authentication (static
-  assets bypass the auth check). Set at least one in any non-local deployment. See
-  [Admin API](/docs/observability/admin-api).
+## Built-in credentials
+
+You don't need an auth provider to lock the dashboard down. `octopus serve` reads these
+environment variables at startup:
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `OCTOPUS_ADMIN_PASSWORD` | none | Turns on password login (`POST /admin/api/auth/login`), which sets a session cookie. |
+| `OCTOPUS_ADMIN_API_TOKEN` | none | Turns on a static API token for machine clients. |
+| `OCTOPUS_ADMIN_USERNAME` | `admin` | Username for password login. |
+| `OCTOPUS_ADMIN_SESSION_SECRET` | derived | Key that signs session tokens. Derived from the password when unset, else from the API token. |
+| `OCTOPUS_ADMIN_SESSION_TTL_SECS` | `28800` | Session lifetime in seconds. |
+
+Set either secret (or both) and the gateway enforces it on `/admin/api/*`, `/admin/ws` and the
+server-rendered pages (`/admin`, `/admin/routes`, `/admin/health`, `/admin/plugins`,
+`/admin/analytics`, `/admin/logs`, `/admin/config` and `/admin/octopus-ui*`). The startup log says
+which mechanisms are on, for example `Admin authentication enabled: password login, API token`.
+Secrets are compared by SHA-256 digest and never logged.
+
+You send the API token in either of two forms:
+
+```bash
+curl -H "Authorization: Bearer $OCTOPUS_ADMIN_API_TOKEN" http://localhost:8080/admin/api/routes
+curl -H "X-Octopus-Admin-Token: $OCTOPUS_ADMIN_API_TOKEN" http://localhost:8080/admin/api/routes
+```
+
+<Callout type="info">
+  Going through the Kubernetes API service proxy
+  (`/api/v1/namespaces/<ns>/services/<svc>:<port>/proxy/...`)? Use `X-Octopus-Admin-Token`. The
+  kube-apiserver strips `Authorization` after it authenticates you, so a bearer token never
+  reaches the gateway.
 </Callout>
 
-The dashboard is served under the gateway's internal route prefix (see
+Without credentials, the API answers `401` with `{"error": "Authentication required"}` and the
+pages answer `401` with a short HTML page. `/admin/api/auth/*`, `/admin/ui/*` and
+`/admin/static/*` stay open so the login page can load. When only the API token is set, password
+login is off and `POST /admin/api/auth/login` answers `401` with
+`{"success": false, "message": "Password login is disabled"}`. `GET /admin/api/auth/me` reports
+`"username": "api-token"` for a caller using the token.
+
+<Callout type="warn">
+  With no credentials, no `auth_provider` **and** an empty `allowed_ips`, the admin dashboard is
+  reachable without authentication. Every control you set is enforced: `allowed_ips` matches the
+  client address against each IP / CIDR / range pattern and returns `403` on a miss,
+  `auth_provider` requires authentication (static assets bypass that check), and the built-in
+  credentials gate the API and pages as described above. Set at least one in any non-local
+  deployment, and set `require_auth: true` so a missing secret stops the gateway from starting
+  instead of leaving the dashboard open. See [Admin API](/docs/observability/admin-api).
+</Callout>
+
+With `require_auth: true` and nothing configured, `octopus serve` exits with:
+
+```text
+admin.require_auth is true but no admin credentials are configured: set OCTOPUS_ADMIN_PASSWORD or OCTOPUS_ADMIN_API_TOKEN, or admin.auth_provider
+```
+
+With `require_auth: true`, an `auth_provider` must name an entry in
+[`auth_providers`](/docs/configuration/auth). A name that is not defined there fails validation
+instead of leaving the dashboard unprotected.
+
+## Private admin listener
+
+By default everything shares `gateway.listen`: proxied traffic, the admin UI and API, FARP
+registration, metrics and probes. Set `admin.listen` and you get a second listener that carries
+only the internal endpoints, so you can publish the gateway port and keep the admin port on a
+private network:
+
+```yaml
+gateway:
+  listen: "0.0.0.0:8080"   # public: proxied traffic and probes
+admin:
+  listen: "0.0.0.0:9090"   # private: admin, FARP, metrics and probes
+```
+
+At startup you'll see:
+
+```text
+Admin listener on 0.0.0.0:9090: admin UI, admin API, FARP registration, metrics
+```
+
+Which port serves which path:
+
+| Path | Gateway port (8080) | Admin port (9090) |
+| --- | --- | --- |
+| `/livez`, `/readyz`, `/startupz` | served | served |
+| `/admin*`, `/__admin*` | routed | served |
+| `/metrics`, `/__metrics` | routed | served |
+| `/_farp/v1/*`, `/__farp*`, `/__/farp*`, `/farp*` | routed | served |
+| `/swagger`, `/docs`, `/redoc` | routed | served |
+| anything else | routed | `404` |
+
+"Routed" means the gateway port treats the path like any other: it goes through the router and
+answers `404` when no route matches it. If you declare a route for `/docs`, that route wins on the
+gateway port. On the admin port every other path answers `404` with:
+
+```json
+{"error": "not_found", "message": "the admin listener serves only admin, FARP, metrics and probe endpoints"}
+```
+
+The admin listener is always plain HTTP, even when `gateway.tls` is set, and it never proxies.
+HTTP/3 stays on the gateway port. Admin auth, `allowed_ips` and `require_auth` apply on the admin
+port the same way they apply to a single combined port. Keep credentials on even though the port is
+private. On shutdown the admin listener stops accepting when the gateway does.
+
+<Callout type="warn">
+  Never publish or route the admin port. Keep it off your Ingress, Gateway, LoadBalancer and any
+  `docker run -p`. Point Prometheus at it for `/metrics`, and send FARP registrations and admin API
+  calls to it from inside the network.
+</Callout>
+
+`admin.listen` must use a different port from `gateway.listen`. When the ports match and the IPs
+match (or either is `0.0.0.0` / `::`), validation fails with:
+
+```text
+admin.listen must use a different port from gateway.listen
+```
+
+If the address can't be bound, `octopus serve` exits with
+`Failed to bind admin listener to <addr>: <reason>` before the startup probe ever passes.
+
+The Helm chart and the bundled Kubernetes manifests set `admin.listen: "0.0.0.0:9090"` and already
+expose the `admin` container and Service port, and the chart's `ServiceMonitor` scrapes the
+`admin` port once `admin.listen` is set. Leave `admin.listen` unset and the gateway port serves
+everything, with the dashboard under the gateway's internal route prefix (see
 `gateway.internal_route_prefix` in [Gateway](/docs/configuration/gateway)).

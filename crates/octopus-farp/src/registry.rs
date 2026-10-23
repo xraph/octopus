@@ -24,8 +24,12 @@ pub struct ServiceRegistration {
     pub manifest: SchemaManifest,
     /// Fetched schemas
     pub schemas: Vec<SchemaDescriptor>,
-    /// Manifest fetch URL (for heartbeat retry — §17.4.1)
+    /// Manifest fetch URL (for heartbeat retry, §17.4.1)
     pub manifest_url: Option<String>,
+    /// The last registration could not fetch any of its schemas, so the
+    /// gateway kept the service's previous FARP routes. Each heartbeat retries
+    /// the fetch until it works.
+    pub schema_retry_pending: bool,
 }
 
 impl ServiceRegistration {
@@ -40,6 +44,7 @@ impl ServiceRegistration {
             manifest,
             schemas: Vec::new(),
             manifest_url: None,
+            schema_retry_pending: false,
         }
     }
 
@@ -347,8 +352,9 @@ impl SchemaRegistry {
         Err(Error::Farp(format!("Instance '{instance_id}' not found")))
     }
 
-    /// Deregister a service by instance ID
-    pub fn deregister_by_instance_id(&self, instance_id: &str) -> Result<()> {
+    /// Deregister a service by instance ID. Returns the name of the service
+    /// that instance belonged to.
+    pub fn deregister_by_instance_id(&self, instance_id: &str) -> Result<String> {
         // Find and remove the service by instance_id
         let service_name = {
             let mut found = None;
@@ -371,7 +377,7 @@ impl SchemaRegistry {
 
             self.services.remove(&name);
             info!(instance_id = %instance_id, service = %name, "Service instance deregistered");
-            Ok(())
+            Ok(name)
         } else {
             Err(Error::Farp(format!("Instance '{instance_id}' not found")))
         }

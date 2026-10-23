@@ -10,11 +10,11 @@ import { Callout } from 'fumadocs-ui/components/callout';
 Octopus distributes traffic across an upstream's instances using a policy set per
 upstream via `lb_policy`. Each instance is identified by `id`, `host`, and `port`.
 
-<Callout type="warn" title="Policy is honored on the operator path">
-  `lb_policy` (and instance `weight`) map to a live balancer on the
-  Kubernetes/operator-driven path. For upstreams registered from a **static
-  config file**, the gateway currently uses round-robin regardless of
-  `lb_policy`. See [Upstreams](/docs/configuration/upstreams).
+<Callout type="info" title="Policy and weights apply everywhere">
+  `lb_policy` and instance `weight` map to a live balancer for upstreams from
+  the config file (on startup and on hot reload) and from the Kubernetes
+  operator. An unrecognized `lb_policy` logs a warning and balances
+  round-robin. See [Upstreams](/docs/configuration/upstreams).
 </Callout>
 
 ## Strategies

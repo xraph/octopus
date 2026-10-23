@@ -75,6 +75,49 @@ async fn serve_io<IO>(
     }
 }
 
+/// Spawn the accept loop for the private admin listener (plain HTTP).
+///
+/// Returns the stop sender and the task: sending `true` (or dropping the
+/// sender) makes the loop stop accepting and drop the socket. Connections
+/// already accepted finish on their own tasks.
+fn spawn_admin_listener(
+    listener: tokio::net::TcpListener,
+    handler: crate::RequestHandler,
+) -> (
+    tokio::sync::watch::Sender<bool>,
+    tokio::task::JoinHandle<()>,
+) {
+    let (stop_tx, mut stop_rx) = tokio::sync::watch::channel(false);
+    if let Ok(addr) = listener.local_addr() {
+        tracing::info!(
+            "Admin listener on {}: admin UI, admin API, FARP registration, metrics",
+            addr
+        );
+    }
+    let task = tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                result = listener.accept() => match result {
+                    Ok((stream, addr)) => {
+                        tracing::trace!("Accepted admin connection from {}", addr);
+                        let handler = handler.clone();
+                        tokio::spawn(serve_io(stream, handler, None, None, addr));
+                    }
+                    Err(e) => tracing::error!("Failed to accept admin connection: {}", e),
+                },
+                // A send of `true` or a dropped sender both end the loop.
+                changed = stop_rx.changed() => {
+                    if changed.is_err() || *stop_rx.borrow() {
+                        break;
+                    }
+                }
+            }
+        }
+        tracing::info!("Admin listener stopped accepting");
+    });
+    (stop_tx, task)
+}
+
 /// Spawn a background task that reloads the file-based TLS certificate when the
 /// cert file's modification time changes, rebuilding the config (preserving mTLS
 /// and ALPN) and swapping it into the live acceptor with no downtime.
@@ -162,6 +205,9 @@ pub struct Server {
     /// Shared virtual gateway index from the operator, handed to the request
     /// handler so it can resolve a request's gateway by host. `None` without k8s.
     gateway_index: Option<GatewayIndexHandle>,
+    /// Built-in admin auth (`OCTOPUS_ADMIN_PASSWORD` / `OCTOPUS_ADMIN_API_TOKEN`),
+    /// read once at build time. `None` = the admin dashboard stays open.
+    admin_session_auth: Option<Arc<octopus_admin::auth::AdminAuth>>,
 }
 
 impl std::fmt::Debug for Server {
@@ -188,6 +234,11 @@ impl Server {
     /// Get listen address
     pub fn listen_addr(&self) -> SocketAddr {
         self.config.gateway.listen
+    }
+
+    /// Address of the private admin listener (`admin.listen`), if configured.
+    pub fn admin_listen_addr(&self) -> Option<SocketAddr> {
+        self.config.admin.listen
     }
 
     /// Get router
@@ -268,7 +319,17 @@ impl Server {
             .map_err(|e| {
                 Error::Runtime(format!("Failed to bind to {}: {}", self.listen_addr(), e))
             })?;
-        // Listener is bound — startup probe can now pass.
+
+        // The private admin listener (plain HTTP, never TLS), bound before the
+        // startup probe passes so a bad `admin.listen` fails the start.
+        let admin_listener = match self.admin_listen_addr() {
+            Some(addr) => Some(tokio::net::TcpListener::bind(addr).await.map_err(|e| {
+                Error::Runtime(format!("Failed to bind admin listener to {addr}: {e}"))
+            })?),
+            None => None,
+        };
+
+        // Both listeners are bound, so the startup probe can now pass.
         self.lifecycle.mark_bind_complete();
 
         // Create TLS acceptor if configured
@@ -557,6 +618,11 @@ impl Server {
             );
         }
 
+        // Built-in admin session auth (password login and/or API token).
+        if let Some(ref auth) = self.admin_session_auth {
+            handler.set_admin_session_auth(Arc::clone(auth));
+        }
+
         // Anti host-spoofing (Host == TLS SNI), gated by config.
         handler.set_enforce_sni_check(self.config.gateway.enforce_sni_check);
 
@@ -613,6 +679,16 @@ impl Server {
                 }
             }
         }
+
+        // With a private admin listener the gateway port (TCP and QUIC) only
+        // proxies, and the admin listener gets a clone made after every setter
+        // above, so admin auth, the IP allowlist and probes apply unchanged.
+        let admin_stop = admin_listener.map(|listener| {
+            let mut private = handler.clone();
+            private.set_listener_role(crate::handler::ListenerRole::Private);
+            handler.set_listener_role(crate::handler::ListenerRole::Public);
+            spawn_admin_listener(listener, private)
+        });
 
         // Start the HTTP/3 listener on UDP, alongside the TCP listener above.
         // Config validation has already rejected http3.enabled without TLS.
@@ -707,76 +783,23 @@ impl Server {
                     self.router.clear();
 
                     for route_config in &new_config.routes {
-                        for method_str in &route_config.methods {
-                            let method: http::Method = match method_str.parse() {
-                                Ok(m) => m,
-                                Err(_) => {
-                                    tracing::error!(method = %method_str, "Invalid HTTP method in reloaded config, skipping");
-                                    continue;
-                                }
-                            };
-
-                            let mut builder = octopus_router::RouteBuilder::new()
-                                .path(&route_config.path)
-                                .method(method)
-                                .upstream_name(&route_config.upstream)
-                                .priority(route_config.priority)
-                                .auth_provider(route_config.auth_provider.as_deref())
-                                .skip_auth(route_config.skip_auth)
-                                .require_roles(&route_config.require_roles)
-                                .require_scopes(&route_config.require_scopes)
-                                .authz_rule(route_config.authz_rule.as_deref());
-
-                            if let Some(ref pfx) = route_config.strip_prefix {
-                                builder = builder.strip_prefix(pfx);
+                        let routes = match route_config.to_routes(octopus_router::RouteOrigin::Config) {
+                            Ok(routes) => routes,
+                            Err(e) => {
+                                tracing::error!(path = %route_config.path, error = %e, "Invalid route in reloaded config, skipping");
+                                continue;
                             }
-                            if let Some(ref pfx) = route_config.add_prefix {
-                                builder = builder.add_prefix(pfx);
-                            }
-                            if let Some(ref rl) = route_config.rate_limit {
-                                builder = builder.rate_limit(rl.requests_per_window, rl.window_size);
-                            }
-                            if let Some(timeout) = route_config.timeout {
-                                builder = builder.timeout(Some(timeout));
-                            }
-                            if let Some(ref cors_cfg) = route_config.cors {
-                                builder = builder.cors(Some(octopus_router::RouteCorsOverride {
-                                    allowed_origins: cors_cfg.allowed_origins.clone(),
-                                    allowed_methods: cors_cfg.allowed_methods.clone(),
-                                    allowed_headers: cors_cfg.allowed_headers.clone(),
-                                    allow_credentials: cors_cfg.allow_credentials,
-                                    max_age: cors_cfg.max_age,
-                                }));
-                            }
-                            if let Some(spec) = route_config.proxy_spec() {
-                                builder = builder.proxy(Some(spec));
-                            }
-
-                            match builder.build() {
-                                Ok(route) => {
-                                    if let Err(e) = self.router.add_route(route) {
-                                        tracing::error!(error = %e, "Failed to add route during reload");
-                                    }
-                                }
-                                Err(e) => {
-                                    tracing::error!(error = %e, "Failed to build route during reload");
-                                }
+                        };
+                        for route in routes {
+                            if let Err(e) = self.router.add_route(route) {
+                                tracing::error!(error = %e, "Failed to add route during reload");
                             }
                         }
                     }
 
                     // 2. Re-register upstreams
                     for upstream_config in &new_config.upstreams {
-                        let mut cluster = octopus_core::UpstreamCluster::new(&upstream_config.name);
-                        for instance_config in &upstream_config.instances {
-                            let instance = octopus_core::UpstreamInstance::new(
-                                &instance_config.id,
-                                &instance_config.host,
-                                instance_config.port,
-                            );
-                            cluster.add_instance(instance);
-                        }
-                        self.router.register_upstream(cluster);
+                        self.router.register_upstream(upstream_config.to_cluster());
                     }
 
                     tracing::info!(
@@ -818,6 +841,12 @@ impl Server {
                     break;
                 }
             }
+        }
+
+        // The admin listener stops accepting with the gateway.
+        if let Some((stop, task)) = admin_stop {
+            let _ = stop.send(true);
+            let _ = task.await;
         }
 
         // Readiness is NotReady, state is ShuttingDown, and we have stopped
@@ -948,6 +977,21 @@ impl ServerBuilder {
             .config
             .ok_or_else(|| Error::Config("config is required".to_string()))?;
 
+        // Built-in admin auth from the environment, checked against
+        // `admin.require_auth` before anything else starts.
+        let admin_session_auth = octopus_admin::auth::AdminAuth::from_env().map(Arc::new);
+        ensure_admin_auth(&config.admin, admin_session_auth.is_some())?;
+        match admin_session_auth {
+            Some(ref auth) => tracing::info!(
+                "Admin authentication enabled: {}",
+                auth.mechanisms().join(", ")
+            ),
+            None if config.admin.auth_provider.is_none() => tracing::warn!(
+                "Admin authentication is disabled: set OCTOPUS_ADMIN_PASSWORD or OCTOPUS_ADMIN_API_TOKEN to require it"
+            ),
+            None => {}
+        }
+
         // Create worker pool (only if not in test mode)
         let worker_pool = Arc::new(WorkerPool::new(self.worker_config)?);
 
@@ -965,64 +1009,13 @@ impl ServerBuilder {
 
         // Register upstreams
         for upstream_config in &config.upstreams {
-            let mut cluster = octopus_core::UpstreamCluster::new(&upstream_config.name);
-
-            for instance_config in &upstream_config.instances {
-                let instance = octopus_core::UpstreamInstance::new(
-                    &instance_config.id,
-                    &instance_config.host,
-                    instance_config.port,
-                );
-                cluster.add_instance(instance);
-            }
-
-            router.register_upstream(cluster);
+            router.register_upstream(upstream_config.to_cluster());
         }
 
         // Register routes (with auth config)
         for route_config in &config.routes {
-            for method_str in &route_config.methods {
-                let method = method_str
-                    .parse()
-                    .map_err(|_| Error::Config(format!("Invalid HTTP method: {method_str}")))?;
-
-                let mut builder = octopus_router::RouteBuilder::new()
-                    .path(&route_config.path)
-                    .method(method)
-                    .upstream_name(&route_config.upstream)
-                    .priority(route_config.priority)
-                    .auth_provider(route_config.auth_provider.as_deref())
-                    .skip_auth(route_config.skip_auth)
-                    .require_roles(&route_config.require_roles)
-                    .require_scopes(&route_config.require_scopes)
-                    .authz_rule(route_config.authz_rule.as_deref());
-
-                if let Some(ref pfx) = route_config.strip_prefix {
-                    builder = builder.strip_prefix(pfx);
-                }
-                if let Some(ref pfx) = route_config.add_prefix {
-                    builder = builder.add_prefix(pfx);
-                }
-                if let Some(ref rl) = route_config.rate_limit {
-                    builder = builder.rate_limit(rl.requests_per_window, rl.window_size);
-                }
-                if let Some(timeout) = route_config.timeout {
-                    builder = builder.timeout(Some(timeout));
-                }
-                if let Some(ref cors_cfg) = route_config.cors {
-                    builder = builder.cors(Some(octopus_router::RouteCorsOverride {
-                        allowed_origins: cors_cfg.allowed_origins.clone(),
-                        allowed_methods: cors_cfg.allowed_methods.clone(),
-                        allowed_headers: cors_cfg.allowed_headers.clone(),
-                        allow_credentials: cors_cfg.allow_credentials,
-                        max_age: cors_cfg.max_age,
-                    }));
-                }
-                if let Some(spec) = route_config.proxy_spec() {
-                    builder = builder.proxy(Some(spec));
-                }
-
-                router.add_route(builder.build()?)?;
+            for route in route_config.to_routes(octopus_router::RouteOrigin::Config)? {
+                router.add_route(route)?;
             }
         }
 
@@ -1041,25 +1034,28 @@ impl ServerBuilder {
             ));
             let federation = Arc::new(octopus_farp::SchemaFederation::new());
 
-            // Optional virtual-gateway binding: scope all FARP routes under one
-            // hostname (e.g. api.example.cloud) and attach them for policy.
-            let farp_binding = config.farp.gateway.as_ref().map(|g| {
-                octopus_farp::GatewayBinding::new(&g.hostname)
-                    .with_gateway_id(g.gateway_id.clone())
-                    .with_default_auth(g.default_auth_provider.clone())
-                    .with_rate_limit(
-                        g.default_rate_limit_per_minute
-                            .map(|rpm| (rpm, std::time::Duration::from_secs(60))),
-                    )
-                    .with_timeout(g.default_timeout)
-            });
+            // Optional virtual-gateway binding: put every FARP route on each
+            // listed hostname (e.g. api.example.cloud) and attach it for policy.
+            let farp_binding = config.farp.gateway.as_ref().map(farp_binding_from_config);
 
             // Build the handler first so its (hot-swappable) binding cell can be
             // shared with the discovery watcher — a CRD-driven binding update via
             // the controller then reaches both the push and discovery paths.
             let mut handler =
                 FarpApiHandler::with_federation(Arc::clone(&registry), Arc::clone(&federation))
-                    .with_router(Arc::clone(&router));
+                    .with_router(Arc::clone(&router))
+                    .with_registration_token(config.farp.registration_token.as_deref());
+            if config
+                .farp
+                .registration_token
+                .as_deref()
+                .is_none_or(str::is_empty)
+            {
+                tracing::warn!(
+                    "FARP is enabled without farp.registration_token: anyone who can reach \
+                     the FARP endpoints can register services and take over routes"
+                );
+            }
             if let Some(binding) = farp_binding {
                 handler = handler.with_binding(binding);
             }
@@ -1146,6 +1142,7 @@ impl ServerBuilder {
             lifecycle,
             operator_tls,
             gateway_index,
+            admin_session_auth,
         })
     }
 
@@ -1361,41 +1358,51 @@ impl ServerBuilder {
 
         let mut routes = Vec::new();
         for rc in &config.routes {
-            for method_str in &rc.methods {
+            // Same expansion as `RouteConfig::to_routes`: every effective
+            // method on every declared host (empty `hosts` gives one `Any`).
+            let hosts = match rc.host_matches() {
+                Ok(hosts) => hosts,
+                Err(e) => {
+                    tracing::error!(path = %rc.path, error = %e, "Invalid route hosts, skipping");
+                    continue;
+                }
+            };
+            for method_str in rc.effective_methods() {
                 let Ok(method) = method_str.parse::<http::Method>() else {
                     continue;
                 };
-                let mut r =
-                    IntermediateRoute::new(method, &rc.path, &rc.upstream, RouteSource::Static);
-                r.priority = rc.priority;
-                r.strip_prefix = rc.strip_prefix.clone();
-                r.add_prefix = rc.add_prefix.clone();
-                r.auth_provider = rc.auth_provider.clone();
-                r.skip_auth = rc.skip_auth;
-                r.require_roles = rc.require_roles.clone();
-                r.require_scopes = rc.require_scopes.clone();
-                r.authz_rule = rc.authz_rule.clone();
-                r.timeout = rc.timeout;
-                r.proxy = rc.proxy_spec();
-                if let Some(rl) = &rc.rate_limit {
-                    r.rate_limit = Some(RateLimit {
-                        requests: rl.requests_per_window,
-                        window: rl.window_size,
-                    });
+                for host in &hosts {
+                    let mut r = IntermediateRoute::new(
+                        method.clone(),
+                        &rc.path,
+                        &rc.upstream,
+                        RouteSource::Static,
+                    )
+                    .with_host(host.clone());
+                    r.priority = rc.priority;
+                    r.strip_prefix = rc.strip_prefix.clone();
+                    r.add_prefix = rc.add_prefix.clone();
+                    r.auth_provider = rc.auth_provider.clone();
+                    r.skip_auth = rc.skip_auth;
+                    r.require_roles = rc.require_roles.clone();
+                    r.require_scopes = rc.require_scopes.clone();
+                    r.authz_rule = rc.authz_rule.clone();
+                    r.timeout = rc.timeout;
+                    r.proxy = rc.proxy_spec();
+                    if let Some(rl) = &rc.rate_limit {
+                        r.rate_limit = Some(RateLimit {
+                            requests: rl.requests_per_window,
+                            window: rl.window_size,
+                        });
+                    }
+                    routes.push(r);
                 }
-                routes.push(r);
             }
         }
 
         let mut upstreams = Vec::new();
         for uc in &config.upstreams {
-            let mut cluster = octopus_core::UpstreamCluster::new(&uc.name);
-            for ic in &uc.instances {
-                cluster.add_instance(octopus_core::UpstreamInstance::new(
-                    &ic.id, &ic.host, ic.port,
-                ));
-            }
-            upstreams.push(cluster);
+            upstreams.push(uc.to_cluster());
         }
 
         (routes, upstreams)
@@ -1472,6 +1479,38 @@ impl ServerBuilder {
     }
 }
 
+/// The FARP gateway binding `farp.gateway` describes: every effective
+/// hostname (none means host-agnostic routes) plus the gateway policy.
+fn farp_binding_from_config(
+    g: &octopus_config::types::FarpGatewayConfig,
+) -> octopus_farp::GatewayBinding {
+    octopus_farp::GatewayBinding::for_hostnames(&g.effective_hostnames())
+        .with_gateway_id(g.gateway_id.clone())
+        .with_default_auth(g.default_auth_provider.clone())
+        .with_rate_limit(
+            g.default_rate_limit_per_minute
+                .map(|rpm| (rpm, std::time::Duration::from_secs(60))),
+        )
+        .with_timeout(g.default_timeout)
+}
+
+/// Fail fast when `admin.require_auth` is set but nothing would protect the
+/// admin surface: neither built-in session auth (`session_auth`) nor an
+/// `admin.auth_provider`.
+pub(crate) fn ensure_admin_auth(
+    admin: &octopus_config::types::AdminConfig,
+    session_auth: bool,
+) -> Result<()> {
+    if admin.require_auth && !session_auth && admin.auth_provider.is_none() {
+        return Err(Error::Config(
+            "admin.require_auth is true but no admin credentials are configured: \
+             set OCTOPUS_ADMIN_PASSWORD or OCTOPUS_ADMIN_API_TOKEN, or admin.auth_provider"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
 impl Default for ServerBuilder {
     fn default() -> Self {
         Self::new()
@@ -1483,6 +1522,33 @@ mod tests {
     use super::*;
     use octopus_config::{ConfigBuilder, GatewayConfig};
     use std::time::Duration;
+
+    #[test]
+    fn legacy_star_hostname_binds_host_agnostic_routes_with_policy() {
+        let config = octopus_config::load_from_str(
+            "gateway: {listen: '127.0.0.1:8080'}\n\
+             farp: {enabled: true, gateway: {hostname: '*', gateway_id: g, default_auth_provider: x}}\n",
+            octopus_config::ConfigFormat::Yaml,
+        )
+        .unwrap();
+        octopus_config::validate_config(&config).unwrap();
+
+        let binding = super::farp_binding_from_config(config.farp.gateway.as_ref().unwrap());
+        assert!(binding.hosts.is_empty());
+        let builders = octopus_farp::expand_gateway_binding(
+            octopus_router::RouteBuilder::new()
+                .method(http::Method::GET)
+                .path("/billing/invoices")
+                .upstream_name("billing"),
+            Some(&binding),
+            false,
+        );
+        assert_eq!(builders.len(), 1);
+        let route = builders.into_iter().next().unwrap().build().unwrap();
+        assert_eq!(route.host, octopus_router::HostMatch::Any);
+        assert_eq!(route.gateway_id.as_deref(), Some("g"));
+        assert_eq!(route.auth_provider.as_deref(), Some("x"));
+    }
 
     fn test_config() -> Config {
         use octopus_config::types::{CompressionConfig, ProbeConfig};
@@ -1523,5 +1589,84 @@ mod tests {
     async fn test_server_builder_no_config() {
         let result = ServerBuilder::new().build().await;
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn require_auth_without_credentials_fails() {
+        use octopus_config::types::AdminConfig;
+
+        let required = AdminConfig {
+            require_auth: true,
+            ..Default::default()
+        };
+        match ensure_admin_auth(&required, false) {
+            Err(Error::Config(msg)) => assert_eq!(
+                msg,
+                "admin.require_auth is true but no admin credentials are configured: \
+                 set OCTOPUS_ADMIN_PASSWORD or OCTOPUS_ADMIN_API_TOKEN, or admin.auth_provider"
+            ),
+            other => panic!("expected a config error, got {other:?}"),
+        }
+        assert!(ensure_admin_auth(&required, true).is_ok());
+
+        let with_provider = AdminConfig {
+            require_auth: true,
+            auth_provider: Some("x".to_string()),
+            ..Default::default()
+        };
+        assert!(ensure_admin_auth(&with_provider, false).is_ok());
+
+        assert!(ensure_admin_auth(&AdminConfig::default(), false).is_ok());
+    }
+
+    /// With the operator on, static routes reach the router only through
+    /// `config_to_ir`, so it must expand `hosts` and empty `methods` exactly
+    /// like `RouteConfig::to_routes` does.
+    #[cfg(feature = "kubernetes")]
+    #[test]
+    fn config_to_ir_expands_hosts_and_empty_methods() {
+        use octopus_router::HostMatch;
+
+        let yaml = r#"
+gateway:
+  listen: "127.0.0.1:8080"
+upstreams:
+  - name: web
+    instances: [{id: w1, host: 127.0.0.1, port: 9000}]
+routes:
+  - path: /api/*
+    methods: [GET]
+    hosts: [api.acme.dev, "*.acme.dev", API.Acme.Dev.]
+    upstream: web
+  - path: /all
+    methods: []
+    upstream: web
+"#;
+        let config = octopus_config::load_str(yaml, octopus_config::ConfigFormat::Yaml).unwrap();
+        let (routes, _) = ServerBuilder::config_to_ir(&config);
+
+        let hosted: Vec<&HostMatch> = routes
+            .iter()
+            .filter(|r| r.path == "/api/*")
+            .map(|r| &r.host)
+            .collect();
+        assert_eq!(
+            hosted,
+            vec![
+                &HostMatch::Exact("api.acme.dev".to_string()),
+                &HostMatch::Wildcard(".acme.dev".to_string()),
+            ],
+            "one IR route per distinct host, never a catch-all"
+        );
+
+        let all: Vec<String> = routes
+            .iter()
+            .filter(|r| r.path == "/all")
+            .map(|r| {
+                assert_eq!(r.host, HostMatch::Any, "no hosts means any host");
+                r.method.to_string()
+            })
+            .collect();
+        assert_eq!(all, octopus_config::ALL_METHODS.map(String::from).to_vec());
     }
 }

@@ -85,7 +85,7 @@ impl Deduplication {
     /// Runs cleanup every 100 requests to amortise the cost.
     fn maybe_evict(&self) {
         let count = self.request_counter.fetch_add(1, Ordering::Relaxed);
-        if count % 100 != 0 {
+        if !count.is_multiple_of(100) {
             return;
         }
 

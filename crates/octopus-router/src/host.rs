@@ -6,8 +6,10 @@
 //! (`*.example.com`). When several routes match the same method+path, the one
 //! with the most specific host wins (exact > wildcard > any).
 //!
-//! Hosts are compared in lowercase; callers normalize the request host and
-//! parsed patterns are lowercased by [`HostMatch::parse`].
+//! Hosts are compared in lowercase. Callers normalize the request host with
+//! [`normalize_request_host`]; patterns are lowercased by [`HostMatch::parse`]
+//! (lenient, for discovered input) or [`HostMatch::parse_pattern`] (strict, for
+//! configuration and API input).
 
 /// How a route matches against the request host.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -40,6 +42,70 @@ impl HostMatch {
         HostMatch::Exact(pattern.to_ascii_lowercase())
     }
 
+    /// Strictly parse a hostname pattern from configuration or API input.
+    ///
+    /// Unlike [`HostMatch::parse`], this never yields [`HostMatch::Any`]: an
+    /// operator matches any host by giving an empty hosts list instead.
+    ///
+    /// - The input is trimmed, lowercased and loses one trailing `.`.
+    /// - `*.` is allowed only as a prefix (`*.example.com` becomes
+    ///   [`HostMatch::Wildcard`] stored as `.example.com`).
+    /// - The rest must be 1 to 253 characters of dot-separated labels, each
+    ///   matching `[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?`.
+    pub fn parse_pattern(pattern: &str) -> Result<HostMatch, String> {
+        let lowered = pattern.trim().to_ascii_lowercase();
+        let host = lowered.strip_suffix('.').unwrap_or(&lowered);
+
+        if host.is_empty() {
+            return Err(format!("host '{pattern}': must not be empty"));
+        }
+        if host == "*" {
+            return Err(format!(
+                "host '{pattern}': use an empty hosts list to match any host"
+            ));
+        }
+
+        let (wildcard, rest) = match host.strip_prefix("*.") {
+            Some(rest) => (true, rest),
+            None => (false, host),
+        };
+        if rest.contains('*') {
+            return Err(format!(
+                "host '{pattern}': '*' is only allowed as the first label ('*.example.com')"
+            ));
+        }
+        if rest.is_empty() || rest.len() > 253 {
+            return Err(format!(
+                "host '{pattern}': must be 1 to 253 characters long"
+            ));
+        }
+        for label in rest.split('.') {
+            if !is_valid_label(label) {
+                return Err(format!(
+                    "host '{pattern}': label '{label}' must be 1 to 63 characters of a-z, 0-9 \
+                     and '-', and must not start or end with '-'"
+                ));
+            }
+        }
+
+        Ok(if wildcard {
+            HostMatch::Wildcard(format!(".{rest}"))
+        } else {
+            HostMatch::Exact(rest.to_string())
+        })
+    }
+
+    /// The pattern string this matcher was parsed from: `None` for
+    /// [`HostMatch::Any`], `"*.example.com"` for a wildcard, the host for an
+    /// exact match. The inverse of [`HostMatch::parse_pattern`].
+    pub fn pattern(&self) -> Option<String> {
+        match self {
+            HostMatch::Any => None,
+            HostMatch::Exact(h) => Some(h.clone()),
+            HostMatch::Wildcard(suffix) => Some(format!("*{suffix}")),
+        }
+    }
+
     /// Whether this matcher accepts `host` (which must already be lowercased).
     pub fn matches(&self, host: &str) -> bool {
         match self {
@@ -59,6 +125,47 @@ impl HostMatch {
             HostMatch::Wildcard(_) => 1,
             HostMatch::Any => 0,
         }
+    }
+}
+
+/// One DNS label: `[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?`.
+fn is_valid_label(label: &str) -> bool {
+    let bytes = label.as_bytes();
+    let alnum = |b: &u8| b.is_ascii_lowercase() || b.is_ascii_digit();
+    match (bytes.first(), bytes.last()) {
+        (Some(first), Some(last)) => {
+            bytes.len() <= 63
+                && alnum(first)
+                && alnum(last)
+                && bytes.iter().all(|b| alnum(b) || *b == b'-')
+        }
+        _ => false,
+    }
+}
+
+/// Normalize a raw request host (`Host` header or `:authority`) for matching.
+///
+/// Drops the `:port`, lowercases, and strips one trailing `.`, so
+/// `API.Acme.Dev.:8443` becomes `api.acme.dev`. A bracketed IPv6 literal is
+/// kept intact (`[::1]:8080` becomes `[::1]`), and an unbracketed value with
+/// several colons is treated as a bare IPv6 address and keeps them.
+pub fn normalize_request_host(raw: &str) -> String {
+    let raw = raw.trim();
+    let host = if raw.starts_with('[') {
+        match raw.find(']') {
+            Some(end) => &raw[..=end],
+            None => raw,
+        }
+    } else {
+        match raw.split_once(':') {
+            Some((host, port)) if !port.contains(':') => host,
+            _ => raw,
+        }
+    };
+    let host = host.to_ascii_lowercase();
+    match host.strip_suffix('.') {
+        Some(stripped) => stripped.to_string(),
+        None => host,
     }
 }
 
@@ -117,5 +224,71 @@ mod tests {
                 > HostMatch::Wildcard(".a.com".into()).specificity()
         );
         assert!(HostMatch::Wildcard(".a.com".into()).specificity() > HostMatch::Any.specificity());
+    }
+
+    #[test]
+    fn parse_pattern_accepts_exact_and_wildcard() {
+        assert_eq!(
+            HostMatch::parse_pattern("API.Acme.Dev.").unwrap(),
+            HostMatch::Exact("api.acme.dev".into())
+        );
+        assert_eq!(
+            HostMatch::parse_pattern("*.acme.dev").unwrap(),
+            HostMatch::Wildcard(".acme.dev".into())
+        );
+        assert_eq!(
+            HostMatch::parse_pattern("10.0.0.5").unwrap(),
+            HostMatch::Exact("10.0.0.5".into())
+        );
+    }
+
+    #[test]
+    fn parse_pattern_rejects_bad_patterns() {
+        for bad in [
+            "",
+            "*",
+            "api.*.dev",
+            "*api.dev",
+            "api..dev",
+            "-api.dev",
+            "api-.dev",
+            "api.dev:8080",
+            "api/dev",
+            "ápi.dev",
+            &"a".repeat(64),
+            &format!("{}.dev", "a.".repeat(126)),
+        ] {
+            assert!(
+                HostMatch::parse_pattern(bad).is_err(),
+                "{bad:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_pattern_errors_name_the_input_and_rule() {
+        let err = HostMatch::parse_pattern("api.*.dev").unwrap_err();
+        assert!(err.contains("api.*.dev"), "{err}");
+        assert!(err.contains("first label"), "{err}");
+        let err = HostMatch::parse_pattern("*").unwrap_err();
+        assert!(err.contains("empty hosts list"), "{err}");
+    }
+
+    #[test]
+    fn pattern_round_trips() {
+        for p in ["api.acme.dev", "*.acme.dev"] {
+            assert_eq!(
+                HostMatch::parse_pattern(p).unwrap().pattern().as_deref(),
+                Some(p)
+            );
+        }
+        assert_eq!(HostMatch::Any.pattern(), None);
+    }
+
+    #[test]
+    fn normalize_request_host_strips_port_case_and_trailing_dot() {
+        assert_eq!(normalize_request_host("API.acme.dev.:8443"), "api.acme.dev");
+        assert_eq!(normalize_request_host("[::1]:8080"), "[::1]");
+        assert_eq!(normalize_request_host("acme.dev"), "acme.dev");
     }
 }

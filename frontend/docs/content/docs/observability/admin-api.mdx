@@ -12,7 +12,7 @@ the gateway listen port. Every endpoint below is taken from the admin router's
 route table; response shapes are taken from the admin response models.
 
 <Callout type="info">
-  The `/admin*` space — including this API — is protected by
+  The `/admin*` space, this API included, is protected by
   `admin.auth_provider` when set, but **not** by `admin.allowed_ips` (which is
   not enforced today). See [Admin dashboard](/docs/observability/admin-dashboard)
   for how to lock it down.
@@ -24,7 +24,7 @@ route table; response shapes are taken from the admin response models.
   headers and body intact, so handlers that deserialize a payload (route and
   upstream create/update, TLS upload, plugin config) receive it. Two limits
   still apply: configuration is **immutable at runtime** (`PUT
-  /admin/api/config/:key` only records the change — see below), and resources
+  /admin/api/config/:key` only records the change, see below), and resources
   owned by the Kubernetes operator or static config may be **overwritten on the
   next reconcile**.
 </Callout>
@@ -33,11 +33,11 @@ route table; response shapes are taken from the admin response models.
 
 | Method | Path | Returns |
 | --- | --- | --- |
-| `GET` | `/admin/api/stats` | `DashboardStats` — aggregate gateway stats. |
-| `GET` | `/admin/api/metrics/realtime` | `DashboardStats` — same shape, for live refresh. |
-| `GET` | `/admin/api/analytics?timeframe=24h` | `AnalyticsMetrics` — top routes, latency percentiles, traffic by method. |
+| `GET` | `/admin/api/stats` | `DashboardStats`: aggregate gateway stats. |
+| `GET` | `/admin/api/metrics/realtime` | `DashboardStats`, same shape, for live refresh. |
+| `GET` | `/admin/api/analytics?timeframe=24h` | `AnalyticsMetrics`: top routes, latency percentiles, traffic by method. |
 | `GET` | `/admin/api/metrics/timeseries?metric=requests&period=1h` | Array of `{ timestamp, value }`. `metric` is one of `requests`, `errors`, `latency`, `connections`. |
-| `GET` | `/admin/api/metrics/performance` | `PerformanceMetrics` — CPU/memory/connection figures. |
+| `GET` | `/admin/api/metrics/performance` | `PerformanceMetrics`: CPU/memory/connection figures. |
 
 `DashboardStats`:
 
@@ -93,26 +93,119 @@ route table; response shapes are taken from the admin response models.
 
 ## Routes (CRUD)
 
-| Method | Path | Description |
+| Method | Path | Answers |
 | --- | --- | --- |
-| `GET` | `/admin/api/routes` | List all routes — array of `RouteInfo`. |
-| `POST` | `/admin/api/routes` | Create a route from a `RouteConfig` body (see the note above). |
-| `GET` | `/admin/api/routes/:id` | A single `RouteInfo` by id, or `{ "error": "Route not found", "id": ... }`. |
-| `PUT` | `/admin/api/routes/:id` | Replace a route (remove + add) from a `RouteConfig` body. |
-| `DELETE` | `/admin/api/routes/:id` | Delete a route by id. |
+| `GET` | `/admin/api/routes` | `200` with an array of `RouteInfo`, one per router entry. |
+| `POST` | `/admin/api/routes` | `201` with the new route's first `RouteInfo`. `400` for a bad body, `409` when the body's `id` already exists or clashes. |
+| `GET` | `/admin/api/routes/:id` | `200` with the first `RouteInfo` listed under that id, or `404`. |
+| `PUT` | `/admin/api/routes/:id` | `200` with the route's first `RouteInfo`. Creates the route or replaces it. `400` for a bad body, `409` on a clash. |
+| `DELETE` | `/admin/api/routes/:id` | `204` once every entry of that route is gone, or `404`. |
 
-### `GET /admin/api/routes` — the route-config endpoint
+`POST` and `PUT` answer `400` when the body isn't valid JSON, misses `path` or
+`upstream`, or names a bad method, path, host or upstream. They answer `500` in
+the rare case an insert fails after the checks passed; the router is put back
+as it was first. Every route endpoint except the list answers `503` when the
+gateway router isn't wired into the admin API. Errors come back as
+`{ "error": "..." }`.
 
-Returns an array of `RouteInfo`, combining each route's **operational metrics**
-with its **effective configuration**:
+### One route, many entries
+
+A route you send can list several methods and several hosts. Octopus expands it
+into one router entry per method and host, all carrying the route's `id`, the
+same way it expands a route in the config file. So this body:
+
+```json
+{
+  "path": "/api/*",
+  "methods": ["GET", "POST"],
+  "hosts": ["api.acme.dev", "*.acme.dev"],
+  "upstream": "web"
+}
+```
+
+sent as `PUT /admin/api/routes/lpr-1` becomes four entries, and
+`GET /admin/api/routes` lists four `RouteInfo` objects with `"id": "lpr-1"`.
+`PUT` and `DELETE` always act on the whole set.
+
+### `PUT` is an idempotent upsert
+
+`PUT /admin/api/routes/:id` creates the route when nothing carries that id and
+replaces every existing entry when something does. Sending the same body twice
+leaves the router exactly as one call would. The id in the path wins over any
+`id` in the body.
+
+The replacement is checked before anything changes:
+
+- Every new entry is built first, with the same validation as a config file
+  route. A host such as `api.*.dev` (wildcard not at the front) or an invalid
+  method is a `400`.
+- The upstream must already be registered, or you get a `400`.
+- If a route from the config file or the admin API with a different id already
+  serves the same method, path and host, you get a `409`. Paths are compared the
+  way the router stores them, so `/x` and `/x/` are the same path, and so are
+  `/users/:id` and `/users/:uid`, or `/files/*` and `/files/*rest`:
+
+  ```json
+  { "error": "Route lpr-1 already serves GET /x on a.dev", "conflict": "lpr-1" }
+  ```
+
+  `conflict` is the other route's id as `GET /admin/api/routes` lists it.
+
+Only then are the old entries removed and the new ones inserted. If an insert
+still fails, the old entries go back and the router is left as it was.
+
+You can replace a route that came from the config file's `routes[]` by its
+`id`. It then reports `"origin": "admin"` until the next restart reloads it from
+the file. An id that belongs to a route FARP or the Kubernetes operator
+discovered is different: `PUT` answers `409` with that id in `conflict`, since
+the discoverer owns those routes.
+
+Ids of the form `route-<n>` are reserved for the positional ids the list gives
+routes without one. A `PUT` to `route-3` replaces the id-less route listed
+there, and the new route gets a fresh UUID v4 id, returned in the response.
+`PUT` to a `route-<n>` that names no such route, or a `POST` body with an id of
+that shape, is a `400`.
+
+`POST /admin/api/routes` does the same work for a route that must be new. It
+generates a UUID v4 when the body has no `id`, and answers `409` when the id is
+already taken.
+
+Route writes through the admin API run one at a time, so two calls racing on the
+same id can't leave a mix of both.
+
+### Routes discovered by FARP or the operator
+
+A route from the config file or the admin API shadows a route that FARP or the
+Kubernetes operator discovered on the same host and path, whatever their
+priorities. That isn't a conflict: the `PUT` succeeds and your route serves the
+traffic. Delete it and the discovered route answers again, since `DELETE` only
+removes entries carrying the id you named.
+
+### Deleting
+
+`DELETE /admin/api/routes/:id` removes every entry carrying that id from the
+config file or the admin API. It never removes a discovered route: an id held
+only by FARP or operator routes answers `404`. A route without an id (a config
+route with no `id`, for example) is listed under a positional id such as
+`route-3`, and `DELETE` falls back to that: it removes the one entry the list
+showed at that position. Positional ids shift as routes come and go, so give a
+route an `id` if you plan to manage it through the API.
+
+### `GET /admin/api/routes`: the route-config endpoint
+
+Returns an array of `RouteInfo`, combining each route entry's **operational
+metrics** with its **effective configuration**:
 
 ```json
 [
   {
-    "id": "route-0",
-    "path": "/api/users",
+    "id": "lpr-1",
+    "route_id": "lpr-1",
+    "path": "/api/*",
     "method": "GET",
-    "upstream": "users-svc",
+    "host": "api.acme.dev",
+    "origin": "admin",
+    "upstream": "web",
     "request_count": 0,
     "is_healthy": true,
     "avg_latency_ms": 0.0,
@@ -137,9 +230,12 @@ Field meanings:
 
 | Field | Type | Source |
 | --- | --- | --- |
-| `id` | string | Synthetic id (`route-<index>`). |
+| `id` | string | The route's `id`, or a positional `route-<index>` for a route without one. |
+| `route_id` | string \| null | The route's own `id`, shared by all its entries. `null` when it has none. |
 | `path` | string | Route match path. |
-| `method` | string | HTTP method. |
+| `method` | string | HTTP method of this entry. |
+| `host` | string \| null | Host pattern of this entry (`api.acme.dev` or `*.acme.dev`). `null` means any host. |
+| `origin` | string | Where the route came from: `config`, `admin`, `farp` or `kubernetes`. |
 | `upstream` | string | Target upstream name. |
 | `request_count` | integer | Requests recorded for this route. |
 | `is_healthy` | boolean | Upstream health (from the health tracker; `true` if no tracker). |
@@ -157,20 +253,42 @@ Field meanings:
 | `timeout_ms` | integer \| null | Per-route timeout. |
 | `rate_limit` | object \| null | `{ "requests": <n>, "window_ms": <ms> }` if set. |
 
-`RouteConfig` (the `POST`/`PUT` body shape):
+### `RouteConfig`: the `POST` and `PUT` body
 
 ```json
 {
-  "id": null,
-  "path": "/api/users",
-  "method": "GET",
-  "upstream": "users-svc",
+  "id": "lpr-1",
+  "path": "/api/*",
+  "methods": ["GET", "POST"],
+  "hosts": ["api.acme.dev"],
+  "upstream": "web",
+  "priority": 0,
+  "strip_prefix": null,
+  "add_prefix": null,
   "timeout_ms": null,
   "retry_count": null,
   "circuit_breaker": null,
   "rate_limit": null
 }
 ```
+
+Only `path` and `upstream` are required.
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `id` | string \| null | Route id. `POST` generates a UUID v4 when it's missing. `PUT` ignores it in favour of the path id. `route-<n>` is reserved. |
+| `path` | string | Route match path. Must start with `/`. |
+| `methods` | string[] | HTTP methods. Empty means every method (`GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`). |
+| `method` | string \| null | The older single-method field, still accepted. Used only when `methods` is empty. |
+| `hosts` | string[] | Request hosts, exact (`api.acme.dev`) or wildcard (`*.acme.dev`). Empty means any host. Same rules as [host matching](/docs/configuration/routes#host-matching) in the config file. |
+| `upstream` | string | A registered upstream name. |
+| `priority` | integer \| null | Match priority (higher wins). Defaults to `0`. |
+| `strip_prefix` | string \| null | Prefix stripped before proxying. |
+| `add_prefix` | string \| null | Prefix added before proxying. |
+| `timeout_ms` | integer \| null | Per-route timeout. |
+| `rate_limit` | object \| null | `{ "requests_per_second": <n>, "burst_size": <n> }`. Applied as `requests_per_second` per one-second window; `burst_size` has no per-route equivalent and is ignored. |
+| `retry_count` | integer \| null | Accepted and ignored. Retries are set per upstream. |
+| `circuit_breaker` | object \| null | Accepted and ignored. Circuit breaking is set per upstream. |
 
 ## Plugins
 
@@ -225,10 +343,47 @@ Keys surfaced today include `server.listen`, `server.workers`,
 | Method | Path | Returns |
 | --- | --- | --- |
 | `GET` | `/admin/api/upstreams` | Upstream clusters with per-instance health (`UpstreamClusterInfo`). |
+| `GET` | `/admin/api/upstreams/:name` | One cluster as `UpstreamClusterInfo`, or `404`. |
+| `POST` | `/admin/api/upstreams` | `201` with `UpstreamClusterInfo`. `400` when `name` is missing or the body is malformed, `409` when the name is taken. |
+| `PUT` | `/admin/api/upstreams/:name` | Idempotent upsert: `200` with `UpstreamClusterInfo`. `400` for a malformed body. |
+| `DELETE` | `/admin/api/upstreams/:name` | `204`, or `404` when no cluster has that name. |
 | `GET` | `/admin/api/services` | Configured services. |
 | `GET` | `/admin/api/circuits` | Circuit-breaker state per upstream. |
 | `GET` | `/admin/api/health/checks` | Detailed health-check results. |
 | `GET` | `/admin/api/openapi.json` | Generated OpenAPI document for the gateway. |
+
+### Writing an upstream
+
+`POST` and `PUT` take an `UpstreamConfig` body:
+
+```json
+{
+  "strategy": "round_robin",
+  "instances": [
+    { "id": "lp-billing-0", "address": "billing", "port": 8080, "weight": 1 }
+  ]
+}
+```
+
+On `PUT` the `:name` path segment is the cluster name. You can leave `name`
+out of the body, and when you send one the path still wins. `POST` has no
+path name, so it needs `"name"` in the body.
+
+`strategy` takes `round_robin` (the default), `least_connections`,
+`weighted_round_robin`, `random` or `ip_hash`. Each instance needs `address`
+and `port`. `id` defaults to `<name>-<index>` and `weight` to `1`.
+
+<Callout type="info">
+  The admin API calls the instance host `address`. The `upstreams[].instances[]`
+  config block calls the same field `host`.
+</Callout>
+
+`PUT` replaces the whole cluster, instances included. A malformed body (not
+JSON, or an instance without `port`) answers `400` with
+`{"error": "Invalid upstream body: ..."}`, the same shape the route endpoints
+use. FARP names its upstreams after the registered `service_name` and replaces
+them on every registration, so give the clusters you manage by hand names a
+service will never register under.
 
 ## FARP
 
@@ -237,12 +392,37 @@ Keys surfaced today include `server.listen`, `server.workers`,
 | `GET` | `/admin/api/farp/services` | Registered FARP services (`FarpServiceInfo`). |
 | `GET` | `/admin/api/farp/services/:name` | Detail for one FARP service. |
 | `GET` | `/admin/api/farp/schema/openapi` | Federated OpenAPI schema across FARP services. |
+| `GET` | `/admin/api/farp/binding` | The hostnames FARP routes land on (`FarpBindingInfo`). |
+| `PUT` | `/admin/api/farp/binding` | `200` with `FarpBindingInfo` after moving every FARP route onto the new hostnames. `400` for a bad hostname. |
+
+Both binding endpoints answer `404` with `{"error": "FARP is not enabled"}` when FARP is off.
+`PUT` takes a `FarpBindingUpdate` body:
+
+```json
+{ "hostnames": ["api.acme.dev", "*.acme.dev"] }
+```
+
+and both endpoints answer with a `FarpBindingInfo`:
+
+```json
+{ "hostnames": ["api.acme.dev", "*.acme.dev"], "gateway_id": null, "farp_routes": 6 }
+```
+
+Hostnames follow the [route host rules](/docs/configuration/routes#host-matching), and
+duplicates count once. An empty list makes FARP routes match any host. `farp_routes` counts
+router entries, one per method and hostname. The binding's other settings (`gateway_id`, the
+default auth provider, rate limit and timeout) stay as they were, and routes you declared are
+left alone.
+
+The new hostnames live in memory only. Put the same list in
+[`farp.gateway.hostnames`](/docs/configuration/farp#gateway-binding), or the next restart uses
+whatever the config file says.
 
 ## System, auth & gRPC
 
 | Method | Path | Returns |
 | --- | --- | --- |
-| `GET` | `/admin/api/system/info` | `SystemInfo` — version, uptime, host, OS/arch, CPU count, memory. |
+| `GET` | `/admin/api/system/info` | `SystemInfo`: version, uptime, host, OS/arch, CPU count, memory. |
 | `GET` | `/admin/api/auth/providers` | Configured auth providers. |
 | `GET` | `/admin/api/auth/config` | Auth configuration. |
 | `GET` | `/admin/api/grpc/services` | gRPC service mappings. |
@@ -270,6 +450,6 @@ Keys surfaced today include `server.listen`, `server.workers`,
 
 ## Related
 
-- [Admin dashboard](/docs/observability/admin-dashboard) — the UI and how to protect this API.
-- [Metrics](/docs/observability/metrics) — Prometheus endpoint (distinct from this JSON API).
-- [Configuration → Admin](/docs/configuration/admin) — the `admin` block.
+- [Admin dashboard](/docs/observability/admin-dashboard): the UI and how to protect this API.
+- [Metrics](/docs/observability/metrics): the Prometheus endpoint (distinct from this JSON API).
+- [Configuration → Admin](/docs/configuration/admin): the `admin` block.

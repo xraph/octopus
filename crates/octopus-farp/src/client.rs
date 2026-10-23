@@ -53,6 +53,21 @@ impl FarpClient {
         Self { client, config }
     }
 
+    /// A client that shares this one's connection pool but tries each fetch
+    /// once, with a timeout of at most two seconds. For retries on a request
+    /// path (a heartbeat) that must not wait out backoffs.
+    #[must_use]
+    pub fn single_attempt(&self) -> Self {
+        Self {
+            client: self.client.clone(),
+            config: FarpClientConfig {
+                timeout: self.config.timeout.min(Duration::from_secs(2)),
+                retry_attempts: 1,
+                retry_backoff: Duration::ZERO,
+            },
+        }
+    }
+
     /// Fetch a service manifest from a URL
     pub async fn fetch_manifest(&self, url: &str) -> Result<SchemaManifest> {
         let response_body = self.fetch_with_retry(url).await?;

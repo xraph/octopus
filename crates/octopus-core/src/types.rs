@@ -21,6 +21,24 @@ pub enum LoadBalanceStrategy {
     IpHash,
 }
 
+impl LoadBalanceStrategy {
+    /// Parse an `lb_policy` / admin `strategy` value, case-insensitively and
+    /// with the common aliases (`least_conn`, `weighted`, `iphash`, ...).
+    /// `None` for a value no strategy answers to.
+    pub fn from_policy(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "round_robin" | "roundrobin" | "rr" => Some(Self::RoundRobin),
+            "least_connections" | "least_conn" | "leastconnections" => Some(Self::LeastConnections),
+            "weighted_round_robin" | "weighted" | "weighted_round" | "weightedroundrobin" => {
+                Some(Self::WeightedRoundRobin)
+            }
+            "random" => Some(Self::Random),
+            "ip_hash" | "iphash" => Some(Self::IpHash),
+            _ => None,
+        }
+    }
+}
+
 /// Health check configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthCheckConfig {

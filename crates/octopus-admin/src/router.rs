@@ -10,8 +10,9 @@ use tower_http::services::{ServeDir, ServeFile};
 
 use crate::api_handlers::{
     api_analytics_handler, api_circuits_list_handler, api_config_list_handler,
-    api_config_update_handler, api_farp_federated_openapi_handler, api_farp_service_detail_handler,
-    api_farp_services_handler, api_health_checks_handler, api_logs_handler, api_openapi_handler,
+    api_config_update_handler, api_farp_binding_get_handler, api_farp_binding_put_handler,
+    api_farp_federated_openapi_handler, api_farp_service_detail_handler, api_farp_services_handler,
+    api_health_checks_handler, api_logs_handler, api_openapi_handler,
     api_performance_metrics_handler, api_plugin_config_handler, api_plugin_get_handler,
     api_plugin_toggle_handler, api_plugins_list_handler, api_realtime_metrics_handler,
     api_route_create_handler, api_route_delete_handler, api_route_get_handler,
@@ -147,6 +148,10 @@ impl DashboardRouter {
             .route(
                 "/admin/api/farp/schema/openapi",
                 get(api_farp_federated_openapi_handler),
+            )
+            .route(
+                "/admin/api/farp/binding",
+                get(api_farp_binding_get_handler).put(api_farp_binding_put_handler),
             )
             // ===== System Information API =====
             .route("/admin/api/system/info", get(api_system_info_handler))

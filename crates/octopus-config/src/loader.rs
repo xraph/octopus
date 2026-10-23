@@ -308,6 +308,34 @@ gateway:
     }
 
     #[test]
+    fn test_farp_registration_token_from_env() {
+        env::set_var("OCTOPUS_FARP_TOKEN_TEST", "from-env");
+        let yaml = r#"
+gateway:
+  listen: "0.0.0.0:8080"
+  workers: 4
+  request_timeout: "30s"
+  shutdown_timeout: "30s"
+  max_body_size: 10485760
+
+upstreams: []
+routes: []
+plugins: []
+
+farp:
+  enabled: true
+  registration_token: "${OCTOPUS_FARP_TOKEN_TEST}"
+"#;
+        let config = load_from_str(yaml, ConfigFormat::Yaml).unwrap();
+        assert_eq!(config.farp.registration_token.as_deref(), Some("from-env"));
+        env::remove_var("OCTOPUS_FARP_TOKEN_TEST");
+
+        // An unset variable fails the load instead of silently opening registration.
+        let err = load_from_str(yaml, ConfigFormat::Yaml).unwrap_err();
+        assert!(err.to_string().contains("OCTOPUS_FARP_TOKEN_TEST"));
+    }
+
+    #[test]
     fn test_multiple_env_vars() {
         env::set_var("DB_HOST", "localhost");
         env::set_var("DB_PORT", "5432");

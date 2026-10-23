@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, State},
+    extract::{rejection::JsonRejection, Path, State},
     http::StatusCode,
     response::IntoResponse,
     Json,
@@ -19,18 +19,21 @@ use crate::handlers::AppState;
 use crate::models::{UpstreamClusterInfo, UpstreamConfig, UpstreamInstanceInfo};
 
 /// Parse a load-balancing strategy string (tolerant of common aliases).
+/// Anything unrecognized falls back to round-robin.
 fn parse_strategy(raw: Option<&str>) -> LoadBalanceStrategy {
-    match raw.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
-        Some("least_connections" | "least_conn" | "leastconnections") => {
-            LoadBalanceStrategy::LeastConnections
-        }
-        Some("weighted_round_robin" | "weighted" | "weighted_round" | "weightedroundrobin") => {
-            LoadBalanceStrategy::WeightedRoundRobin
-        }
-        Some("random") => LoadBalanceStrategy::Random,
-        Some("ip_hash" | "iphash") => LoadBalanceStrategy::IpHash,
-        _ => LoadBalanceStrategy::RoundRobin,
-    }
+    raw.and_then(LoadBalanceStrategy::from_policy)
+        .unwrap_or_default()
+}
+
+/// Map a JSON body rejection to a `400` with a JSON `{"error": ...}` body,
+/// the way the route endpoints answer, instead of axum's plain-text `422`.
+fn bad_body(rejection: &JsonRejection) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({
+            "error": format!("Invalid upstream body: {}", rejection.body_text())
+        })),
+    )
 }
 
 /// Build an [`UpstreamCluster`] from an [`UpstreamConfig`] payload.
@@ -93,8 +96,12 @@ pub(crate) fn cluster_to_info(state: &AppState, cluster: &UpstreamCluster) -> Up
 /// `POST /admin/api/upstreams`
 pub async fn api_upstream_create_handler(
     State(state): State<Arc<AppState>>,
-    Json(cfg): Json<UpstreamConfig>,
+    body: Result<Json<UpstreamConfig>, JsonRejection>,
 ) -> impl IntoResponse {
+    let cfg = match body {
+        Ok(Json(cfg)) => cfg,
+        Err(rejection) => return bad_body(&rejection),
+    };
     let Some(ref router) = state.router else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -155,8 +162,12 @@ pub async fn api_upstream_get_handler(
 pub async fn api_upstream_update_handler(
     State(state): State<Arc<AppState>>,
     Path(name): Path<String>,
-    Json(mut cfg): Json<UpstreamConfig>,
+    body: Result<Json<UpstreamConfig>, JsonRejection>,
 ) -> impl IntoResponse {
+    let mut cfg = match body {
+        Ok(Json(cfg)) => cfg,
+        Err(rejection) => return bad_body(&rejection),
+    };
     let Some(ref router) = state.router else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
