@@ -39,7 +39,7 @@ hmac.workspace = true
 jsonwebtoken.workspace = true
 
 # HTTP client (for OIDC discovery, forward auth)
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.13", features = ["json", "form"] }
 
 # Scripting (for Rhai authz rules)
 rhai.workspace = true

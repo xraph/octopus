@@ -73,7 +73,7 @@ async fn main() -> Result<()> {
             // Load configuration first so logging can honor observability.logging
             // (level/format). The CLI --log-level still overrides the config level.
             let config = load_config_paths(&config)?;
-            init_tracing(log_level.as_deref(), Some(&config.observability))?;
+            let tracer_provider = init_tracing(log_level.as_deref(), Some(&config.observability))?;
 
             tracing::info!("Starting Octopus API Gateway");
             tracing::info!(
@@ -96,9 +96,14 @@ async fn main() -> Result<()> {
             tracing::info!("Server starting...");
             server.run().await?;
 
-            // Flush any pending OTLP trace batches before exit (no-op if tracing
-            // is disabled).
-            opentelemetry::global::shutdown_tracer_provider();
+            // Flush any pending OTLP trace batches before exit. 0.32 removed
+            // global::shutdown_tracer_provider(); the provider itself must be
+            // shut down, so it is threaded back from init_tracing.
+            if let Some(provider) = tracer_provider {
+                if let Err(e) = provider.shutdown() {
+                    tracing::warn!(error = %e, "OTLP trace provider shutdown failed");
+                }
+            }
 
             tracing::info!("Server stopped");
             Ok(())
@@ -126,7 +131,7 @@ async fn main() -> Result<()> {
         }
 
         Commands::Gen { config } => {
-            init_tracing(Some("info"), None)?;
+            let _ = init_tracing(Some("info"), None)?;
 
             tracing::info!("Running code generation");
             gen::run_gen(&config).await?;
@@ -274,7 +279,7 @@ fn trace_export_endpoint(
 fn init_tracing(
     cli_level: Option<&str>,
     obs: Option<&octopus_config::types::ObservabilityConfig>,
-) -> Result<()> {
+) -> Result<Option<opentelemetry_sdk::trace::SdkTracerProvider>> {
     let (level, format) = resolve_logging(cli_level, obs);
 
     let filter = tracing_subscriber::EnvFilter::from_default_env()
@@ -284,21 +289,28 @@ fn init_tracing(
         .add_directive("mdns_sd=warn".parse()?);
 
     // Optional OTLP trace exporter, enabled by `observability.tracing`.
-    let otel_layer = match trace_export_endpoint(obs) {
+    let (otel_layer, tracer_provider) = match trace_export_endpoint(obs) {
         Some(endpoint) => {
-            let tracer = opentelemetry_otlp::new_pipeline()
-                .tracing()
-                .with_exporter(
-                    opentelemetry_otlp::new_exporter()
-                        .tonic()
-                        .with_endpoint(endpoint.clone()),
-                )
-                .install_batch(opentelemetry_sdk::runtime::Tokio)
-                .map_err(|e| anyhow::anyhow!("failed to start OTLP trace exporter: {e}"))?;
+            let exporter = opentelemetry_otlp::SpanExporter::builder()
+                .with_tonic()
+                .with_endpoint(endpoint.clone())
+                .build()
+                .map_err(|e| anyhow::anyhow!("failed to build OTLP trace exporter: {e}"))?;
+
+            let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+                .with_batch_exporter(exporter)
+                .build();
+
+            let tracer = opentelemetry::trace::TracerProvider::tracer(&provider, "octopus");
+            opentelemetry::global::set_tracer_provider(provider.clone());
+
             tracing::info!(otlp_endpoint = %endpoint, "Distributed tracing enabled (OTLP)");
-            Some(tracing_opentelemetry::layer().with_tracer(tracer))
+            (
+                Some(tracing_opentelemetry::layer().with_tracer(tracer)),
+                Some(provider),
+            )
         }
-        None => None,
+        None => (None, None),
     };
 
     let registry = tracing_subscriber::registry().with(filter).with(otel_layer);
@@ -315,7 +327,7 @@ fn init_tracing(
             .init(),
     }
 
-    Ok(())
+    Ok(tracer_provider)
 }
 
 #[cfg(test)]

@@ -47,25 +47,24 @@ url.workspace = true
 sha2.workspace = true
 dashmap.workspace = true
 arc-swap.workspace = true
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.13", features = ["json"] }
 
 # Registry backends (optional)
-consul = { version = "0.4", optional = true }
-etcd-client = { version = "0.13", optional = true }
+etcd-client = { version = "0.17", optional = true }
 
 # Kubernetes (optional)
 kube = { version = "0.96", features = ["client", "runtime", "rustls-tls"], optional = true }
 k8s-openapi = { version = "0.23", features = ["v1_30"], optional = true }
 
 # Validation
-jsonschema = { version = "0.17", optional = true }
+jsonschema = { version = "0.17", default-features = false, optional = true }
 
 # Rate limiting
 governor = "0.6"
 
 [features]
 default = []
-consul-backend = ["consul"]
+consul-backend = []
 etcd-backend = ["etcd-client"]
 kubernetes = ["kube", "k8s-openapi"]
 validation = ["jsonschema"]
