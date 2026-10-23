@@ -68,7 +68,7 @@ require (
 	github.com/hashicorp/serf v0.10.4 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
-	github.com/jackc/pgx/v5 v5.9.0 // indirect
+	github.com/jackc/pgx/v5 v5.9.2 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/compress v1.19.1 // indirect
@@ -97,17 +97,17 @@ require (
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
 	github.com/xdg-go/scram v1.2.0 // indirect
 	github.com/xdg-go/stringprep v1.0.4 // indirect
-	github.com/xraph/confy v0.5.2 // indirect
-	github.com/xraph/farp v1.3.0 // indirect
-	github.com/xraph/farp/discovery v1.2.0 // indirect
+	github.com/xraph/confy v1.0.2 // indirect
+	github.com/xraph/farp v1.3.1 // indirect
+	github.com/xraph/farp/discovery v1.3.1 // indirect
 	github.com/xraph/forge/extensions/discovery v1.7.2 // indirect
 	github.com/xraph/forgeui v1.4.1 // indirect
-	github.com/xraph/go-utils v1.1.3 // indirect
+	github.com/xraph/go-utils v1.1.6 // indirect
 	github.com/xraph/grove v1.5.6 // indirect
 	github.com/xraph/grove/drivers/mongodriver v1.5.6 // indirect
 	github.com/xraph/grove/drivers/pgdriver v1.5.6 // indirect
 	github.com/xraph/grove/drivers/sqlitedriver v1.5.6 // indirect
-	github.com/xraph/vessel v1.0.2 // indirect
+	github.com/xraph/vessel v1.0.4 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
 	go.etcd.io/etcd/api/v3 v3.5.17 // indirect
 	go.etcd.io/etcd/client/pkg/v3 v3.5.17 // indirect
@@ -138,9 +138,9 @@ require (
 	golang.org/x/text v0.40.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.48.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20260401024825-9d38bb4040a9 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260401024825-9d38bb4040a9 // indirect
-	google.golang.org/grpc v1.80.0 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20260414002931-afd174a4e478 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260414002931-afd174a4e478 // indirect
+	google.golang.org/grpc v1.82.1 // indirect
 	google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.13.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect

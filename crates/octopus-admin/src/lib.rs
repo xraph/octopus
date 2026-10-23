@@ -1,6 +1,9 @@
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
 // Subjective pedantic/nursery lints are muted; substantive lints stay active.
+// `unused_async_trait_impl` is new in Rust 1.99 (a split of `unused_async`), so older
+// toolchains need `unknown_lints` allowed to accept it.
 #![allow(
+    unknown_lints,
     clippy::module_name_repetitions,
     clippy::missing_errors_doc,
     clippy::missing_panics_doc,
@@ -19,6 +22,7 @@
     clippy::manual_let_else,
     clippy::unused_self,
     clippy::unused_async,
+    clippy::unused_async_trait_impl,
     clippy::only_used_in_recursion,
     clippy::type_complexity,
     clippy::needless_pass_by_value,

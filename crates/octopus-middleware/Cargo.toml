@@ -49,7 +49,7 @@ tracing.workspace = true
 governor.workspace = true
 
 # JWT Authentication
-jsonwebtoken = "9"
+jsonwebtoken = { version = "10.3", features = ["aws_lc_rs"] }
 serde.workspace = true
 
 # Hashing
