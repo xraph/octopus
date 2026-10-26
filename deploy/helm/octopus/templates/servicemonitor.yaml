@@ -9,11 +9,16 @@ metadata:
     {{- toYaml . | nindent 4 }}
     {{- end }}
 spec:
+  {{- $admin := include "octopus.adminListenPort" . }}
   selector:
     matchLabels:
       {{- include "octopus.selectorLabels" . | nindent 6 }}
+      {{- if $admin }}
+      app.kubernetes.io/component: admin
+      {{- end }}
   endpoints:
-    - port: http
+    # Metrics live on the private admin Service once config.admin.listen is set.
+    - port: {{ if $admin }}admin{{ else }}http{{ end }}
       path: {{ .Values.metrics.path }}
       interval: {{ .Values.metrics.serviceMonitor.interval }}
       scrapeTimeout: {{ .Values.metrics.serviceMonitor.scrapeTimeout }}

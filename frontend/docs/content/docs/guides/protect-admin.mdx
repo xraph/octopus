@@ -1,6 +1,6 @@
 ---
 title: Protect the admin dashboard
-description: Lock down the built-in admin dashboard and its JSON API by pointing admin.auth_provider at a configured auth provider.
+description: Lock down the built-in admin dashboard and its JSON API with a password or API token, or by pointing admin.auth_provider at a configured auth provider.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -8,23 +8,74 @@ import { Steps, Step } from 'fumadocs-ui/components/steps';
 
 # Protect the admin dashboard
 
-Octopus ships a built-in [admin dashboard](/docs/observability/admin-dashboard) —
+Octopus ships a built-in [admin dashboard](/docs/observability/admin-dashboard):
 a web UI plus a JSON REST API for routes, health, metrics, plugins, config, and
-FARP services. It is served on the gateway's listen port and, out of the box,
-**requires no authentication**. Anyone who can reach the port can read your
-gateway's internals. This guide puts it behind an auth provider.
+FARP services. It is served on the gateway's listen port (or on the private
+`admin.listen` port when you set one) and, out of the box, **requires no
+authentication**. Anyone who can reach the port can read your gateway's
+internals.
+
+You have two ways to close it. The quick one is a password or API token in the
+environment, covered first. The other puts it behind one of your auth providers,
+which the steps further down walk through.
 
 <Callout type="info">
-  Set `admin.auth_provider` in any non-local deployment, and combine it with
-  `admin.allowed_ips` — an IP / CIDR / range allowlist that returns `403` to
-  non-matching clients — plus network-layer controls (NetworkPolicy, firewall).
-  See [Admin configuration](/docs/configuration/admin).
+  Whichever you pick, combine it with `admin.allowed_ips` (an IP / CIDR / range
+  allowlist that returns `403` to non-matching clients) and network-layer
+  controls (NetworkPolicy, firewall). See
+  [Admin configuration](/docs/configuration/admin).
 </Callout>
+
+## Quick option: a password or API token
+
+Set a secret and start the gateway:
+
+```bash
+export OCTOPUS_ADMIN_PASSWORD=change-me          # people: sign-in form and session cookie
+export OCTOPUS_ADMIN_API_TOKEN=a-long-random-one  # machines: token on every request
+octopus serve -c gateway.yaml
+```
+
+Either one is enough. The log line `Admin authentication enabled: password login, API token`
+tells you which are on. From then on `/admin/api/*`, `/admin/ws` and the
+server-rendered pages under `/admin` answer `401` without credentials. A machine
+client sends the token as `Authorization: Bearer <token>` or as
+`X-Octopus-Admin-Token: <token>`:
+
+```bash
+# Unauthenticated -> 401 {"error": "Authentication required"}
+curl -i http://localhost:8080/admin/api/routes
+
+# Either header form works
+curl -i -H "X-Octopus-Admin-Token: $OCTOPUS_ADMIN_API_TOKEN" http://localhost:8080/admin/api/routes
+```
+
+Open `/admin` in a browser and, with a password set, the `401` page is a
+sign-in form. Enter `OCTOPUS_ADMIN_USERNAME` (default `admin`) and the password;
+the form posts them to `/admin/api/auth/login`, the gateway sets the session
+cookie, and the page reloads signed in. The published image serves only these
+server-rendered pages, not the `/admin/ui` SPA, so this form is the way in.
+With only `OCTOPUS_ADMIN_API_TOKEN` set the `401` page has no form, since
+there is no password to sign in with.
+
+If you reach the gateway through the Kubernetes API service proxy, use
+`X-Octopus-Admin-Token`. The kube-apiserver strips `Authorization` once it has
+authenticated you, so the bearer form never arrives.
+
+To make sure a forgotten secret can't leave the dashboard open, add
+`require_auth`. The gateway then refuses to start without credentials:
+
+```yaml title="gateway.yaml"
+admin:
+  require_auth: true
+```
+
+## Using an auth provider
 
 <Steps>
 
 <Step>
-## Define an auth provider for the dashboard
+### Define an auth provider for the dashboard
 
 Any [auth provider](/docs/configuration/auth) works. A dedicated JWT provider for
 operators is a common choice; you could equally reuse an existing provider or use
@@ -42,11 +93,12 @@ auth_providers:
 </Step>
 
 <Step>
-## Point the admin block at it
+### Point the admin block at it
 
 Set `admin.auth_provider` to the **name** of that provider. Every `/admin*`
 request is then run through it before the dashboard is dispatched;
-unauthenticated requests get `401 Unauthorized`.
+unauthenticated requests get `401 Unauthorized`. If you also set
+`OCTOPUS_ADMIN_PASSWORD` or `OCTOPUS_ADMIN_API_TOKEN`, a request has to pass both.
 
 ```yaml title="gateway.yaml"
 admin:
@@ -61,7 +113,7 @@ admin:
 </Step>
 
 <Step>
-## Validate and run
+### Validate and run
 
 ```bash
 export ADMIN_JWT_SECRET=change-me
@@ -70,7 +122,7 @@ octopus serve -c gateway.yaml
 ```
 
 The full configuration (a real upstream is included so the gateway also proxies
-traffic — the admin protection works the same with or without it):
+traffic; the admin protection works the same with or without it):
 
 ```yaml title="gateway.yaml"
 gateway:
@@ -100,7 +152,7 @@ routes:
 </Step>
 
 <Step>
-## Verify it is protected
+### Verify it is protected
 
 ```bash
 # Unauthenticated -> 401
@@ -120,7 +172,7 @@ alias. The dashboard's pages and endpoints are documented in
 
 ## See also
 
-- [Admin dashboard](/docs/observability/admin-dashboard) — what the UI serves and where it mounts.
-- [Admin configuration](/docs/configuration/admin) — the `admin` block schema.
-- [Secure an API with JWT](/docs/guides/secure-api-jwt) — building the provider you reference here.
-- [Security overview](/docs/security) — all provider types you can point `auth_provider` at.
+- [Admin dashboard](/docs/observability/admin-dashboard): what the UI serves and where it mounts.
+- [Admin configuration](/docs/configuration/admin): the `admin` block schema and the built-in credential variables.
+- [Secure an API with JWT](/docs/guides/secure-api-jwt): building the provider you reference here.
+- [Security overview](/docs/security): all provider types you can point `auth_provider` at.

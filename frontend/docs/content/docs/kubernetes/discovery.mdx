@@ -8,7 +8,7 @@ import { Callout } from 'fumadocs-ui/components/callout';
 # Discovery
 
 Inside the cluster, Octopus discovers upstream Pod endpoints from the Kubernetes API. The primary
-path uses the **`discovery.k8s.io/v1` EndpointSlice** API, which reflects Pod scale up/down — events
+path uses the **`discovery.k8s.io/v1` EndpointSlice** API, which reflects Pod scale up/down, events
 a Service-only watch would miss. The legacy `Endpoints` API is retained as a fallback for clusters
 where the EndpointSlice API is unavailable.
 
@@ -62,6 +62,73 @@ farp:
   set, it scopes the API calls to that one namespace. Single-namespace discovery only needs a
   namespaced `Role`.
 </Callout>
+
+## Opting a Service into FARP
+
+A Service takes part in FARP when it carries the label `farp.enabled=true`. Everything else a
+service says about itself is read from the same place, so the Service object is the one source of
+truth:
+
+- **Labels** become instance metadata as they are.
+- **Annotations whose key starts with `farp.`** are merged on top, and win over a label with the
+  same key. Other annotations (such as `kubectl.kubernetes.io/last-applied-configuration`) are
+  ignored.
+
+Label values cannot contain `/`, so any key that holds a path (`farp.openapi.path`,
+`farp.health.path`, and the other `.path` keys) has to be an annotation. Keep `farp.enabled=true`
+as a label so a `label_selector: "farp.enabled=true"` still finds the Service.
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  labels:
+    farp.enabled: "true"
+  annotations:
+    farp.openapi.path: /docs/openapi.json
+    farp.health.path: /healthz
+    farp.port: http
+spec:
+  selector:
+    app: web
+  ports:
+    - name: http
+      port: 80
+      targetPort: 3000
+    - name: metrics
+      port: 9090
+      targetPort: 9100
+```
+
+`label_selector` is passed to the API server as written, so several terms can be joined with
+commas and all of them must match, for example
+`farp.enabled=true,team=payments,tier=public`.
+
+### Choosing one port with `farp.port`
+
+A Service with several ports yields one instance per address and port. Set `farp.port` (as a label
+or an annotation) to narrow that down:
+
+| `farp.port` | Instances kept |
+|-------------|----------------|
+| _(unset)_ | Every port. This is the behavior of 0.4.1. |
+| A port name, such as `http` | Only the port with that name. **Recommended.** |
+| A number, such as `80` or `3000` | The Service port with that number, or the container port with that number. |
+
+Prefer the port name. EndpointSlices list the container (target) port numbers, and only the names
+come from the Service, so a name means the same thing on both sides. A number is read two ways: as a
+Service `port` (resolved through the Service to its name, or to its numeric `targetPort` when the
+Service port has no name), or as the container port itself. In the example above, `http`, `80` and
+`3000` all keep the one instance on container port `3000` and drop the metrics port, so Octopus
+fetches the OpenAPI document from the right place.
+
+The instance port is always the container port (`3000` here), because that is where the Pod
+listens. A value that matches no port keeps no instances, and Octopus logs a warning that names
+the Service and the selector.
+
+The full list of `farp.*` keys is in the
+[auto-discovery guide](/docs/guides/farp-auto-discovery#farp-metadata-keys).
 
 ## `include_not_ready`
 

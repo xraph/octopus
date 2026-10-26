@@ -1,6 +1,6 @@
 ---
 title: Routes
-description: The routes section — path matching, method filtering, prefix rewriting, priority, per-route authentication and authorization, per-route timeout, rate limiting, and CORS.
+description: "The routes section: path and host matching, method filtering, prefix rewriting, priority, per-route authentication and authorization, per-route timeout, rate limiting, and CORS."
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -13,8 +13,10 @@ empty. Each route must reference an upstream that exists in [`upstreams`](/docs/
 
 ```yaml
 routes:
-  - path: /api/users
+  - id: users-api
+    path: /api/users
     methods: [GET, POST]
+    hosts: [api.example.com]
     upstream: user-service
     priority: 10
     strip_prefix: /api
@@ -33,9 +35,11 @@ routes:
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `path` | string | — | Path pattern to match. **Required** (must start with `/`). |
-| `methods` | array of string | `[]` | HTTP methods to match. Empty means all methods. |
-| `upstream` | string | — | Target upstream name. **Required** (must exist in `upstreams`). |
+| `id` | string | none | Stable name for the route. Must be unique across `routes`. See [Route ids](#route-ids). |
+| `path` | string | - | Path pattern to match. **Required** (must start with `/`). |
+| `methods` | array of string | `[]` | HTTP methods to match, case-insensitive (`get` is `GET`, and repeats are ignored). Empty means all methods: `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE` and `OPTIONS`. |
+| `hosts` | array of string | `[]` | Request hosts to match, exact (`api.example.com`) or wildcard (`*.example.com`). Empty means any host. See [Host matching](#host-matching). |
+| `upstream` | string | - | Target upstream name. **Required** (must exist in `upstreams`). |
 | `priority` | integer | `0` | Higher priority routes are matched first. |
 | `strip_prefix` | string | none | Prefix removed from the path before proxying. |
 | `add_prefix` | string | none | Prefix prepended to the path before proxying. |
@@ -51,15 +55,88 @@ routes:
 
 <Callout type="info">
   Routes have no `retry` or `canary` fields. Authentication and authorization behavior set here is
-  evaluated by the auth middleware — see [Authentication & authorization](/docs/configuration/auth)
+  evaluated by the auth middleware. See [Authentication & authorization](/docs/configuration/auth)
   and the [Security](/docs/security) section for the request flow.
 </Callout>
+
+## Host matching
+
+`hosts` scopes a route to the request host: the HTTP/2 `:authority`, or the `Host` header on
+HTTP/1.1. Leave it empty (or leave it out) and the route answers any host, which is how routes
+behaved before `hosts` existed.
+
+```yaml
+routes:
+  - path: /billing/*
+    hosts: [api.acme.dev, "*.acme.dev"]
+    upstream: billing
+```
+
+Each entry is one of two shapes:
+
+- An exact host such as `api.acme.dev`. It matches that host and nothing else.
+- A wildcard such as `*.acme.dev`. It matches any subdomain, at any depth (`eu.acme.dev`,
+  `a.b.acme.dev`), but **never the apex**. `*.acme.dev` does not match `acme.dev`; list `acme.dev`
+  as well if you want both.
+
+A host pattern is a DNS name or an IPv4 address (`10.0.0.5`). IPv6 literals can't be written in
+`hosts`, so a request that reaches the gateway at `[::1]` only matches routes with an empty `hosts`
+list. `*` is only allowed as the first label (`api.*.dev` is rejected), and a bare `*` is rejected
+too: an empty list already means any host. Patterns are trimmed and lowercased and lose one trailing
+dot, so `API.Acme.Dev.` is the same as `api.acme.dev`.
+
+The request host goes through the same normalization before it is compared. The port is dropped,
+the value is lowercased and one trailing dot is removed, so `Host: API.Acme.Dev.:8443` matches a
+route for `api.acme.dev`.
+
+When several routes match a request, the one with the most specific host wins (exact, then
+wildcard, then any host), and `priority` only breaks ties between routes whose hosts are equally
+specific.
+
+A route with several `methods` and several `hosts` is loaded as one route per method and host. All
+of those copies share the route's `id`.
+
+<Callout type="warn">
+  A trailing `/*` in `path` needs at least one more segment. `/billing/*` matches `/billing/x`
+  and `/billing/x/y`, but **not** `/billing` itself. Add a separate `/billing` route when the bare
+  prefix has to be served.
+</Callout>
+
+### Declared routes and FARP routes
+
+Routes from this file (and routes added through the admin API) are declared routes. Routes that
+[FARP](/docs/concepts/farp) or the Kubernetes operator discover are not. When a declared route and
+a discovered route have the same path and the same host pattern, the declared route wins whatever
+their priorities are, and the discovered route stays hidden for as long as the declared one exists.
+
+With `kubernetes.enabled: true` this rule does not apply: each operator reconcile clears the router,
+the routes from this file come back with origin `kubernetes`, and admin API and FARP routes are gone.
+
+## Route ids
+
+`id` gives a route a stable name. Every method and host copy of the route carries it, so tooling
+can find, replace or remove the whole route by that one name. Ids are optional; when two routes set
+the same `id`, validation fails with `duplicate route id`.
+
+Two more rules apply once you use ids:
+
+- `route-<digits>` (such as `route-3`) is reserved. The admin API lists a route without an id
+  under that positional name, so validation rejects it as a declared `id`.
+- Two routes with different ids cannot serve the same method, path and host. Paths that differ
+  only in parameter names (`/users/:id` and `/users/:uid`) or in a trailing slash count as the
+  same path, and an empty `methods` list covers every method. Validation names both routes, the
+  same pair the admin API answers with `409`. Two routes that both leave `id` out still load as
+  they did before ids existed.
+
+When several config files are [merged](/docs/configuration#loading-and-merging), a route with an
+`id` overrides the earlier route with the same `id`. A route without one overrides the earlier route
+with the same `path` and the same `hosts`.
 
 ## Rate limit
 
 <Callout type="info">
   Per-route `rate_limit` and `cors` are **enforced**. `rate_limit` applies a fixed window per route
-  (keyed by the route's path), returning `429` with `Retry-After` when exceeded — note it currently
+  (keyed by the route's path), returning `429` with `Retry-After` when exceeded. It currently
   uses an in-process counter (per replica; a shared backend for cross-replica limits is planned).
   `cors` applies the matched route's override when a top-level [`cors`](/docs/configuration/auth)
   block is set (which adds the CORS middleware to the chain). See [Middleware](/docs/middleware).
@@ -76,8 +153,8 @@ rate_limit:
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `requests_per_window` | integer | — | Requests allowed per window. **Required.** |
-| `window_size` | duration | — | Window length. **Required.** |
+| `requests_per_window` | integer | - | Requests allowed per window. **Required.** |
+| `window_size` | duration | - | Window length. **Required.** |
 
 <Callout type="warn">
   This is the real schema. Older example files use `rate_limit: { requests_per_second: ... }`,

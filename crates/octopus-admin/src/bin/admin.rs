@@ -54,16 +54,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let router = Arc::new(octopus_router::Router::new());
 
                 for upstream_config in &config.upstreams {
-                    let mut cluster = octopus_core::UpstreamCluster::new(&upstream_config.name);
-                    for instance_config in &upstream_config.instances {
-                        let instance = octopus_core::UpstreamInstance::new(
-                            &instance_config.id,
-                            &instance_config.host,
-                            instance_config.port,
-                        );
-                        cluster.add_instance(instance);
-                    }
-                    router.register_upstream(cluster);
+                    router.register_upstream(upstream_config.to_cluster());
                 }
 
                 for route_config in &config.routes {
@@ -103,14 +94,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     state.health_tracker = Some(Arc::new(octopus_health::HealthTracker::default_config()));
     state.circuit_breaker = Some(Arc::new(octopus_health::CircuitBreaker::default_config()));
 
-    // Optional admin authentication. Enabled only when OCTOPUS_ADMIN_PASSWORD is
-    // set; otherwise the dashboard remains open (historical behavior).
+    // Optional admin authentication. Enabled when OCTOPUS_ADMIN_PASSWORD or
+    // OCTOPUS_ADMIN_API_TOKEN is set; otherwise the dashboard remains open
+    // (historical behavior).
     if let Some(auth) = octopus_admin::auth::AdminAuth::from_env() {
-        tracing::info!("Admin authentication enabled — login required");
+        tracing::info!(
+            "Admin authentication enabled: {}",
+            auth.mechanisms().join(", ")
+        );
         state.admin_auth = Some(Arc::new(auth));
     } else {
         tracing::warn!(
-            "Admin authentication is DISABLED — set OCTOPUS_ADMIN_PASSWORD to require login"
+            "Admin authentication is DISABLED: set OCTOPUS_ADMIN_PASSWORD or OCTOPUS_ADMIN_API_TOKEN to require it"
         );
     }
 

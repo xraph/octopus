@@ -8,7 +8,8 @@ use crate::ir::{IntermediateRoute, RoutingTable};
 use crate::{K8sError, Result};
 use octopus_core::UpstreamCluster;
 use octopus_router::{
-    gateway_scoped_upstream, GatewayPolicy, Route, RouteBuilder, Router, VirtualGatewayIndex,
+    gateway_scoped_upstream, GatewayPolicy, Route, RouteBuilder, RouteOrigin, Router,
+    VirtualGatewayIndex,
 };
 use std::collections::HashMap;
 
@@ -96,6 +97,7 @@ fn build_route(route: &IntermediateRoute, policy: Option<&GatewayPolicy>) -> Res
         .or_else(|| policy.and_then(|p| p.rate_limit));
 
     let mut builder = RouteBuilder::new()
+        .origin(RouteOrigin::Kubernetes)
         .path(&route.path)
         .method(route.method.clone())
         .host(route.host.clone())
@@ -174,6 +176,7 @@ mod tests {
             .unwrap();
         assert_eq!(m.route.auth_provider.as_deref(), Some("jwt"));
         assert_eq!(m.route.gateway_id.as_deref(), Some("platform-api"));
+        assert_eq!(m.route.origin, RouteOrigin::Kubernetes);
     }
 
     #[test]

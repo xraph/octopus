@@ -2,9 +2,9 @@ Octopus API Gateway has been deployed.
 
 Release:   {{ .Release.Name }}
 Namespace: {{ .Release.Namespace }}
-Replicas:  {{ if .Values.autoscaling.enabled }}{{ .Values.autoscaling.minReplicas }}–{{ .Values.autoscaling.maxReplicas }} (HPA){{ else }}{{ .Values.replicaCount }}{{ end }}
+Replicas:  {{ if .Values.autoscaling.enabled }}{{ .Values.autoscaling.minReplicas }} to {{ .Values.autoscaling.maxReplicas }} (HPA){{ else }}{{ .Values.replicaCount }}{{ end }}
 
-Probes (served on the gateway port):
+Probes (served on the gateway port{{ if include "octopus.adminListenPort" . }} and the admin port{{ end }}):
   startup:   {{ .Values.probes.startup.path }}
   liveness:  {{ .Values.probes.liveness.path }}
   readiness: {{ .Values.probes.readiness.path }}
@@ -15,6 +15,14 @@ Reach the gateway from inside the cluster:
 Port-forward it locally:
   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "octopus.fullname" . }} 8080:{{ .Values.service.port }}
   curl -i http://127.0.0.1:8080/readyz
+{{- if include "octopus.adminListenPort" . }}
+
+Admin UI, admin API, FARP registration and metrics are on the private
+ClusterIP Service {{ include "octopus.fullname" . }}-admin (port {{ .Values.service.adminPort }}).
+The gateway port does not serve them. Never publish this port; reach it with:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "octopus.fullname" . }}-admin 9090:{{ .Values.service.adminPort }}
+  curl -i http://127.0.0.1:9090/admin/api/system/info
+{{- end }}
 
 {{- if .Values.rbac.create }}
 {{- if and .Values.rbac.clusterScoped (eq .Values.discovery.namespace "") }}

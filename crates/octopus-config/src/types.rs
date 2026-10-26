@@ -451,7 +451,7 @@ impl Default for SecurityHeadersConfig {
 }
 
 /// FARP (Forge API Gateway Registration Protocol) configuration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct FarpConfig {
     /// Enable FARP service discovery and auto-routing
@@ -474,6 +474,31 @@ pub struct FarpConfig {
     /// them for policy inheritance. When unset, FARP routes are host-agnostic.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gateway: Option<FarpGatewayConfig>,
+
+    /// Token that FARP callers must present to register, update or remove
+    /// services (`Authorization: Bearer <token>` or `X-Octopus-Farp-Token`).
+    /// Reads (GET, HEAD) stay open. Unset or empty leaves registration open.
+    /// Never serialized: render it from the environment with
+    /// `"${OCTOPUS_FARP_TOKEN}"`.
+    #[serde(default, skip_serializing)]
+    pub registration_token: Option<String>,
+}
+
+impl std::fmt::Debug for FarpConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FarpConfig")
+            .field("enabled", &self.enabled)
+            .field("watch_interval", &self.watch_interval)
+            .field("schema_cache_ttl", &self.schema_cache_ttl)
+            .field("discovery", &self.discovery)
+            .field("gateway", &self.gateway)
+            // The token itself must never reach a log line.
+            .field(
+                "registration_token",
+                &self.registration_token.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
 }
 
 impl Default for FarpConfig {
@@ -484,6 +509,7 @@ impl Default for FarpConfig {
             schema_cache_ttl: Duration::from_secs(300), // 5 minutes
             discovery: None,
             gateway: None,
+            registration_token: None,
         }
     }
 }
@@ -491,9 +517,16 @@ impl Default for FarpConfig {
 /// Binds FARP-discovered routes to a virtual gateway.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FarpGatewayConfig {
-    /// Hostname all FARP routes are scoped to (Gateway API syntax: exact
-    /// `api.example.cloud` or wildcard `*.example.cloud`).
+    /// Legacy single hostname FARP routes are scoped to (Gateway API syntax:
+    /// exact `api.example.cloud` or wildcard `*.example.cloud`). Ignored when
+    /// `hostnames` is set.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub hostname: String,
+    /// Hostnames every FARP route lands on (exact hosts or `*.zone`
+    /// wildcards). FARP routes match these hosts and no other. Wins over
+    /// `hostname` when both are set.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hostnames: Vec<String>,
     /// Virtual gateway id attached to each FARP route (attribution / policy).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gateway_id: Option<String>,
@@ -510,6 +543,21 @@ pub struct FarpGatewayConfig {
         with = "humantime_serde"
     )]
     pub default_timeout: Option<Duration>,
+}
+
+impl FarpGatewayConfig {
+    /// The hostnames FARP routes are bound to: `hostnames` when it is not
+    /// empty, else `[hostname]` when that is set, else none. None means
+    /// host-agnostic FARP routes that still carry the gateway policy.
+    pub fn effective_hostnames(&self) -> Vec<String> {
+        if !self.hostnames.is_empty() {
+            self.hostnames.clone()
+        } else if self.hostname.is_empty() {
+            Vec::new()
+        } else {
+            vec![self.hostname.clone()]
+        }
+    }
 }
 
 /// FARP discovery backend configuration
@@ -653,6 +701,29 @@ pub struct UpstreamConfig {
     pub circuit_breaker: Option<CircuitBreakerConfig>,
 }
 
+impl UpstreamConfig {
+    /// The load-balancing strategy `lb_policy` names. An unrecognized value
+    /// falls back to round-robin, as every value did before the policy was
+    /// honored.
+    pub fn strategy(&self) -> octopus_core::LoadBalanceStrategy {
+        octopus_core::LoadBalanceStrategy::from_policy(&self.lb_policy).unwrap_or_default()
+    }
+
+    /// The router cluster for this upstream: its instances with their
+    /// weights, balanced by `lb_policy`.
+    pub fn to_cluster(&self) -> octopus_core::UpstreamCluster {
+        let mut cluster = octopus_core::UpstreamCluster::new(&self.name);
+        cluster.strategy = self.strategy();
+        for instance in &self.instances {
+            let mut upstream =
+                octopus_core::UpstreamInstance::new(&instance.id, &instance.host, instance.port);
+            upstream.weight = instance.weight;
+            cluster.add_instance(upstream);
+        }
+        cluster
+    }
+}
+
 /// Instance configuration
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct InstanceConfig {
@@ -716,15 +787,29 @@ pub struct CircuitBreakerConfig {
     pub timeout: Duration,
 }
 
+/// Every HTTP method a route with an empty `methods` list answers.
+pub const ALL_METHODS: [&str; 7] = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
+
 /// Route configuration
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RouteConfig {
+    /// Stable identifier for this route. Shared by every method and host copy
+    /// the route expands into, so the whole route can be replaced or removed
+    /// as one unit. Must be unique across `routes`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+
     /// Route path pattern
     pub path: String,
 
-    /// HTTP methods
+    /// HTTP methods. Empty means every method in [`ALL_METHODS`].
     #[serde(default)]
     pub methods: Vec<String>,
+
+    /// Request hosts this route answers (`api.example.com` or
+    /// `*.example.com`). Empty means any host.
+    #[serde(default)]
+    pub hosts: Vec<String>,
 
     /// Upstream name
     pub upstream: String,
@@ -806,6 +891,117 @@ pub struct RouteConfig {
 }
 
 impl RouteConfig {
+    /// The methods this route answers: `methods` uppercased and deduplicated
+    /// (first occurrence wins the order), or every method in [`ALL_METHODS`]
+    /// when `methods` is empty.
+    pub fn effective_methods(&self) -> Vec<String> {
+        if self.methods.is_empty() {
+            return ALL_METHODS.iter().map(|m| (*m).to_string()).collect();
+        }
+        let mut methods: Vec<String> = Vec::with_capacity(self.methods.len());
+        for method in &self.methods {
+            let method = method.to_ascii_uppercase();
+            if !methods.contains(&method) {
+                methods.push(method);
+            }
+        }
+        methods
+    }
+
+    /// Parse `hosts` into deduplicated host matchers, in declaration order.
+    /// An empty `hosts` list yields a single [`octopus_router::HostMatch::Any`].
+    pub fn host_matches(&self) -> octopus_core::Result<Vec<octopus_router::HostMatch>> {
+        if self.hosts.is_empty() {
+            return Ok(vec![octopus_router::HostMatch::Any]);
+        }
+        let mut matches: Vec<octopus_router::HostMatch> = Vec::with_capacity(self.hosts.len());
+        for host in &self.hosts {
+            let m = octopus_router::HostMatch::parse_pattern(host)
+                .map_err(|e| octopus_core::Error::Config(format!("route {}: {e}", self.label())))?;
+            if !matches.contains(&m) {
+                matches.push(m);
+            }
+        }
+        Ok(matches)
+    }
+
+    /// Expand this route into one router [`octopus_router::Route`] per
+    /// effective method and host, each tagged with `id` and `origin`.
+    pub fn to_routes(
+        &self,
+        origin: octopus_router::RouteOrigin,
+    ) -> octopus_core::Result<Vec<octopus_router::Route>> {
+        let hosts = self.host_matches()?;
+        let methods = self.effective_methods();
+        let mut routes = Vec::with_capacity(methods.len() * hosts.len());
+        for method_str in &methods {
+            let method: http::Method = method_str.parse().map_err(|_| {
+                octopus_core::Error::Config(format!("Invalid HTTP method: {method_str}"))
+            })?;
+            for host in &hosts {
+                routes.push(self.build_route(method.clone(), host.clone(), origin)?);
+            }
+        }
+        Ok(routes)
+    }
+
+    /// Build the router route for one method and host.
+    fn build_route(
+        &self,
+        method: http::Method,
+        host: octopus_router::HostMatch,
+        origin: octopus_router::RouteOrigin,
+    ) -> octopus_core::Result<octopus_router::Route> {
+        let mut builder = octopus_router::RouteBuilder::new()
+            .id(self.id.as_deref())
+            .origin(origin)
+            .path(&self.path)
+            .method(method)
+            .host(host)
+            .upstream_name(&self.upstream)
+            .priority(self.priority)
+            .auth_provider(self.auth_provider.as_deref())
+            .skip_auth(self.skip_auth)
+            .require_roles(&self.require_roles)
+            .require_scopes(&self.require_scopes)
+            .authz_rule(self.authz_rule.as_deref());
+
+        if let Some(ref pfx) = self.strip_prefix {
+            builder = builder.strip_prefix(pfx);
+        }
+        if let Some(ref pfx) = self.add_prefix {
+            builder = builder.add_prefix(pfx);
+        }
+        if let Some(ref rl) = self.rate_limit {
+            builder = builder.rate_limit(rl.requests_per_window, rl.window_size);
+        }
+        if let Some(timeout) = self.timeout {
+            builder = builder.timeout(Some(timeout));
+        }
+        if let Some(ref cors_cfg) = self.cors {
+            builder = builder.cors(Some(octopus_router::RouteCorsOverride {
+                allowed_origins: cors_cfg.allowed_origins.clone(),
+                allowed_methods: cors_cfg.allowed_methods.clone(),
+                allowed_headers: cors_cfg.allowed_headers.clone(),
+                allow_credentials: cors_cfg.allow_credentials,
+                max_age: cors_cfg.max_age,
+            }));
+        }
+        if let Some(spec) = self.proxy_spec() {
+            builder = builder.proxy(Some(spec));
+        }
+
+        builder.build()
+    }
+
+    /// How errors name this route: its `id` when set, else its path.
+    fn label(&self) -> String {
+        match &self.id {
+            Some(id) => format!("'{id}'"),
+            None => format!("'{}'", self.path),
+        }
+    }
+
     /// Build a [`octopus_router::ProxySpec`] if any proxy field is set;
     /// returns `None` when no proxy fields are present so legacy routes are
     /// unaffected.
@@ -1442,6 +1638,16 @@ pub struct AdminConfig {
     pub auth_provider: Option<String>,
     /// IP allowlist for admin access (empty = all allowed)
     pub allowed_ips: Vec<String>,
+    /// Refuse to start unless admin credentials are configured: the
+    /// `OCTOPUS_ADMIN_PASSWORD` or `OCTOPUS_ADMIN_API_TOKEN` environment
+    /// variable, or `auth_provider`. Default `false`.
+    pub require_auth: bool,
+    /// Address of a second, plain-HTTP listener that serves the admin UI,
+    /// admin API, FARP registration, metrics and probes. When set, the
+    /// gateway listener stops serving those paths and only proxies (probes
+    /// still answer on both). Unset keeps everything on `gateway.listen`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listen: Option<SocketAddr>,
 }
 
 // Auth config defaults
@@ -1630,6 +1836,98 @@ impl Default for RequestLimitsConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use octopus_router::{HostMatch, RouteOrigin};
+
+    #[test]
+    fn farp_registration_token_is_read_but_never_serialized_or_debugged() {
+        let farp: FarpConfig =
+            serde_yaml::from_str("enabled: true\nregistration_token: s3cret-farp\n").unwrap();
+        assert_eq!(farp.registration_token.as_deref(), Some("s3cret-farp"));
+        assert!(!serde_yaml::to_string(&farp)
+            .unwrap()
+            .contains("s3cret-farp"));
+        assert!(!serde_json::to_string(&farp)
+            .unwrap()
+            .contains("s3cret-farp"));
+        assert!(!format!("{farp:?}").contains("s3cret-farp"));
+        assert_eq!(FarpConfig::default().registration_token, None);
+    }
+
+    #[test]
+    fn farp_gateway_accepts_hostname_or_hostnames() {
+        let gateway = |yaml: &str| -> FarpGatewayConfig { serde_yaml::from_str(yaml).unwrap() };
+
+        assert_eq!(
+            gateway("hostname: a.dev\n").effective_hostnames(),
+            vec!["a.dev".to_string()]
+        );
+        assert_eq!(
+            gateway("hostnames: [a.dev, b.dev]\n").effective_hostnames(),
+            vec!["a.dev".to_string(), "b.dev".to_string()]
+        );
+        assert_eq!(
+            gateway("hostname: old.dev\nhostnames: [a.dev, b.dev]\n").effective_hostnames(),
+            vec!["a.dev".to_string(), "b.dev".to_string()]
+        );
+        assert!(gateway("gateway_id: gw\n").effective_hostnames().is_empty());
+
+        let config: Config = serde_yaml::from_str(
+            "gateway: {listen: '127.0.0.1:8080'}\n\
+             farp:\n  enabled: true\n  gateway:\n    hostnames: ['*.acme.dev', api.acme.dev]\n",
+        )
+        .unwrap();
+        crate::validate_config(&config).unwrap();
+        let hosts: Vec<HostMatch> = config
+            .farp
+            .gateway
+            .unwrap()
+            .effective_hostnames()
+            .iter()
+            .map(|h| HostMatch::parse_pattern(h).unwrap())
+            .collect();
+        assert_eq!(
+            hosts,
+            vec![
+                HostMatch::Wildcard(".acme.dev".into()),
+                HostMatch::Exact("api.acme.dev".into())
+            ]
+        );
+    }
+
+    fn farp_config(farp: &str) -> Config {
+        serde_yaml::from_str(&format!(
+            "gateway: {{listen: '127.0.0.1:8080'}}\nfarp: {farp}\n"
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn farp_gateway_rejects_a_bad_hostname() {
+        let config = farp_config("{enabled: true, gateway: {hostnames: [ok.dev, 'api.*.dev']}}");
+        let err = crate::validate_config(&config).unwrap_err().to_string();
+        assert!(err.contains("farp.gateway.hostnames[1]"), "{err}");
+        assert!(err.contains("api.*.dev"), "{err}");
+
+        let config = farp_config("{enabled: true, gateway: {hostnames: ['*']}}");
+        assert!(crate::validate_config(&config).is_err());
+    }
+
+    #[test]
+    fn farp_hostnames_are_not_checked_while_farp_is_off() {
+        let config = farp_config("{enabled: false, gateway: {hostnames: ['api.*.dev']}}");
+        crate::validate_config(&config).unwrap();
+    }
+
+    #[test]
+    fn legacy_farp_hostname_loads_as_leniently_as_before() {
+        for hostname in ["'*'", "''", "my_svc.local", "api.*.dev"] {
+            let config = farp_config(&format!(
+                "{{enabled: true, gateway: {{hostname: {hostname}, gateway_id: g}}}}"
+            ));
+            crate::validate_config(&config)
+                .unwrap_or_else(|e| panic!("hostname {hostname} should load: {e}"));
+        }
+    }
 
     #[test]
     fn request_limits_default_is_enabled_and_falls_back_for_body() {
@@ -1765,6 +2063,33 @@ http3:
     }
 
     #[test]
+    fn upstream_to_cluster_carries_lb_policy_and_weights() {
+        use octopus_core::LoadBalanceStrategy;
+        let upstream: UpstreamConfig = serde_yaml::from_str(
+            "name: web\nlb_policy: Weighted\ninstances:\n  - {id: a, host: h, port: 1, weight: 5}\n  - {id: b, host: h, port: 2}\n",
+        )
+        .unwrap();
+        let cluster = upstream.to_cluster();
+        assert_eq!(cluster.name, "web");
+        assert_eq!(cluster.strategy, LoadBalanceStrategy::WeightedRoundRobin);
+        let weights: Vec<u32> = cluster.instances.iter().map(|i| i.weight).collect();
+        assert_eq!(weights, [5, 1]);
+
+        for (policy, strategy) in [
+            ("round_robin", LoadBalanceStrategy::RoundRobin),
+            ("least_conn", LoadBalanceStrategy::LeastConnections),
+            ("least_connections", LoadBalanceStrategy::LeastConnections),
+            ("random", LoadBalanceStrategy::Random),
+            ("ip_hash", LoadBalanceStrategy::IpHash),
+            ("no-such-policy", LoadBalanceStrategy::RoundRobin),
+        ] {
+            let mut u = upstream.clone();
+            u.lb_policy = policy.to_string();
+            assert_eq!(u.to_cluster().strategy, strategy, "{policy}");
+        }
+    }
+
+    #[test]
     fn test_observability_default() {
         let config = ObservabilityConfig::default();
         assert_eq!(config.logging.level, "info");
@@ -1791,5 +2116,177 @@ http3:
         assert_eq!(cfg.kubernetes.gateway_class, "edge");
         assert_eq!(cfg.kubernetes.watch_namespaces, vec!["team-a", "team-b"]);
         assert!(!cfg.kubernetes.leader_election);
+    }
+
+    fn route_from_yaml(yaml: &str) -> RouteConfig {
+        serde_yaml::from_str(yaml).unwrap()
+    }
+
+    #[test]
+    fn route_hosts_expand_to_one_route_per_method_and_host() {
+        let r = route_from_yaml(
+            "id: web\npath: /api/*\nmethods: [GET, POST]\nhosts: [api.acme.dev, '*.acme.dev']\nupstream: web\n",
+        );
+        let routes = r.to_routes(RouteOrigin::Config).unwrap();
+        assert_eq!(routes.len(), 4);
+        assert!(routes
+            .iter()
+            .all(|x| x.id.as_deref() == Some("web") && x.origin == RouteOrigin::Config));
+
+        let mut pairs: Vec<(String, Option<String>)> = routes
+            .iter()
+            .map(|x| (x.method.to_string(), x.host.pattern()))
+            .collect();
+        pairs.sort();
+        assert_eq!(
+            pairs,
+            vec![
+                ("GET".to_string(), Some("*.acme.dev".to_string())),
+                ("GET".to_string(), Some("api.acme.dev".to_string())),
+                ("POST".to_string(), Some("*.acme.dev".to_string())),
+                ("POST".to_string(), Some("api.acme.dev".to_string())),
+            ]
+        );
+    }
+
+    #[test]
+    fn route_hosts_are_normalized_and_deduplicated() {
+        let r = route_from_yaml(
+            "path: /x\nmethods: [GET]\nhosts: [API.Acme.Dev, 'api.acme.dev.', ' api.acme.dev ']\nupstream: web\n",
+        );
+        let routes = r.to_routes(RouteOrigin::Config).unwrap();
+        assert_eq!(routes.len(), 1);
+        assert_eq!(routes[0].host, HostMatch::Exact("api.acme.dev".to_string()));
+        assert_eq!(routes[0].id, None, "no id in config means no route id");
+    }
+
+    #[test]
+    fn empty_methods_mean_all_methods() {
+        let r = route_from_yaml("path: /x\nmethods: []\nupstream: web\n");
+        let routes = r.to_routes(RouteOrigin::Config).unwrap();
+        assert_eq!(routes.len(), ALL_METHODS.len());
+        let methods: Vec<String> = routes.iter().map(|x| x.method.to_string()).collect();
+        assert_eq!(methods, ALL_METHODS.map(String::from).to_vec());
+
+        // An absent `methods` key behaves the same as an empty list.
+        let absent = route_from_yaml("path: /x\nupstream: web\n");
+        assert_eq!(
+            absent.effective_methods(),
+            ALL_METHODS.map(String::from).to_vec()
+        );
+    }
+
+    #[test]
+    fn effective_methods_are_uppercased_and_deduplicated() {
+        let r = route_from_yaml("path: /x\nmethods: [GET, get, post, GET, Post]\nupstream: web\n");
+        assert_eq!(r.effective_methods(), vec!["GET", "POST"]);
+        // The duplicates would otherwise collide in the router.
+        let router = octopus_router::Router::new();
+        for route in r.to_routes(RouteOrigin::Config).unwrap() {
+            router.add_route(route).unwrap();
+        }
+        assert_eq!(router.total_route_count(), 2);
+    }
+
+    #[test]
+    fn empty_hosts_mean_any_host() {
+        let r = route_from_yaml("path: /x\nmethods: [GET, POST]\nupstream: web\n");
+        assert!(r.hosts.is_empty());
+        let routes = r.to_routes(RouteOrigin::Config).unwrap();
+        assert_eq!(routes.len(), 2);
+        assert!(routes.iter().all(|x| x.host == HostMatch::Any));
+    }
+
+    #[test]
+    fn to_routes_rejects_bad_hosts_and_methods() {
+        let bad_host = route_from_yaml("path: /x\nhosts: ['api.*.dev']\nupstream: web\n");
+        let err = bad_host.to_routes(RouteOrigin::Config).unwrap_err();
+        assert!(err.to_string().contains("api.*.dev"), "{err}");
+
+        let bad_method = route_from_yaml("path: /x\nmethods: ['G T']\nupstream: web\n");
+        let err = bad_method.to_routes(RouteOrigin::Config).unwrap_err();
+        assert!(err.to_string().contains("G T"), "{err}");
+    }
+
+    #[test]
+    fn to_routes_carries_every_route_field() {
+        let r = route_from_yaml(
+            r#"
+id: billing
+path: /billing/*
+methods: [GET]
+hosts: [api.acme.dev]
+upstream: billing-svc
+priority: 7
+strip_prefix: /billing
+add_prefix: /v1
+auth_provider: corp
+skip_auth: true
+require_roles: [admin]
+require_scopes: [billing:read]
+authz_rule: "user.admin"
+timeout: 3s
+rate_limit:
+  requests_per_window: 10
+  window_size: 1m
+cors:
+  allowed_origins: ["https://acme.dev"]
+  allowed_methods: [GET]
+  allowed_headers: [x-acme]
+  allow_credentials: true
+  max_age: 600
+path_mode: passthrough
+upstream_origin: https://billing.example.com:443
+"#,
+        );
+        let routes = r.to_routes(RouteOrigin::Admin).unwrap();
+        assert_eq!(routes.len(), 1);
+        let route = &routes[0];
+        assert_eq!(route.id.as_deref(), Some("billing"));
+        assert_eq!(route.origin, RouteOrigin::Admin);
+        assert_eq!(route.method, http::Method::GET);
+        assert_eq!(route.host, HostMatch::Exact("api.acme.dev".to_string()));
+        assert_eq!(route.path, "/billing/*");
+        assert_eq!(route.upstream_name, "billing-svc");
+        assert_eq!(route.priority, 7);
+        assert_eq!(route.strip_prefix.as_deref(), Some("/billing"));
+        assert_eq!(route.add_prefix.as_deref(), Some("/v1"));
+        assert_eq!(route.auth_provider.as_deref(), Some("corp"));
+        assert!(route.skip_auth);
+        assert_eq!(route.require_roles, vec!["admin"]);
+        assert_eq!(route.require_scopes, vec!["billing:read"]);
+        assert_eq!(route.authz_rule.as_deref(), Some("user.admin"));
+        assert_eq!(route.timeout, Some(Duration::from_secs(3)));
+        assert_eq!(route.rate_limit, Some((10, Duration::from_secs(60))));
+        let cors = route.cors.as_ref().expect("cors override");
+        assert_eq!(cors.allowed_origins, vec!["https://acme.dev"]);
+        assert_eq!(cors.allowed_methods, vec!["GET"]);
+        assert_eq!(cors.allowed_headers, vec!["x-acme"]);
+        assert!(cors.allow_credentials);
+        assert_eq!(cors.max_age, 600);
+        let proxy = route.proxy.as_ref().expect("proxy spec");
+        assert_eq!(proxy.path_mode, octopus_router::PathMode::Passthrough);
+        assert!(proxy.origin.is_some());
+    }
+
+    #[test]
+    fn wildcard_host_skips_apex_and_star_path_skips_bare_prefix() {
+        let r = route_from_yaml(
+            "path: /billing/*\nmethods: [GET]\nhosts: ['*.acme.dev']\nupstream: billing\n",
+        );
+        let router = octopus_router::Router::new();
+        for route in r.to_routes(RouteOrigin::Config).unwrap() {
+            router.add_route(route).unwrap();
+        }
+        let get = http::Method::GET;
+        assert!(router.match_route("a.acme.dev", &get, "/billing/x").is_ok());
+        assert!(
+            router.match_route("acme.dev", &get, "/billing/x").is_err(),
+            "*.acme.dev must not match the apex"
+        );
+        assert!(
+            router.match_route("a.acme.dev", &get, "/billing").is_err(),
+            "/billing/* must not match /billing"
+        );
     }
 }

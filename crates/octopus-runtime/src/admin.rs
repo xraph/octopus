@@ -76,6 +76,7 @@ impl AdminHandler {
         plugin_manager: &Option<Arc<PluginManager>>,
         farp_registry: &Option<Arc<octopus_farp::SchemaRegistry>>,
         farp_federation: &Option<Arc<octopus_farp::SchemaFederation>>,
+        farp_binding: &Option<octopus_farp::BindingCell>,
         config: &Option<Arc<octopus_config::Config>>,
     ) -> Arc<AppState> {
         let mut state = AppState::new();
@@ -87,6 +88,7 @@ impl AdminHandler {
         state.plugin_manager = plugin_manager.clone();
         state.farp_registry = farp_registry.clone();
         state.farp_federation = farp_federation.clone();
+        state.farp_binding = farp_binding.clone();
         state.config = config.clone();
         Arc::new(state)
     }
@@ -94,7 +96,7 @@ impl AdminHandler {
     /// Create a new admin handler
     pub fn new(router: Arc<Router>, request_count: Arc<AtomicUsize>) -> Self {
         let app_state = Self::build_app_state(
-            &router, &None, &None, &None, &None, &None, &None, &None, &None,
+            &router, &None, &None, &None, &None, &None, &None, &None, &None, &None,
         );
         let admin_router = DashboardRouter::build(Arc::clone(&app_state));
 
@@ -120,8 +122,9 @@ impl AdminHandler {
     ) -> Self {
         let ht = Some(health_tracker.clone());
         let cb = Some(circuit_breaker.clone());
-        let app_state =
-            Self::build_app_state(&router, &None, &None, &ht, &cb, &None, &None, &None, &None);
+        let app_state = Self::build_app_state(
+            &router, &None, &None, &ht, &cb, &None, &None, &None, &None, &None,
+        );
         let admin_router = DashboardRouter::build(Arc::clone(&app_state));
 
         Self {
@@ -149,6 +152,7 @@ impl AdminHandler {
         activity_log: Option<Arc<ActivityLog>>,
         farp_registry: Option<Arc<octopus_farp::SchemaRegistry>>,
         farp_federation: Option<Arc<octopus_farp::SchemaFederation>>,
+        farp_binding: Option<octopus_farp::BindingCell>,
         config: Option<Arc<octopus_config::Config>>,
     ) -> Self {
         let app_state = Self::build_app_state(
@@ -160,6 +164,7 @@ impl AdminHandler {
             &plugin_manager,
             &farp_registry,
             &farp_federation,
+            &farp_binding,
             &config,
         );
         let admin_router = DashboardRouter::build(Arc::clone(&app_state));
@@ -175,6 +180,16 @@ impl AdminHandler {
             metrics_collector,
             activity_log,
         }
+    }
+
+    /// Enforce `auth` (password login and/or API token) on the admin API and
+    /// the server-rendered pages. Rebuilds the dashboard router over a copy of
+    /// the current state, so every clone of the returned handler shares it.
+    pub fn with_admin_auth(mut self, auth: Arc<octopus_admin::auth::AdminAuth>) -> Self {
+        let state = (*self.app_state).clone().with_admin_auth(auth);
+        self.app_state = Arc::new(state);
+        self.admin_router = DashboardRouter::build(Arc::clone(&self.app_state));
+        self
     }
 
     /// Handle admin routes using the Axum router

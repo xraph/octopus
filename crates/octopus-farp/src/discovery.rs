@@ -4,10 +4,8 @@
 
 use crate::client::FarpClient;
 use crate::federation::SchemaFederation;
-use crate::manifest::SchemaManifest;
 use crate::registry::SchemaRegistry;
 use crate::schema::SchemaFormat;
-use http::Method;
 use octopus_core::{Error, Result, UpstreamCluster, UpstreamInstance};
 use octopus_discovery::{DiscoveryProvider, ServiceInstance};
 use octopus_router::{RouteBuilder, Router};
@@ -281,11 +279,17 @@ impl DiscoveryWatcher {
             }
         }
 
-        // Remove services that exceeded threshold
+        // Remove services that exceeded threshold, with their routes,
+        // upstream and cached route checksum.
         for service_name in to_remove {
             if let Err(e) = self.registry.deregister_service(&service_name).await {
                 error!(service = %service_name, error = %e, "Failed to deregister service");
             }
+            if let Some(ref router) = self.router {
+                crate::routes::remove_service_routes(router, &service_name);
+                router.remove_upstream(&service_name);
+            }
+            self.routes_checksums.remove(&service_name);
             tracked.remove(&service_name);
         }
         drop(tracked);
@@ -328,68 +332,15 @@ impl DiscoveryWatcher {
             .or_else(|| metadata.custom.get("version").cloned())
             .unwrap_or_else(|| "unknown".to_string());
 
-        // Create schema manifest using FARP v1.0.0 signature
-        let mut manifest = SchemaManifest::new(instance.name.clone(), version, instance.id.clone());
-
-        // Set up endpoints using FARP v1.0.0 standard metadata keys
-        let health_endpoint = metadata
-            .custom
-            .get("farp.health.path")
-            .or_else(|| metadata.custom.get("health"))
-            .cloned()
-            .unwrap_or_else(|| "/health".to_string());
-
-        // Try FARP standard key first, then fall back to legacy
-        let openapi_path = metadata
-            .custom
-            .get("farp.openapi.path")
-            .or_else(|| metadata.custom.get("openapi"))
-            .cloned()
-            .unwrap_or_else(|| "/openapi.json".to_string());
-
-        manifest.endpoints = crate::types::SchemaEndpoints {
-            health: health_endpoint,
-            metrics: metadata
-                .custom
-                .get("farp.metrics.path")
-                .or_else(|| metadata.custom.get("metrics"))
-                .cloned(),
-            openapi: Some(openapi_path.clone()),
-            asyncapi: metadata
-                .custom
-                .get("farp.asyncapi.path")
-                .or_else(|| metadata.custom.get("asyncapi"))
-                .cloned(),
-            grpc_reflection: metadata
-                .custom
-                .get("farp.grpc.reflection")
-                .or_else(|| metadata.custom.get("grpc_reflection"))
-                .and_then(|v| v.parse().ok())
-                .unwrap_or(false),
-            graphql: metadata
-                .custom
-                .get("farp.graphql.path")
-                .or_else(|| metadata.custom.get("graphql"))
-                .cloned(),
-        };
-
-        // Parse capabilities from FARP metadata (format: "[rest websocket grpc]")
-        if let Some(caps_str) = metadata.custom.get("farp.capabilities") {
-            // Remove brackets and split by spaces
-            let caps_str = caps_str.trim_matches(|c| c == '[' || c == ']');
-            for cap in caps_str.split_whitespace() {
-                manifest.add_capability(cap);
-            }
-        } else {
-            // Default capability if not specified
-            manifest.add_capability("rest");
-        }
-
-        // Add OpenAPI schema location if available
-        manifest.add_openapi_http(&format!("{base_url}{openapi_path}"));
-
-        // Update checksum
-        manifest.update_checksum()?;
+        // Build the manifest from the FARP opt-in metadata
+        let manifest = crate::manifest::manifest_from_metadata(
+            &instance.name,
+            &version,
+            &instance.id,
+            &base_url,
+            &metadata.custom,
+        )?;
+        let openapi_path = manifest.endpoints.openapi.clone().unwrap_or_default();
 
         // Register with FARP
         self.registry.register_service(manifest).await?;
@@ -594,37 +545,27 @@ impl DiscoveryWatcher {
                 );
                 // Apply auth config from manifest to generated routes
                 let auth_config = registration.manifest.auth_config.as_ref();
-                // Register each generated route with the router
-                let service_prefix = format!("/{}", service_name.to_lowercase());
-                for gen_route in &routes {
-                    let mut builder = RouteBuilder::new()
-                        .method(gen_route.method.parse().unwrap_or(Method::GET))
-                        .path(format!("{}{}", service_prefix, gen_route.path))
-                        .upstream_name(service_name)
-                        .strip_prefix(&service_prefix)
-                        .priority(100);
+                let builders = routes
+                    .iter()
+                    .filter_map(|gen_route| {
+                        let method = crate::routes::http_method(&gen_route.method)?;
+                        let builder = crate::routes::service_route_builder(
+                            service_name,
+                            &gen_route.path,
+                            method,
+                        );
+                        Some(with_auth_config(builder, auth_config))
+                    })
+                    .collect();
 
-                    // Apply auth config from manifest
-                    if let Some(auth) = auth_config {
-                        builder = builder
-                            .auth_provider(auth.auth_provider.as_deref())
-                            .require_roles(&auth.require_roles)
-                            .require_scopes(&auth.require_scopes);
-                    }
-
-                    let binding = self.binding.load();
-                    let builder = crate::binding::apply_gateway_binding(
-                        builder,
-                        (**binding).as_ref(),
-                        auth_config.is_some(),
-                    );
-                    let route = builder.build();
-                    if let Ok(route) = route {
-                        if let Err(e) = router.add_route(route) {
-                            warn!(error = %e, "Failed to register route from route_table");
-                        }
-                    }
-                }
+                let binding = self.binding.load();
+                crate::routes::replace_service_routes(
+                    router,
+                    service_name,
+                    builders,
+                    (**binding).as_ref(),
+                    auth_config.is_some(),
+                );
                 return Ok(());
             }
         }
@@ -659,7 +600,7 @@ impl DiscoveryWatcher {
             .and_then(|p| p.as_object())
             .ok_or_else(|| Error::Farp("No paths found in OpenAPI schema".to_string()))?;
 
-        let mut routes_added = 0;
+        let mut builders = Vec::new();
 
         // Create routes for each path
         for (path, operations) in paths {
@@ -675,67 +616,25 @@ impl DiscoveryWatcher {
                 .as_object()
                 .ok_or_else(|| Error::Farp(format!("Invalid operations for path {path}")))?;
 
-            // For each HTTP method in the path
-            for (method_str, _operation) in operations {
-                // Skip non-HTTP methods (like "parameters", "servers", etc.)
-                let method = match method_str.to_uppercase().as_str() {
-                    "GET" => Method::GET,
-                    "POST" => Method::POST,
-                    "PUT" => Method::PUT,
-                    "DELETE" => Method::DELETE,
-                    "PATCH" => Method::PATCH,
-                    "HEAD" => Method::HEAD,
-                    "OPTIONS" => Method::OPTIONS,
-                    _ => continue, // Skip non-standard methods
-                };
-
-                // Create route with lowercase service prefix
-                let service_prefix = format!("/{}", service_name.to_lowercase());
-                let prefixed_path = format!("{service_prefix}{path}");
-
-                let mut builder = RouteBuilder::new()
-                    .path(&prefixed_path)
-                    .method(method.clone())
-                    .upstream_name(service_name)
-                    .strip_prefix(&service_prefix)
-                    .priority(100); // Default priority for FARP routes
-
-                // Apply auth config from manifest
-                if let Some(ref auth) = manifest_auth_config {
-                    builder = builder
-                        .auth_provider(auth.auth_provider.as_deref())
-                        .require_roles(&auth.require_roles)
-                        .require_scopes(&auth.require_scopes);
-                }
-
-                let binding = self.binding.load();
-                let builder = crate::binding::apply_gateway_binding(
-                    builder,
-                    (**binding).as_ref(),
-                    manifest_auth_config.is_some(),
-                );
-                let route = builder.build()?;
-
-                // Register the route
-                if let Err(e) = router.add_route(route) {
-                    warn!(
-                        service = %service_name,
-                        path = %prefixed_path,
-                        method = %method,
-                        error = %e,
-                        "Failed to register route (may already exist)"
-                    );
-                } else {
-                    debug!(
-                        service = %service_name,
-                        path = %prefixed_path,
-                        method = %method,
-                        "Route registered"
-                    );
-                    routes_added += 1;
-                }
+            // For each HTTP method in the path. Non-HTTP keys (like
+            // "parameters" or "servers") are skipped.
+            for method in operations
+                .keys()
+                .filter_map(|m| crate::routes::http_method(m))
+            {
+                let builder = crate::routes::service_route_builder(service_name, path, method);
+                builders.push(with_auth_config(builder, manifest_auth_config.as_ref()));
             }
         }
+
+        let binding = self.binding.load();
+        let routes_added = crate::routes::replace_service_routes(
+            router,
+            service_name,
+            builders,
+            (**binding).as_ref(),
+            manifest_auth_config.is_some(),
+        );
 
         info!(
             service = %service_name,
@@ -744,6 +643,20 @@ impl DiscoveryWatcher {
         );
 
         Ok(())
+    }
+}
+
+/// Apply a service manifest's auth requirements to one of its routes.
+fn with_auth_config(
+    builder: RouteBuilder,
+    auth: Option<&crate::manifest::ServiceAuthConfig>,
+) -> RouteBuilder {
+    match auth {
+        Some(auth) => builder
+            .auth_provider(auth.auth_provider.as_deref())
+            .require_roles(&auth.require_roles)
+            .require_scopes(&auth.require_scopes),
+        None => builder,
     }
 }
 

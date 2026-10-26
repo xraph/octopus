@@ -66,9 +66,21 @@ pub struct RateLimitInfo {
 /// Route information (operational metrics + effective configuration).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RouteInfo {
+    /// The route's id when it has one, else a positional `route-{i}`.
     pub id: String,
+    /// The route's own id, shared by every method and host entry of one
+    /// route. `None` for a route without an id.
+    #[serde(default)]
+    pub route_id: Option<String>,
     pub path: String,
     pub method: String,
+    /// Host pattern this entry answers (`api.example.com` or
+    /// `*.example.com`). `None` means any host.
+    #[serde(default)]
+    pub host: Option<String>,
+    /// Where the route came from: `config`, `admin`, `farp` or `kubernetes`.
+    #[serde(default)]
+    pub origin: String,
     pub upstream: String,
     pub request_count: u64,
     pub is_healthy: bool,
@@ -109,17 +121,96 @@ pub struct RouteInfo {
     pub rate_limit: Option<RateLimitInfo>,
 }
 
-/// Route configuration for CRUD operations
+/// Route configuration for CRUD operations (the `POST`/`PUT` body).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RouteConfig {
+    /// Route id. `PUT /admin/api/routes/:id` uses the path id instead.
+    #[serde(default)]
     pub id: Option<String>,
     pub path: String,
-    pub method: String,
+    /// Legacy single method, used when `methods` is empty.
+    #[serde(default)]
+    pub method: Option<String>,
+    /// HTTP methods. Empty (and no `method`) means every method.
+    #[serde(default)]
+    pub methods: Vec<String>,
+    /// Request hosts (`api.example.com` or `*.example.com`). Empty means any
+    /// host.
+    #[serde(default)]
+    pub hosts: Vec<String>,
     pub upstream: String,
+    /// Match priority (higher wins). Defaults to `0`.
+    #[serde(default)]
+    pub priority: Option<i32>,
+    /// Prefix stripped before proxying.
+    #[serde(default)]
+    pub strip_prefix: Option<String>,
+    /// Prefix added before proxying.
+    #[serde(default)]
+    pub add_prefix: Option<String>,
+    #[serde(default)]
     pub timeout_ms: Option<u64>,
+    /// Accepted for compatibility; routes have no per-route retry setting.
+    #[serde(default)]
     pub retry_count: Option<u32>,
+    /// Accepted for compatibility; circuit breaking is configured per upstream.
+    #[serde(default)]
     pub circuit_breaker: Option<CircuitBreakerConfig>,
+    /// Per-route rate limit, applied as `requests_per_second` per one-second
+    /// window. `burst_size` has no per-route equivalent.
+    #[serde(default)]
     pub rate_limit: Option<RateLimitConfig>,
+}
+
+impl RouteConfig {
+    /// The methods this body asks for: `methods`, else `[method]`, else empty
+    /// (which the static route config reads as every method).
+    fn requested_methods(&self) -> Vec<String> {
+        if !self.methods.is_empty() {
+            return self.methods.clone();
+        }
+        self.method
+            .iter()
+            .filter(|m| !m.trim().is_empty())
+            .cloned()
+            .collect()
+    }
+
+    /// The static-config route this body describes, carrying `id`. Expanding
+    /// it with [`octopus_config::types::RouteConfig::to_routes`] validates the
+    /// methods and hosts exactly as the config file does.
+    #[must_use]
+    pub fn to_config_route(&self, id: &str) -> octopus_config::types::RouteConfig {
+        octopus_config::types::RouteConfig {
+            id: Some(id.to_string()),
+            path: self.path.clone(),
+            methods: self.requested_methods(),
+            hosts: self.hosts.clone(),
+            upstream: self.upstream.clone(),
+            priority: self.priority.unwrap_or(0),
+            strip_prefix: self.strip_prefix.clone(),
+            add_prefix: self.add_prefix.clone(),
+            metadata: HashMap::new(),
+            auth_provider: None,
+            skip_auth: false,
+            require_roles: Vec::new(),
+            require_scopes: Vec::new(),
+            authz_rule: None,
+            timeout: self.timeout_ms.map(std::time::Duration::from_millis),
+            rate_limit: self.rate_limit.as_ref().map(|rl| {
+                octopus_config::types::RouteRateLimitConfig {
+                    requests_per_window: rl.requests_per_second,
+                    window_size: std::time::Duration::from_secs(1),
+                }
+            }),
+            cors: None,
+            path_mode: None,
+            upstream_origin: None,
+            rewrite_redirects: None,
+            rewrite_cookie_path: None,
+            tls_verify: None,
+        }
+    }
 }
 
 /// Circuit breaker configuration
@@ -268,6 +359,26 @@ pub struct FarpServiceInfo {
     pub updated_at: String,
 }
 
+/// Body of `PUT /admin/api/farp/binding`: the hostnames FARP routes land on.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FarpBindingUpdate {
+    /// Exact hostnames or `*.zone` wildcards. Empty makes FARP routes
+    /// host-agnostic.
+    pub hostnames: Vec<String>,
+}
+
+/// The FARP gateway binding as `GET` and `PUT /admin/api/farp/binding`
+/// report it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FarpBindingInfo {
+    /// Hostnames every FARP route lands on (empty = any host).
+    pub hostnames: Vec<String>,
+    /// Virtual gateway id attached to FARP routes.
+    pub gateway_id: Option<String>,
+    /// Number of FARP route entries in the router (one per method and host).
+    pub farp_routes: usize,
+}
+
 impl Default for DashboardStats {
     fn default() -> Self {
         Self {
@@ -291,7 +402,9 @@ impl Default for DashboardStats {
 /// Upstream cluster create/update payload.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpstreamConfig {
-    /// Cluster name (unique key).
+    /// Cluster name (unique key). Required on `POST`; on `PUT` the path
+    /// segment wins and the body may leave it out.
+    #[serde(default)]
     pub name: String,
     /// Load-balancing strategy: `round_robin`, `least_connections`,
     /// `weighted_round_robin`, `random`, or `ip_hash`. Defaults to round-robin.
@@ -431,7 +544,8 @@ pub struct MeResponse {
     pub authenticated: bool,
     /// Whether the dashboard requires authentication at all.
     pub auth_required: bool,
-    /// Authenticated username.
+    /// Authenticated username, or `api-token` for a caller using the admin
+    /// API token.
     pub username: Option<String>,
     /// Role (currently always `admin`).
     pub role: Option<String>,

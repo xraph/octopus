@@ -1,10 +1,12 @@
 //! Binding FARP-discovered routes to a virtual gateway.
 //!
 //! By default FARP registers discovered services as host-agnostic routes
-//! (`/{service}/...` on any host). A [`GatewayBinding`] scopes them to a single
-//! gateway's hostname (e.g. `api.example.cloud`), attaches them to that gateway
-//! for attribution, and applies its default auth provider — so a federated API
-//! surface lives under one host with service-scoped prefixes.
+//! (`/{service}/...` on any host). A [`GatewayBinding`] scopes them to the
+//! gateway's hostnames (e.g. `api.example.cloud` and `*.example.dev`): every
+//! FARP route lands on each listed hostname and on no other. The binding also
+//! attaches the routes to that gateway for attribution and applies its default
+//! auth provider, rate limit and timeout, so a federated API surface lives
+//! under the gateway's hosts with service-scoped prefixes.
 
 use arc_swap::ArcSwap;
 use octopus_router::{HostMatch, RouteBuilder};
@@ -13,9 +15,9 @@ use std::time::Duration;
 
 /// A hot-swappable, shareable FARP gateway binding.
 ///
-/// The k8s controller can update it at runtime (CRD-driven) and both the push
-/// handler and the discovery watcher observe the change, because they hold clones
-/// of the same cell.
+/// The k8s controller and the admin API can update it at runtime, and both the
+/// push handler and the discovery watcher observe the change, because they
+/// hold clones of the same cell.
 pub type BindingCell = Arc<ArcSwap<Option<GatewayBinding>>>;
 
 /// Create an empty (unbound) binding cell.
@@ -26,8 +28,9 @@ pub fn new_binding_cell() -> BindingCell {
 /// Scopes FARP-discovered routes to a virtual gateway.
 #[derive(Debug, Clone)]
 pub struct GatewayBinding {
-    /// Host all FARP routes are scoped to (the gateway's hostname).
-    pub host: HostMatch,
+    /// Hosts every FARP route is copied onto (the gateway's hostnames). Empty
+    /// means host-agnostic routes that still carry the rest of the policy.
+    pub hosts: Vec<HostMatch>,
     /// Virtual gateway id attached to each route (attribution / policy).
     pub gateway_id: Option<String>,
     /// Auth provider applied to FARP routes that don't already set one.
@@ -40,15 +43,52 @@ pub struct GatewayBinding {
 }
 
 impl GatewayBinding {
-    /// Create a binding for `hostname` (Gateway API syntax: exact or `*.suffix`).
+    /// Create a binding for one `hostname` (Gateway API syntax: exact or
+    /// `*.suffix`). An empty hostname or `*` gives host-agnostic routes, as
+    /// the legacy `farp.gateway.hostname` always did.
     pub fn new(hostname: &str) -> Self {
+        Self::for_hostnames(&[hostname.to_string()])
+    }
+
+    /// Create a binding for every hostname in `hostnames`.
+    ///
+    /// Each one is normalized the way configuration hosts are (lowercase, one
+    /// trailing dot dropped) and duplicates are dropped. A value the strict
+    /// parser rejects falls back to the lenient one, because the legacy
+    /// `hostname` key and Kubernetes resources reach here without strict
+    /// validation. Blank values and `*` are skipped, so a list of only those
+    /// (or an empty one) gives host-agnostic routes and `hosts` never holds
+    /// [`HostMatch::Any`].
+    pub fn for_hostnames(hostnames: &[String]) -> Self {
+        let mut hosts = Vec::with_capacity(hostnames.len());
+        for hostname in hostnames
+            .iter()
+            .map(|h| h.trim())
+            .filter(|h| !h.is_empty() && *h != "*")
+        {
+            let host =
+                HostMatch::parse_pattern(hostname).unwrap_or_else(|_| HostMatch::parse(hostname));
+            if !hosts.contains(&host) {
+                hosts.push(host);
+            }
+        }
+        Self::with_hosts(hosts)
+    }
+
+    fn with_hosts(hosts: Vec<HostMatch>) -> Self {
         Self {
-            host: HostMatch::parse(hostname),
+            hosts,
             gateway_id: None,
             default_auth_provider: None,
             rate_limit: None,
             timeout: None,
         }
+    }
+
+    /// The bound hostnames as patterns (`api.example.cloud`, `*.example.dev`).
+    /// A host-agnostic entry has no pattern and is left out.
+    pub fn hostnames(&self) -> Vec<String> {
+        self.hosts.iter().filter_map(HostMatch::pattern).collect()
     }
 
     /// Set the virtual gateway id.
@@ -80,22 +120,22 @@ impl GatewayBinding {
     }
 }
 
-/// Apply `binding` to a FARP route `builder`, scoping it to the gateway host.
+/// Apply `binding` to a FARP route `builder`, one builder per bound host.
 ///
-/// The `builder` must already have its path/method/upstream/strip set. This
-/// attaches the gateway id and defaults the auth provider when `route_has_auth`
-/// is false; a `None` binding leaves the builder host-agnostic (legacy behavior).
-pub fn apply_gateway_binding(
+/// The `builder` must already have its path/method/upstream/strip set. Each
+/// returned builder carries the gateway id, the binding's rate limit and
+/// timeout, and the default auth provider when `route_has_auth` is false.
+/// A `None` binding, or one with no hosts, gives back a single builder that
+/// keeps its own host (host-agnostic unless the caller set one).
+pub fn expand_gateway_binding(
     builder: RouteBuilder,
     binding: Option<&GatewayBinding>,
     route_has_auth: bool,
-) -> RouteBuilder {
+) -> Vec<RouteBuilder> {
     let Some(binding) = binding else {
-        return builder;
+        return vec![builder];
     };
-    let mut builder = builder
-        .host(binding.host.clone())
-        .gateway_id(binding.gateway_id.as_deref());
+    let mut builder = builder.gateway_id(binding.gateway_id.as_deref());
     if !route_has_auth {
         if let Some(provider) = &binding.default_auth_provider {
             builder = builder.auth_provider(Some(provider));
@@ -109,7 +149,14 @@ pub fn apply_gateway_binding(
     if binding.timeout.is_some() {
         builder = builder.timeout(binding.timeout);
     }
-    builder
+    if binding.hosts.is_empty() {
+        return vec![builder];
+    }
+    binding
+        .hosts
+        .iter()
+        .map(|host| builder.clone().host(host.clone()))
+        .collect()
 }
 
 #[cfg(test)]
@@ -129,9 +176,11 @@ mod tests {
         let binding = GatewayBinding::new("api.example.cloud")
             .with_gateway_id(Some("platform-api".into()))
             .with_default_auth(Some("jwt".into()));
-        let route = apply_gateway_binding(base_builder(), Some(&binding), false)
-            .build()
-            .unwrap();
+        let route = single(expand_gateway_binding(
+            base_builder(),
+            Some(&binding),
+            false,
+        ));
         assert_eq!(route.host, HostMatch::Exact("api.example.cloud".into()));
         assert_eq!(route.gateway_id.as_deref(), Some("platform-api"));
         assert_eq!(route.auth_provider.as_deref(), Some("jwt"));
@@ -142,21 +191,17 @@ mod tests {
         let binding =
             GatewayBinding::new("api.example.cloud").with_default_auth(Some("jwt".into()));
         // route_has_auth = true → the route's own auth provider must be preserved.
-        let route = apply_gateway_binding(
+        let route = single(expand_gateway_binding(
             base_builder().auth_provider(Some("service-specific")),
             Some(&binding),
             true,
-        )
-        .build()
-        .unwrap();
+        ));
         assert_eq!(route.auth_provider.as_deref(), Some("service-specific"));
     }
 
     #[test]
     fn no_binding_leaves_route_host_agnostic() {
-        let route = apply_gateway_binding(base_builder(), None, false)
-            .build()
-            .unwrap();
+        let route = single(expand_gateway_binding(base_builder(), None, false));
         assert_eq!(route.host, HostMatch::Any);
         assert!(route.gateway_id.is_none());
     }
@@ -166,16 +211,101 @@ mod tests {
         let binding = GatewayBinding::new("api.example.cloud")
             .with_rate_limit(Some((100, Duration::from_secs(60))))
             .with_timeout(Some(Duration::from_secs(7)));
-        let route = apply_gateway_binding(base_builder(), Some(&binding), false)
-            .build()
-            .unwrap();
+        let route = single(expand_gateway_binding(
+            base_builder(),
+            Some(&binding),
+            false,
+        ));
         assert_eq!(route.rate_limit, Some((100, Duration::from_secs(60))));
         assert_eq!(route.timeout, Some(Duration::from_secs(7)));
+    }
+
+    fn single(builders: Vec<RouteBuilder>) -> octopus_router::Route {
+        assert_eq!(builders.len(), 1);
+        builders.into_iter().next().unwrap().build().unwrap()
+    }
+
+    fn built(builders: Vec<RouteBuilder>) -> Vec<octopus_router::Route> {
+        builders.into_iter().map(|b| b.build().unwrap()).collect()
+    }
+
+    #[test]
+    fn binding_with_two_hostnames_expands_to_two_routes() {
+        let binding = GatewayBinding::for_hostnames(&["a.dev".into(), "*.b.dev".into()])
+            .with_gateway_id(Some("platform-api".into()));
+        let routes = built(expand_gateway_binding(
+            base_builder(),
+            Some(&binding),
+            false,
+        ));
+        assert_eq!(routes.len(), 2);
+        assert_eq!(routes[0].host, HostMatch::Exact("a.dev".into()));
+        assert_eq!(routes[1].host, HostMatch::Wildcard(".b.dev".into()));
+        assert!(routes
+            .iter()
+            .all(|r| r.gateway_id.as_deref() == Some("platform-api")));
+        assert!(routes.iter().all(|r| r.path == "/orders/list"));
+    }
+
+    #[test]
+    fn no_binding_expands_to_one_host_agnostic_route() {
+        let routes = built(expand_gateway_binding(base_builder(), None, false));
+        assert_eq!(routes.len(), 1);
+        assert_eq!(routes[0].host, HostMatch::Any);
+        assert!(routes[0].gateway_id.is_none());
+    }
+
+    #[test]
+    fn empty_hostnames_binding_is_host_agnostic_but_keeps_policy() {
+        let binding = GatewayBinding::for_hostnames(&[])
+            .with_gateway_id(Some("platform-api".into()))
+            .with_default_auth(Some("jwt".into()));
+        let routes = built(expand_gateway_binding(
+            base_builder(),
+            Some(&binding),
+            false,
+        ));
+        assert_eq!(routes.len(), 1);
+        assert_eq!(routes[0].host, HostMatch::Any);
+        assert_eq!(routes[0].auth_provider.as_deref(), Some("jwt"));
+        assert_eq!(routes[0].gateway_id.as_deref(), Some("platform-api"));
+    }
+
+    #[test]
+    fn for_hostnames_normalizes_and_dedupes() {
+        let binding = GatewayBinding::for_hostnames(&[
+            "API.Acme.Dev.".into(),
+            "api.acme.dev".into(),
+            " ".into(),
+        ]);
+        assert_eq!(binding.hosts, vec![HostMatch::Exact("api.acme.dev".into())]);
+    }
+
+    #[test]
+    fn star_and_blank_hostnames_mean_host_agnostic() {
+        let binding = GatewayBinding::for_hostnames(&["*".into(), String::new()]);
+        assert!(binding.hosts.is_empty());
+        assert!(binding.hostnames().is_empty());
+
+        let binding = GatewayBinding::for_hostnames(&["*".into(), "a.dev".into()]);
+        assert_eq!(binding.hosts, vec![HostMatch::Exact("a.dev".into())]);
+
+        assert!(GatewayBinding::new("*").hosts.is_empty());
+        assert!(GatewayBinding::new("").hosts.is_empty());
+    }
+
+    #[test]
+    fn legacy_hostname_the_strict_parser_rejects_still_binds() {
+        let binding = GatewayBinding::new("my_svc.local");
+        assert_eq!(binding.hosts, vec![HostMatch::Exact("my_svc.local".into())]);
     }
 
     #[test]
     fn wildcard_hostname_parses_to_wildcard_match() {
         let binding = GatewayBinding::new("*.example.cloud");
-        assert_eq!(binding.host, HostMatch::Wildcard(".example.cloud".into()));
+        assert_eq!(
+            binding.hosts,
+            vec![HostMatch::Wildcard(".example.cloud".into())]
+        );
     }
 }

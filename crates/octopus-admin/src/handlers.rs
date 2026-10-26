@@ -37,10 +37,17 @@ pub struct AppState {
     pub farp_registry: Option<Arc<octopus_farp::SchemaRegistry>>,
     /// FARP schema federation for merged `OpenAPI` output
     pub farp_federation: Option<Arc<octopus_farp::SchemaFederation>>,
+    /// FARP gateway binding shared with the FARP handler and discovery
+    /// watcher. `None` when FARP is not enabled.
+    pub farp_binding: Option<octopus_farp::BindingCell>,
     /// Optional admin authentication (login/session). `None` = no auth enforced.
     pub admin_auth: Option<Arc<crate::auth::AdminAuth>>,
     /// Server start time for uptime calculation
     pub start_time: std::time::Instant,
+    /// Wall-clock start time, captured once with `start_time`. Reported as
+    /// `start_time` by `GET /admin/api/system/info` when no metrics collector
+    /// is wired in.
+    pub started_at: std::time::SystemTime,
 }
 
 impl AppState {
@@ -58,8 +65,10 @@ impl AppState {
             config: None,
             farp_registry: None,
             farp_federation: None,
+            farp_binding: None,
             admin_auth: None,
             start_time: std::time::Instant::now(),
+            started_at: std::time::SystemTime::now(),
         }
     }
 
@@ -123,6 +132,13 @@ impl AppState {
     #[must_use]
     pub fn with_farp_federation(mut self, f: Arc<octopus_farp::SchemaFederation>) -> Self {
         self.farp_federation = Some(f);
+        self
+    }
+
+    /// Builder: set the FARP gateway binding cell
+    #[must_use]
+    pub fn with_farp_binding(mut self, cell: octopus_farp::BindingCell) -> Self {
+        self.farp_binding = Some(cell);
         self
     }
 
@@ -555,7 +571,7 @@ pub(crate) fn build_routes_from_state(state: &AppState) -> Vec<RouteInfo> {
                 .is_none_or(|ht| ht.is_healthy(&route.upstream_name, 0.5));
 
             route_to_info(
-                format!("route-{i}"),
+                listed_route_id(i, &route),
                 &route,
                 request_count,
                 error_count,
@@ -564,6 +580,15 @@ pub(crate) fn build_routes_from_state(state: &AppState) -> Vec<RouteInfo> {
             )
         })
         .collect()
+}
+
+/// The id the route list shows for the entry at position `index`: the
+/// route's own id, or a positional `route-{index}` for a route without one.
+pub(crate) fn listed_route_id(index: usize, route: &octopus_router::Route) -> String {
+    route
+        .id
+        .as_deref()
+        .map_or_else(|| format!("route-{index}"), str::to_string)
 }
 
 /// Map a router [`octopus_router::Route`] plus operational metrics into a
@@ -578,8 +603,11 @@ pub(crate) fn route_to_info(
 ) -> RouteInfo {
     RouteInfo {
         id,
+        route_id: route.id.as_deref().map(str::to_string),
         path: route.path.clone(),
         method: route.method.to_string(),
+        host: route.host.pattern(),
+        origin: route.origin.as_str().to_string(),
         upstream: route.upstream_name.clone(),
         request_count,
         is_healthy,

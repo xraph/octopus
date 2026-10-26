@@ -49,3 +49,14 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- $tag := .Values.image.tag | default .Chart.AppVersion -}}
 {{- printf "%s:%s" .Values.image.repository $tag -}}
 {{- end -}}
+
+{{/*
+Port of the private admin listener, taken from config.admin.listen
+("0.0.0.0:9090" or "[::]:9090" -> 9090). Empty when admin.listen is unset.
+*/}}
+{{- define "octopus.adminListenPort" -}}
+{{- $listen := dig "admin" "listen" "" .Values.config | toString -}}
+{{- if $listen -}}
+{{- splitList ":" $listen | last -}}
+{{- end -}}
+{{- end -}}

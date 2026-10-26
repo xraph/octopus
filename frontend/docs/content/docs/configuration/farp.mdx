@@ -1,6 +1,6 @@
 ---
 title: FARP & discovery
-description: The farp section — service discovery and auto-routing, with mDNS, DNS, Consul, and Kubernetes discovery backends.
+description: The farp section: service discovery and auto-routing, with mDNS, DNS, Consul, and Kubernetes discovery backends.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -35,6 +35,90 @@ farp:
 | `watch_interval` | duration | `5s` | Interval for discovering service changes. |
 | `schema_cache_ttl` | duration | `5m` | Schema cache time-to-live. |
 | `discovery` | object | none | Discovery backend configuration. See [below](#discovery). |
+| `registration_token` | string | none | Token callers must present to register, update or remove services. See [Registration token](#registration-token). |
+| `gateway` | object | none | Bind FARP routes to hostnames and a virtual gateway. See [Gateway binding](#gateway-binding). |
+
+## Registration token
+
+With `registration_token` set, every FARP request whose method is not `GET` or `HEAD` needs the
+token, on all of the `/_farp/v1`, `/__farp`, `/__/farp` and `/farp` prefixes. Send it as
+`Authorization: Bearer <token>` or as `X-Octopus-Farp-Token: <token>`. A request without it gets
+a `401` with `WWW-Authenticate: Bearer realm="octopus-farp"`. Reads stay open.
+
+```yaml
+farp:
+  enabled: true
+  registration_token: "${OCTOPUS_FARP_TOKEN}"
+```
+
+Read the token from the environment rather than writing it into the file. A `${VAR}` that is not
+set fails the config load, so a missing secret stops the gateway instead of leaving registration
+open. The token is held as a SHA-256 digest, never serialized into config output, and never
+logged. An empty token (after `${VAR}` interpolation) fails validation while FARP is enabled:
+remove the key to leave registration open, or give it a value.
+
+If FARP is enabled with no token, the gateway starts and logs a warning. See the
+[FARP registration API](/docs/api/farp#authentication) for the exact request and response shapes,
+including what a service should do when a heartbeat comes back `404` after a gateway restart.
+
+## Gateway binding
+
+`farp.gateway` puts every FARP route on the hostnames you list, and on no other host.
+
+```yaml
+farp:
+  enabled: true
+  gateway:
+    hostnames: ["api.acme.dev", "*.acme.dev"]
+    gateway_id: platform-api
+    default_auth_provider: jwt
+```
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `hostnames` | array of string | `[]` | Hostnames every FARP route lands on: exact hosts (`api.acme.dev`) or `*.zone` wildcards. Wins over `hostname` when both are set. |
+| `hostname` | string | none | Legacy single hostname. Still read, and used only when `hostnames` is empty. Checked leniently, see below. |
+| `gateway_id` | string | none | Virtual gateway id attached to each FARP route. |
+| `default_auth_provider` | string | none | Auth provider for FARP routes whose service doesn't declare one. |
+| `default_rate_limit_per_minute` | integer | none | Rate limit applied to FARP routes. |
+| `default_timeout` | duration | none | Per-request timeout applied to FARP routes. |
+
+Entries in `hostnames` follow the same rules as [route hosts](/docs/configuration/routes):
+lowercase ASCII labels, with `*.` allowed only as the first label. With FARP enabled, config
+loading fails on anything else and the error names the entry, for example
+`farp.gateway.hostnames[1]`. A wildcard never covers its apex, so `*.acme.dev` matches
+`api.acme.dev` but not `acme.dev`; list both if you want both.
+
+The legacy `hostname` loads the way it always has. `""` and `"*"` mean any host. A value the
+strict rules reject, such as `my_svc.local`, still loads: the gateway logs a warning and matches
+it as written. Move to `hostnames` when you want the check.
+
+With no hostnames at all (none listed, or a legacy `hostname` of `""` or `"*"`), FARP routes
+match any host and still pick up `gateway_id`, the auth provider, the rate limit and the
+timeout. While `farp.enabled` is `false` the hostnames aren't checked.
+
+Each service gets one route per method and per hostname. The shape is the same whether the
+service registered itself over the push API or a discovery backend found it. For a service named
+`billing` that declares `GET /invoices`, the gateway adds:
+
+- path `/billing/invoices` (the service name lowercased, then the declared path),
+- `strip_prefix: /billing`, so the service receives `/invoices`,
+- priority `100`,
+- upstream `billing`, named after the FARP `service_name`.
+
+All of a service's routes share the route id `farp:<service_name>` and report origin `farp` in
+the [admin API](/docs/observability/admin-api#routes-crud). When the service registers again, the
+gateway replaces that whole set, so a route the service stopped declaring goes away. When it
+deregisters, or discovery stops seeing it, the gateway removes its routes and its upstream.
+
+A route you declare yourself, in `routes[]` or through the admin API, wins over a FARP route on
+the same method, host and path, whatever their priorities. FARP never removes it, and a
+re-registration doesn't bring the FARP route back in front of it. Delete your route and the FARP
+route serves that path again.
+
+You can change the hostnames at runtime with
+[`PUT /admin/api/farp/binding`](/docs/observability/admin-api#farp). That change is in memory
+only. Write the same list into `farp.gateway.hostnames` too, or a restart puts the old one back.
 
 ## Discovery
 
@@ -62,14 +146,14 @@ Each backend entry has a `type` (`mdns`, `dns`, `consul`, or `kubernetes`), an `
     enable_ipv6: true
 ```
 
-`type: mdns` — mDNS/Bonjour discovery.
+`type: mdns`: mDNS/Bonjour discovery.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `service_type` | string | — | Service type to discover. **Required.** |
-| `domain` | string | — | mDNS domain. **Required.** |
-| `watch_interval` | duration | — | Watch interval. **Required.** |
-| `query_timeout` | duration | — | Query timeout. **Required.** |
+| `service_type` | string | none | Service type to discover. **Required.** |
+| `domain` | string | none | mDNS domain. **Required.** |
+| `watch_interval` | duration | none | Watch interval. **Required.** |
+| `query_timeout` | duration | none | Query timeout. **Required.** |
 | `enable_ipv6` | boolean | `true` | Enable IPv6 discovery. |
 
 </div>
@@ -85,13 +169,13 @@ Each backend entry has a `type` (`mdns`, `dns`, `consul`, or `kubernetes`), an `
     watch_interval: 30s
 ```
 
-`type: dns` — DNS-based discovery.
+`type: dns`: DNS-based discovery.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `servers` | array of string | — | DNS server addresses. **Required.** |
-| `domain` | string | — | Domain to query. **Required.** |
-| `watch_interval` | duration | — | Watch interval. **Required.** |
+| `servers` | array of string | none | DNS server addresses. **Required.** |
+| `domain` | string | none | Domain to query. **Required.** |
+| `watch_interval` | duration | none | Watch interval. **Required.** |
 
 </div>
 
@@ -107,14 +191,14 @@ Each backend entry has a `type` (`mdns`, `dns`, `consul`, or `kubernetes`), an `
     watch_interval: 10s
 ```
 
-`type: consul` — Consul discovery.
+`type: consul`: Consul discovery.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `address` | string | — | Consul address. **Required.** |
-| `datacenter` | string | — | Datacenter. **Required.** |
+| `address` | string | none | Consul address. **Required.** |
+| `datacenter` | string | none | Datacenter. **Required.** |
 | `token` | string | none | ACL token. |
-| `watch_interval` | duration | — | Watch interval. **Required.** |
+| `watch_interval` | duration | none | Watch interval. **Required.** |
 
 </div>
 
@@ -131,13 +215,13 @@ Each backend entry has a `type` (`mdns`, `dns`, `consul`, or `kubernetes`), an `
     include_not_ready: false
 ```
 
-`type: kubernetes` — Kubernetes discovery.
+`type: kubernetes`: Kubernetes discovery.
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `namespace` | string | — | Namespace to watch. **Required.** |
+| `namespace` | string | none | Namespace to watch. **Required.** |
 | `label_selector` | string | none | Label selector for filtering. |
-| `watch_interval` | duration | — | Watch interval. **Required.** |
+| `watch_interval` | duration | none | Watch interval. **Required.** |
 | `use_endpoint_slices` | boolean | `true` | Prefer the `discovery.k8s.io/v1` EndpointSlice API (falls back to Endpoints if unavailable). |
 | `include_not_ready` | boolean | `false` | Include endpoints whose `ready` condition is false/unknown. |
 

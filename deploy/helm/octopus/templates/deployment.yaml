@@ -60,9 +60,12 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
+            {{- with include "octopus.adminListenPort" . }}
+            # Private admin listener; the port comes from config.admin.listen.
             - name: admin
-              containerPort: 9090
+              containerPort: {{ . }}
               protocol: TCP
+            {{- end }}
             {{- if .Values.http3.enabled }}
             # HTTP/3 is UDP on the same port number as the TCP listener.
             # Without this the QUIC socket is unreachable from outside the pod.

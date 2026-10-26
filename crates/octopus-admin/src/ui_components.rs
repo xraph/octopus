@@ -435,7 +435,14 @@ pub fn alert_box(title: &str, message: &str, variant: Variant) -> String {
 #[must_use]
 pub fn route_table_row(route: &RouteInfo, index: usize) -> String {
     Node::element("tr")
-        .attr("class", if index % 2 == 0 { "bg-muted/50" } else { "" })
+        .attr(
+            "class",
+            if index.is_multiple_of(2) {
+                "bg-muted/50"
+            } else {
+                ""
+            },
+        )
         .child(
             Node::element("td")
                 .attr("class", "px-4 py-3")

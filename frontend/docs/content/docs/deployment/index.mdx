@@ -1,6 +1,6 @@
 ---
 title: Deployment
-description: Ways to run Octopus in production — the published container image, Kubernetes, or a binary built from source — and the operational topics that matter once it is live.
+description: Ways to run Octopus in production (the published container image, Kubernetes, or a binary built from source) and the operational topics that matter once it is live.
 ---
 
 import { Card, Cards } from 'fumadocs-ui/components/card';
@@ -9,15 +9,18 @@ import { Callout } from 'fumadocs-ui/components/callout';
 # Deployment
 
 Octopus ships as a single self-contained binary (`octopus`) and a multi-arch container
-image. There is no separate control plane to run: the gateway, its health probes, its
-Prometheus `/metrics` endpoint, and — when enabled — the in-process Kubernetes operator all
-live in the same process, listening on one port.
+image. There is no separate control plane to run: the gateway, its health probes, its admin
+API, its Prometheus `/metrics` endpoint and (when enabled) the in-process Kubernetes operator
+all live in the same process.
 
 <Callout type="info">
-  The gateway serves everything on its **listen port** (default `0.0.0.0:8080`): proxied
-  traffic, the `/livez` / `/readyz` / `/startupz` probes, and `/metrics`. There is no second
-  listener to expose. See [Ports](/docs/deployment/docker#ports) for what the `9090` you may
-  have seen in older examples actually refers to.
+  Without `admin.listen`, the gateway serves everything on its **listen port** (default
+  `0.0.0.0:8080`): proxied traffic, the `/livez` / `/readyz` / `/startupz` probes, the admin
+  UI and API, FARP registration and `/metrics`. Set `admin.listen: "0.0.0.0:9090"` (the Helm
+  chart and bundled manifests do) and the admin UI, admin API, FARP and `/metrics` move to that
+  private port, while `8080` only proxies. Publish `8080` and never `9090`. See
+  [Ports](/docs/deployment/docker#ports) and
+  [Private admin listener](/docs/configuration/admin#private-admin-listener).
 </Callout>
 
 ## Deployment options
@@ -30,7 +33,7 @@ live in the same process, listening on one port.
   />
   <Card
     title="Kubernetes"
-    description="Helm chart and raw manifests, the in-process operator, and EndpointSlice discovery — covered in the Kubernetes section."
+    description="Helm chart and raw manifests, the in-process operator, and EndpointSlice discovery, covered in the Kubernetes section."
     href="/docs/deployment/kubernetes"
   />
   <Card
@@ -67,7 +70,7 @@ octopus validate -c /etc/octopus/config.yaml
 ```
 
 When supervising the binary (systemd, a process manager, or any orchestrator), send **SIGTERM**
-to trigger graceful shutdown rather than killing it — see [Graceful shutdown](/docs/deployment/graceful-shutdown).
+to trigger graceful shutdown rather than killing it. See [Graceful shutdown](/docs/deployment/graceful-shutdown).
 For installation methods and platform notes, see [Installation](/docs/installation).
 
 ## Operating Octopus
@@ -75,7 +78,7 @@ For installation methods and platform notes, see [Installation](/docs/installati
 <Cards>
   <Card
     title="Production checklist"
-    description="A grounded pre-flight list: TLS, auth, probes, resource limits, graceful drain, and metrics scraping — with honest notes on what is and isn't wired."
+    description="A grounded pre-flight list: TLS, auth, probes, resource limits, graceful drain, and metrics scraping, with honest notes on what is and isn't wired."
     href="/docs/deployment/production-checklist"
   />
   <Card

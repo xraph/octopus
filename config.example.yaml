@@ -332,18 +332,25 @@ plugins:
       requests_per_second: 1000
       burst: 2000
 
-# NOTE: Admin dashboard configuration is not yet implemented
-# # Admin dashboard configuration
+# Admin dashboard configuration
 # admin:
-#   enabled: true
-#   address: 0.0.0.0:9090
+#   # Serve the admin UI, admin API, FARP registration and /metrics on a
+#   # second, plain-HTTP listener. The gateway port then only proxies (those
+#   # paths go through the router like any other), and probes answer on both.
+#   # Keep this port private: never publish or route it. Must differ from
+#   # gateway.listen. Unset = everything on the gateway port.
+#   listen: "0.0.0.0:9090"
+#   # Refuse to start without OCTOPUS_ADMIN_PASSWORD / OCTOPUS_ADMIN_API_TOKEN.
+#   require_auth: true
 
 # Observability configuration
 observability:
   # Metrics (Prometheus-compatible)
   metrics:
     enabled: true
-    endpoint: "0.0.0.0:9090"  # Prometheus metrics endpoint
+    # Not a listener: Prometheus metrics are served at /metrics on
+    # admin.listen when set, otherwise on gateway.listen.
+    endpoint: "0.0.0.0:9090"
   
   # Distributed tracing (Jaeger/OpenTelemetry)
   tracing:

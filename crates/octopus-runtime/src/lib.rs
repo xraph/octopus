@@ -26,7 +26,7 @@ pub mod shutdown;
 pub mod worker;
 
 pub use admin::AdminHandler;
-pub use handler::RequestHandler;
+pub use handler::{ListenerRole, RequestHandler};
 pub use lifecycle::LifecycleState;
 pub use probes::ProbeRoutes;
 pub use server::{Server, ServerBuilder};

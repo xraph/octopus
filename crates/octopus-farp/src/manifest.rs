@@ -6,6 +6,7 @@ use crate::types::{
 use octopus_core::{Error, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Schema manifest describing all API contracts for a service instance
@@ -487,9 +488,123 @@ pub fn diff_manifests(old: &SchemaManifest, new: &SchemaManifest) -> ManifestDif
     diff
 }
 
+/// Build a manifest from FARP opt-in metadata (Service labels and annotations on
+/// Kubernetes, `instance.metadata` on push).
+///
+/// Reads `farp.openapi.path` (default `/openapi.json`), `farp.asyncapi.path`,
+/// `farp.graphql.path`, `farp.grpc.reflection`, `farp.health.path` (default
+/// `/health`), `farp.metrics.path` and `farp.capabilities` (default `rest`).
+/// The pre-FARP keys `openapi`, `asyncapi`, `graphql`, `grpc_reflection`,
+/// `health` and `metrics` still work as fallbacks. The OpenAPI schema location
+/// is `base_url` plus the OpenAPI path, and the checksum is computed.
+pub fn manifest_from_metadata(
+    service: &str,
+    version: &str,
+    instance_id: &str,
+    base_url: &str,
+    metadata: &HashMap<String, String>,
+) -> Result<SchemaManifest> {
+    // The standard FARP key wins, then the legacy one.
+    let get = |farp_key: &str, legacy_key: &str| {
+        metadata
+            .get(farp_key)
+            .or_else(|| metadata.get(legacy_key))
+            .cloned()
+    };
+
+    let mut manifest = SchemaManifest::new(service, version, instance_id);
+
+    let openapi_path =
+        get("farp.openapi.path", "openapi").unwrap_or_else(|| "/openapi.json".into());
+    manifest.endpoints = SchemaEndpoints {
+        health: get("farp.health.path", "health").unwrap_or_else(|| "/health".into()),
+        metrics: get("farp.metrics.path", "metrics"),
+        openapi: Some(openapi_path.clone()),
+        asyncapi: get("farp.asyncapi.path", "asyncapi"),
+        grpc_reflection: get("farp.grpc.reflection", "grpc_reflection")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(false),
+        graphql: get("farp.graphql.path", "graphql"),
+    };
+
+    // Capabilities are written as "[rest websocket grpc]" or "rest websocket".
+    if let Some(caps) = metadata.get("farp.capabilities") {
+        for cap in caps
+            .trim_matches(|c| c == '[' || c == ']')
+            .split_whitespace()
+        {
+            manifest.add_capability(cap);
+        }
+    } else {
+        manifest.add_capability("rest");
+    }
+
+    manifest.add_openapi_http(&format!("{base_url}{openapi_path}"));
+    manifest.update_checksum()?;
+    Ok(manifest)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manifest_from_metadata_builds_openapi_location() {
+        let metadata: HashMap<String, String> = [(
+            "farp.openapi.path".to_string(),
+            "/docs/openapi.json".to_string(),
+        )]
+        .into();
+        let manifest =
+            manifest_from_metadata("web", "1.2.3", "inst-1", "http://web:3000", &metadata).unwrap();
+
+        assert_eq!(manifest.service_name, "web");
+        assert_eq!(manifest.service_version, "1.2.3");
+        assert_eq!(manifest.instance_id, "inst-1");
+        assert_eq!(manifest.schemas.len(), 1);
+        let schema = &manifest.schemas[0];
+        assert_eq!(schema.schema_type, SchemaType::OpenAPI);
+        assert_eq!(
+            schema.location.url.as_deref(),
+            Some("http://web:3000/docs/openapi.json")
+        );
+        assert_eq!(manifest.checksum.len(), 64);
+        assert_eq!(manifest.capabilities, vec!["rest".to_string()]);
+        assert_eq!(manifest.endpoints.health, "/health");
+        assert_eq!(
+            manifest.endpoints.openapi.as_deref(),
+            Some("/docs/openapi.json")
+        );
+    }
+
+    #[test]
+    fn manifest_from_metadata_reads_every_farp_key() {
+        let metadata: HashMap<String, String> = [
+            ("farp.asyncapi.path", "/events.json"),
+            ("farp.graphql.path", "/graphql"),
+            ("farp.grpc.reflection", "true"),
+            ("farp.health.path", "/healthz"),
+            ("farp.metrics.path", "/metrics"),
+            ("farp.capabilities", "[rest websocket]"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        let manifest =
+            manifest_from_metadata("web", "v1", "inst-1", "http://web:3000", &metadata).unwrap();
+
+        let e = &manifest.endpoints;
+        assert_eq!(e.health, "/healthz");
+        assert_eq!(e.metrics.as_deref(), Some("/metrics"));
+        assert_eq!(e.openapi.as_deref(), Some("/openapi.json"));
+        assert_eq!(e.asyncapi.as_deref(), Some("/events.json"));
+        assert_eq!(e.graphql.as_deref(), Some("/graphql"));
+        assert!(e.grpc_reflection);
+        assert_eq!(
+            manifest.capabilities,
+            vec!["rest".to_string(), "websocket".to_string()]
+        );
+    }
 
     #[test]
     fn test_manifest_creation() {

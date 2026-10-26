@@ -9,9 +9,52 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// Where a route came from.
+///
+/// Declared routes ([`Config`](RouteOrigin::Config), [`Admin`](RouteOrigin::Admin))
+/// are written by an operator. Discovered routes ([`Farp`](RouteOrigin::Farp),
+/// [`Kubernetes`](RouteOrigin::Kubernetes)) are learned from services at runtime.
+/// On the same host and path, a declared route hides a discovered one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum RouteOrigin {
+    /// Static gateway configuration (the legacy default).
+    #[default]
+    Config,
+    /// Created through the admin API.
+    Admin,
+    /// Registered by a service over FARP.
+    Farp,
+    /// Translated from Kubernetes resources.
+    Kubernetes,
+}
+
+impl RouteOrigin {
+    /// Stable lowercase name: `"config"`, `"admin"`, `"farp"` or `"kubernetes"`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RouteOrigin::Config => "config",
+            RouteOrigin::Admin => "admin",
+            RouteOrigin::Farp => "farp",
+            RouteOrigin::Kubernetes => "kubernetes",
+        }
+    }
+
+    /// Whether an operator declared this route (`Config` or `Admin`).
+    pub fn is_declared(self) -> bool {
+        matches!(self, RouteOrigin::Config | RouteOrigin::Admin)
+    }
+}
+
 /// Route definition
 #[derive(Debug, Clone)]
 pub struct Route {
+    /// Stable identifier shared by every method/host copy of one logical
+    /// route. `None` for legacy routes that were never given one.
+    pub id: Option<Arc<str>>,
+
+    /// Where this route came from (defaults to [`RouteOrigin::Config`]).
+    pub origin: RouteOrigin,
+
     /// HTTP method
     pub method: Method,
 
@@ -97,8 +140,10 @@ impl Route {
 }
 
 /// Builder for constructing routes
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct RouteBuilder {
+    id: Option<Arc<str>>,
+    origin: RouteOrigin,
     method: Option<Method>,
     host: HostMatch,
     path: Option<String>,
@@ -124,6 +169,18 @@ impl RouteBuilder {
     /// Create a new route builder
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Set the route id (`None` = legacy route without an id).
+    pub fn id(mut self, id: Option<&str>) -> Self {
+        self.id = id.map(Arc::from);
+        self
+    }
+
+    /// Set where the route came from (defaults to [`RouteOrigin::Config`]).
+    pub fn origin(mut self, origin: RouteOrigin) -> Self {
+        self.origin = origin;
+        self
     }
 
     /// Set the HTTP method
@@ -260,6 +317,8 @@ impl RouteBuilder {
         }
 
         Ok(Route {
+            id: self.id,
+            origin: self.origin,
             method,
             host: self.host,
             path,
@@ -487,5 +546,46 @@ mod tests {
             route.proxy.as_ref().map(|p| p.rewrite_redirects),
             Some(true)
         );
+    }
+
+    #[test]
+    fn route_defaults_to_no_id_and_config_origin() {
+        let route = RouteBuilder::new()
+            .method(Method::GET)
+            .path("/x")
+            .upstream_name("u")
+            .build()
+            .unwrap();
+        assert!(route.id.is_none());
+        assert_eq!(route.origin, RouteOrigin::Config);
+    }
+
+    #[test]
+    fn route_builder_sets_id_and_origin() {
+        let route = RouteBuilder::new()
+            .method(Method::GET)
+            .path("/x")
+            .upstream_name("u")
+            .id(Some("lpr-1"))
+            .origin(RouteOrigin::Admin)
+            .build()
+            .unwrap();
+        assert_eq!(route.id.as_deref(), Some("lpr-1"));
+        assert_eq!(route.origin, RouteOrigin::Admin);
+    }
+
+    #[test]
+    fn route_origin_names_and_declared_flag() {
+        let cases = [
+            (RouteOrigin::Config, "config", true),
+            (RouteOrigin::Admin, "admin", true),
+            (RouteOrigin::Farp, "farp", false),
+            (RouteOrigin::Kubernetes, "kubernetes", false),
+        ];
+        for (origin, name, declared) in cases {
+            assert_eq!(origin.as_str(), name);
+            assert_eq!(origin.is_declared(), declared);
+        }
+        assert_eq!(RouteOrigin::default(), RouteOrigin::Config);
     }
 }

@@ -89,6 +89,26 @@ fn admin_ip_allowed(
     }
 }
 
+/// Which traffic a listener serves.
+///
+/// With `admin.listen` unset there is one listener and it is `Combined`. With
+/// it set, the gateway port (TCP and QUIC) is `Public` and the admin port is
+/// `Private`. Health probes answer on every role.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListenerRole {
+    /// Proxied traffic plus admin, FARP and metrics: the single-listener mode.
+    Combined,
+    /// Proxied traffic only. Admin, FARP and metrics paths go through the
+    /// router like any other path.
+    Public,
+    /// Admin, FARP and metrics only. Any other path answers 404.
+    Private,
+}
+
+/// Body of the 404 the private listener returns for anything it does not serve.
+const PRIVATE_NOT_FOUND_MESSAGE: &str =
+    "the admin listener serves only admin, FARP, metrics and probe endpoints";
+
 /// HTTP request handler
 #[derive(Clone)]
 pub struct RequestHandler {
@@ -130,6 +150,8 @@ pub struct RequestHandler {
     /// gateway by host — e.g. to answer gateway-level CORS preflight when no route
     /// matches. Empty unless wired from the k8s operator via [`Self::set_gateway_index`].
     gateway_index: Arc<ArcSwap<VirtualGatewayIndex>>,
+    /// Which traffic this listener serves (default `Combined`).
+    listener_role: ListenerRole,
 }
 
 /// Join a rewrite `prefix` onto the already prefix-stripped `rest` of a request
@@ -201,6 +223,7 @@ impl RequestHandler {
             resolve_cache: new_resolve_cache(),
             gateway_index: Arc::new(ArcSwap::from_pointee(VirtualGatewayIndex::default())),
             backend_watcher: None,
+            listener_role: ListenerRole::Combined,
         }
     }
 
@@ -218,6 +241,7 @@ impl RequestHandler {
 
         let farp_registry = farp_handler.as_ref().map(|h| Arc::clone(h.registry()));
         let farp_federation = farp_handler.as_ref().map(|h| Arc::clone(h.federation()));
+        let farp_binding = farp_handler.as_ref().map(|h| h.binding_handle());
         let admin_handler = AdminHandler::with_all(
             Arc::clone(&router),
             Arc::clone(&request_count),
@@ -228,6 +252,7 @@ impl RequestHandler {
             Some(Arc::clone(&activity_log)),
             farp_registry,
             farp_federation,
+            farp_binding,
             None, // config
         );
 
@@ -253,6 +278,7 @@ impl RequestHandler {
             resolve_cache: new_resolve_cache(),
             gateway_index: Arc::new(ArcSwap::from_pointee(VirtualGatewayIndex::default())),
             backend_watcher: None,
+            listener_role: ListenerRole::Combined,
         }
     }
 
@@ -274,6 +300,7 @@ impl RequestHandler {
     ) -> Self {
         let farp_registry = farp_handler.as_ref().map(|h| Arc::clone(h.registry()));
         let farp_federation = farp_handler.as_ref().map(|h| Arc::clone(h.federation()));
+        let farp_binding = farp_handler.as_ref().map(|h| h.binding_handle());
         let admin_handler = AdminHandler::with_all(
             Arc::clone(&router),
             Arc::clone(&request_count),
@@ -284,6 +311,7 @@ impl RequestHandler {
             Some(Arc::clone(&activity_log)),
             farp_registry,
             farp_federation,
+            farp_binding,
             config,
         );
 
@@ -309,6 +337,7 @@ impl RequestHandler {
             resolve_cache: new_resolve_cache(),
             gateway_index: Arc::new(ArcSwap::from_pointee(VirtualGatewayIndex::default())),
             backend_watcher: None,
+            listener_role: ListenerRole::Combined,
         }
     }
 
@@ -346,6 +375,7 @@ impl RequestHandler {
             resolve_cache: new_resolve_cache(),
             gateway_index: Arc::new(ArcSwap::from_pointee(VirtualGatewayIndex::default())),
             backend_watcher: None,
+            listener_role: ListenerRole::Combined,
         }
     }
 
@@ -357,6 +387,13 @@ impl RequestHandler {
     ) {
         self.auth_registry = Some(registry);
         self.admin_auth_provider = admin_provider;
+    }
+
+    /// Enforce the built-in admin session auth (`OCTOPUS_ADMIN_PASSWORD` and/or
+    /// `OCTOPUS_ADMIN_API_TOKEN`) on the admin API and server-rendered pages.
+    /// Lives in the admin handler, so a clone of this handler carries it.
+    pub fn set_admin_session_auth(&mut self, auth: Arc<octopus_admin::auth::AdminAuth>) {
+        self.admin_handler = self.admin_handler.clone().with_admin_auth(auth);
     }
 
     /// Set the admin IP allowlist (empty = all allowed). Entries are parsed as
@@ -405,16 +442,19 @@ impl RequestHandler {
     /// Extract the request host used for host-aware routing.
     ///
     /// Prefers the HTTP/2 `:authority` (exposed as the URI host), falling back
-    /// to the `Host` header. Any port is stripped and the result is lowercased;
-    /// empty when no host is present. Host-agnostic routes match any value.
+    /// to the `Host` header. Both go through
+    /// [`octopus_router::host::normalize_request_host`]: the port and one
+    /// trailing dot are dropped and the result is lowercased, while a bracketed
+    /// IPv6 literal stays whole. Empty when no host is present. Host-agnostic
+    /// routes match any value.
     fn request_host<B>(req: &Request<B>) -> String {
         if let Some(h) = req.uri().host() {
-            return h.to_ascii_lowercase();
+            return octopus_router::host::normalize_request_host(h);
         }
         req.headers()
             .get("host")
             .and_then(|v| v.to_str().ok())
-            .map(|s| s.split(':').next().unwrap_or(s).trim().to_ascii_lowercase())
+            .map(octopus_router::host::normalize_request_host)
             .unwrap_or_default()
     }
 
@@ -446,6 +486,39 @@ impl RequestHandler {
     /// can resolve a request's gateway by host for gateway-level behavior.
     pub fn set_gateway_index(&mut self, index: Arc<ArcSwap<VirtualGatewayIndex>>) {
         self.gateway_index = index;
+    }
+
+    /// Set which traffic this listener serves (default `Combined`).
+    pub fn set_listener_role(&mut self, role: ListenerRole) {
+        self.listener_role = role;
+    }
+
+    /// Which traffic this listener serves.
+    pub fn listener_role(&self) -> ListenerRole {
+        self.listener_role
+    }
+
+    /// Whether this listener answers the built-in admin, FARP and metrics paths.
+    fn serves_internal(&self) -> bool {
+        self.listener_role != ListenerRole::Public
+    }
+
+    /// Whether this listener proxies traffic through the router.
+    fn serves_proxy(&self) -> bool {
+        self.listener_role != ListenerRole::Private
+    }
+
+    /// The 404 the private listener answers for anything it does not serve.
+    fn private_not_found() -> Response<Body> {
+        let body = serde_json::json!({
+            "error": "not_found",
+            "message": PRIVATE_NOT_FOUND_MESSAGE,
+        });
+        Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .body(buffered(serde_json::to_vec(&body).unwrap_or_default()))
+            .unwrap()
     }
 
     /// Whether to reject this request because its `Host`/`:authority` disagrees
@@ -687,10 +760,11 @@ impl RequestHandler {
             }
         }
 
-        // Prometheus metrics, served on the gateway listener so a Kubernetes
-        // ServiceMonitor / scrape annotation can reach it. Handled before
+        // Prometheus metrics, served wherever the internal endpoints live (the
+        // gateway listener, or the admin listener once `admin.listen` is set)
+        // so a ServiceMonitor / scrape annotation can reach it. Handled before
         // request accounting so scrapes don't skew gateway request metrics.
-        {
+        if self.serves_internal() {
             let req_path = req.uri().path();
             if req_path == "/metrics" || req_path == "/__metrics" {
                 let method = req.method().clone();
@@ -718,7 +792,7 @@ impl RequestHandler {
 
         // Handle internal API routes (built-in, not proxied)
         // Internal routes use __ prefix by default
-        if path.starts_with("/__admin") || path.starts_with("/admin") {
+        if self.serves_internal() && (path.starts_with("/__admin") || path.starts_with("/admin")) {
             // Enforce the admin IP allowlist (empty = all allowed) before auth.
             if !self.admin_allowed_ips.is_empty() {
                 let client_ip = req.extensions().get::<ClientAddr>().map(|c| c.0.ip());
@@ -804,29 +878,33 @@ impl RequestHandler {
                 .map(|r| r.map(Either::Left));
         }
 
-        // ── WebSocket upgrade ─────────────────────────────────────────
-        // Must intercept BEFORE body buffering so the hyper OnUpgrade
-        // extension is still in the request.
-        if octopus_protocols::is_websocket_upgrade(&req) {
-            return self.handle_websocket_upgrade(req).await;
-        }
+        // Streaming proxies (WebSocket, SSE, gRPC) are proxied traffic, which
+        // the private admin listener never serves.
+        if self.serves_proxy() {
+            // ── WebSocket upgrade ─────────────────────────────────────────
+            // Must intercept BEFORE body buffering so the hyper OnUpgrade
+            // extension is still in the request.
+            if octopus_protocols::is_websocket_upgrade(&req) {
+                return self.handle_websocket_upgrade(req).await;
+            }
 
-        // ── SSE streaming proxy ──────────────────────────────────────
-        // Must intercept BEFORE body buffering so we can stream the response.
-        if req
-            .headers()
-            .get(http::header::ACCEPT)
-            .and_then(|v| v.to_str().ok())
-            .is_some_and(|v| v.contains("text/event-stream"))
-        {
-            return self.handle_sse_proxy(req).await;
-        }
+            // ── SSE streaming proxy ──────────────────────────────────────
+            // Must intercept BEFORE body buffering so we can stream the response.
+            if req
+                .headers()
+                .get(http::header::ACCEPT)
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|v| v.contains("text/event-stream"))
+            {
+                return self.handle_sse_proxy(req).await;
+            }
 
-        // ── gRPC proxy ────────────────────────────────────────────────
-        // Must intercept BEFORE body buffering to support streaming RPCs.
-        // gRPC over HTTP/2 streams request/response bodies.
-        if octopus_protocols::GrpcHandler::is_grpc_request_raw(&req) {
-            return self.handle_grpc_proxy(req).await;
+            // ── gRPC proxy ────────────────────────────────────────────────
+            // Must intercept BEFORE body buffering to support streaming RPCs.
+            // gRPC over HTTP/2 streams request/response bodies.
+            if octopus_protocols::GrpcHandler::is_grpc_request_raw(&req) {
+                return self.handle_grpc_proxy(req).await;
+            }
         }
 
         // Enforce request limits BEFORE buffering. The middleware chain runs on
@@ -881,102 +959,107 @@ impl RequestHandler {
         };
         let mut req = Request::from_parts(parts, Full::new(body_bytes));
 
-        // Handle FARP v1 push protocol routes (/_farp/v1/*)
-        // Per FARP spec: /_farp/v1/register, /_farp/v1/heartbeat/{id}, etc.
-        if path.starts_with("/_farp/v1") {
-            if let Some(farp_handler) = &self.farp_handler {
-                debug!("Routing to FARP handler (v1 push protocol)");
-                let internal_path = path.replacen("/_farp/v1", "/farp", 1);
-                let (parts, body) = req.into_parts();
-                let mut builder = http::Request::builder()
-                    .method(parts.method)
-                    .version(parts.version);
+        // FARP registration and the docs it serves are internal endpoints.
+        if self.serves_internal() {
+            // Handle FARP v1 push protocol routes (/_farp/v1/*)
+            // Per FARP spec: /_farp/v1/register, /_farp/v1/heartbeat/{id}, etc.
+            if path.starts_with("/_farp/v1") {
+                if let Some(farp_handler) = &self.farp_handler {
+                    debug!("Routing to FARP handler (v1 push protocol)");
+                    let internal_path = path.replacen("/_farp/v1", "/farp", 1);
+                    let (parts, body) = req.into_parts();
+                    let mut builder = http::Request::builder()
+                        .method(parts.method)
+                        .version(parts.version);
 
-                for (key, value) in parts.headers.iter() {
-                    builder = builder.header(key, value);
+                    for (key, value) in parts.headers.iter() {
+                        builder = builder.header(key, value);
+                    }
+
+                    let internal_req = builder.uri(internal_path).body(body).map_err(|e| {
+                        Error::InvalidRequest(format!("Failed to build request: {e}"))
+                    })?;
+
+                    return farp_handler
+                        .handle(internal_req)
+                        .await
+                        .map(|r| r.map(Either::Left));
                 }
+            }
 
-                let internal_req = builder
-                    .uri(internal_path)
-                    .body(body)
-                    .map_err(|e| Error::InvalidRequest(format!("Failed to build request: {e}")))?;
+            // Handle internal FARP API routes (with __ prefix)
+            // Support both /__farp and /__/farp patterns
+            if path.starts_with("/__/farp") || path.starts_with("/__farp") {
+                if let Some(farp_handler) = &self.farp_handler {
+                    debug!("Routing to FARP handler (internal)");
+                    // Remove __ prefix before passing to FARP handler
+                    let internal_path = if path.starts_with("/__/farp") {
+                        path.replacen("/__/farp", "/farp", 1)
+                    } else {
+                        path.replacen("/__farp", "/farp", 1)
+                    };
+                    let (parts, body) = req.into_parts();
+                    let mut builder = http::Request::builder()
+                        .method(parts.method)
+                        .version(parts.version);
 
-                return farp_handler
-                    .handle(internal_req)
-                    .await
-                    .map(|r| r.map(Either::Left));
+                    // Copy headers
+                    for (key, value) in parts.headers.iter() {
+                        builder = builder.header(key, value);
+                    }
+
+                    let internal_req = builder.uri(internal_path).body(body).map_err(|e| {
+                        Error::InvalidRequest(format!("Failed to build request: {e}"))
+                    })?;
+
+                    return farp_handler
+                        .handle(internal_req)
+                        .await
+                        .map(|r| r.map(Either::Left));
+                }
+            }
+
+            // Also support legacy /farp paths for backwards compatibility
+            if path.starts_with("/farp") {
+                if let Some(farp_handler) = &self.farp_handler {
+                    debug!("Routing to FARP handler");
+                    return farp_handler.handle(req).await.map(|r| r.map(Either::Left));
+                }
+            }
+
+            // Root-level documentation routes (/swagger, /docs, /redoc)
+            if path == "/swagger" || path == "/docs" || path == "/redoc" {
+                if let Some(farp_handler) = &self.farp_handler {
+                    debug!("Routing to FARP docs handler");
+                    let internal_path = if path == "/redoc" {
+                        "/farp/redoc".to_string()
+                    } else {
+                        "/farp/docs".to_string()
+                    };
+                    let (parts, body) = req.into_parts();
+                    let mut builder = http::Request::builder()
+                        .method(parts.method)
+                        .version(parts.version);
+
+                    for (key, value) in parts.headers.iter() {
+                        builder = builder.header(key, value);
+                    }
+
+                    let internal_req = builder.uri(internal_path).body(body).map_err(|e| {
+                        Error::InvalidRequest(format!("Failed to build request: {e}"))
+                    })?;
+
+                    return farp_handler
+                        .handle(internal_req)
+                        .await
+                        .map(|r| r.map(Either::Left));
+                }
             }
         }
 
-        // Handle internal FARP API routes (with __ prefix)
-        // Support both /__farp and /__/farp patterns
-        if path.starts_with("/__/farp") || path.starts_with("/__farp") {
-            if let Some(farp_handler) = &self.farp_handler {
-                debug!("Routing to FARP handler (internal)");
-                // Remove __ prefix before passing to FARP handler
-                let internal_path = if path.starts_with("/__/farp") {
-                    path.replacen("/__/farp", "/farp", 1)
-                } else {
-                    path.replacen("/__farp", "/farp", 1)
-                };
-                let (parts, body) = req.into_parts();
-                let mut builder = http::Request::builder()
-                    .method(parts.method)
-                    .version(parts.version);
-
-                // Copy headers
-                for (key, value) in parts.headers.iter() {
-                    builder = builder.header(key, value);
-                }
-
-                let internal_req = builder
-                    .uri(internal_path)
-                    .body(body)
-                    .map_err(|e| Error::InvalidRequest(format!("Failed to build request: {e}")))?;
-
-                return farp_handler
-                    .handle(internal_req)
-                    .await
-                    .map(|r| r.map(Either::Left));
-            }
-        }
-
-        // Also support legacy /farp paths for backwards compatibility
-        if path.starts_with("/farp") {
-            if let Some(farp_handler) = &self.farp_handler {
-                debug!("Routing to FARP handler");
-                return farp_handler.handle(req).await.map(|r| r.map(Either::Left));
-            }
-        }
-
-        // Root-level documentation routes (/swagger, /docs, /redoc)
-        if path == "/swagger" || path == "/docs" || path == "/redoc" {
-            if let Some(farp_handler) = &self.farp_handler {
-                debug!("Routing to FARP docs handler");
-                let internal_path = if path == "/redoc" {
-                    "/farp/redoc".to_string()
-                } else {
-                    "/farp/docs".to_string()
-                };
-                let (parts, body) = req.into_parts();
-                let mut builder = http::Request::builder()
-                    .method(parts.method)
-                    .version(parts.version);
-
-                for (key, value) in parts.headers.iter() {
-                    builder = builder.header(key, value);
-                }
-
-                let internal_req = builder
-                    .uri(internal_path)
-                    .body(body)
-                    .map_err(|e| Error::InvalidRequest(format!("Failed to build request: {e}")))?;
-
-                return farp_handler
-                    .handle(internal_req)
-                    .await
-                    .map(|r| r.map(Either::Left));
-            }
+        // The private admin listener stops here: everything below is routing.
+        if !self.serves_proxy() {
+            return Ok(Self::private_not_found());
         }
 
         // Check protocol handlers (WebSocket, gRPC, GraphQL)
@@ -1927,6 +2010,347 @@ mod tests {
         assert_eq!(handler.request_count.load(Ordering::Relaxed), 0);
     }
 
+    /// `octopus serve` enforces the admin session auth on the gateway listener,
+    /// and a cloned handler (as a second listener gets) carries it too.
+    #[tokio::test]
+    async fn gateway_admin_api_enforces_session_auth() {
+        let mut handler = create_test_handler();
+        handler.set_admin_session_auth(Arc::new(octopus_admin::auth::AdminAuth::api_token_only(
+            "tok",
+            b"session-secret".to_vec(),
+        )));
+
+        let get = |token: Option<&str>| {
+            let mut req = Request::builder()
+                .method(http::Method::GET)
+                .uri("/admin/api/routes");
+            if let Some(token) = token {
+                req = req.header(octopus_admin::auth::ADMIN_TOKEN_HEADER, token);
+            }
+            req.body(Full::new(Bytes::new())).unwrap()
+        };
+
+        let resp = handler.handle(get(None)).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let resp = handler.handle(get(Some("nope"))).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let resp = handler.handle(get(Some("tok"))).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let cloned = handler.clone();
+        let resp = cloned.handle(get(None)).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let resp = cloned.handle(get(Some("tok"))).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    /// A handler with a FARP handler wired, so FARP paths have something to
+    /// answer them on the roles that serve them.
+    fn farp_test_handler() -> RequestHandler {
+        let router = Arc::new(Router::new());
+        let client = HttpClient::with_timeout(Duration::from_secs(30));
+        let proxy = Arc::new(HttpProxy::new(client, ProxyConfig::default()));
+        let farp = Arc::new(FarpApiHandler::new(Arc::new(
+            octopus_farp::SchemaRegistry::new(),
+        )));
+        RequestHandler::with_features(
+            router,
+            proxy,
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new([]),
+            Some(farp),
+            Arc::new([]),
+        )
+    }
+
+    fn get(path: &str) -> Request<Full<Bytes>> {
+        Request::builder()
+            .method(http::Method::GET)
+            .uri(path)
+            .body(Full::new(Bytes::new()))
+            .unwrap()
+    }
+
+    async fn body_json(resp: Response<Body>) -> serde_json::Value {
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        serde_json::from_slice(&bytes).expect("JSON body")
+    }
+
+    /// Every internal path the gateway intercepts in 0.4.1.
+    const INTERNAL_PATHS: &[&str] = &[
+        "/admin/api/routes",
+        "/__admin/api/routes",
+        "/metrics",
+        "/__metrics",
+        "/_farp/v1/services",
+        "/__farp/services",
+        "/__/farp/services",
+        "/farp/services",
+        "/swagger",
+        "/docs",
+        "/redoc",
+    ];
+
+    #[tokio::test]
+    async fn public_role_does_not_serve_admin_metrics_or_farp() {
+        let mut handler = farp_test_handler();
+        assert_eq!(handler.listener_role(), ListenerRole::Combined);
+
+        let resp = handler.handle(get("/admin/api/routes")).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(body_json(resp).await.is_array());
+        for path in INTERNAL_PATHS {
+            let resp = handler.handle(get(path)).await.unwrap();
+            assert_ne!(resp.status(), StatusCode::NOT_FOUND, "Combined {path}");
+        }
+
+        handler.set_listener_role(ListenerRole::Public);
+        assert_eq!(handler.listener_role(), ListenerRole::Public);
+        for path in INTERNAL_PATHS {
+            let resp = handler.handle(get(path)).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::NOT_FOUND, "Public {path}");
+        }
+    }
+
+    /// On the public role an internal path is an ordinary path: a route the
+    /// operator declared for it is matched like any other.
+    #[tokio::test]
+    async fn public_role_routes_internal_paths_through_the_router() {
+        let mut handler = farp_test_handler();
+        handler.set_listener_role(ListenerRole::Public);
+        handler
+            .router
+            .add_route(
+                octopus_router::RouteBuilder::new()
+                    .method(http::Method::GET)
+                    .path("/metrics")
+                    .upstream_name("missing-upstream")
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+
+        // The route matches, so the request reaches upstream selection rather
+        // than the built-in metrics endpoint (200) or a route miss (404).
+        let resp = handler.handle(get("/metrics")).await;
+        match resp {
+            Ok(resp) => {
+                assert_ne!(resp.status(), StatusCode::OK);
+                assert_ne!(resp.status(), StatusCode::NOT_FOUND);
+            }
+            Err(e) => assert!(
+                !matches!(e, Error::RouteNotFound(_)),
+                "route should match, got {e}"
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn private_role_rejects_proxy_paths() {
+        let mut handler = farp_test_handler();
+        let mut cluster = UpstreamCluster::new("up");
+        cluster.add_instance(UpstreamInstance::new("u1", "127.0.0.1", 1));
+        handler.router.register_upstream(cluster);
+        handler
+            .router
+            .add_route(
+                octopus_router::RouteBuilder::new()
+                    .method(http::Method::GET)
+                    .path("/api/x")
+                    .upstream_name("up")
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+
+        handler.set_listener_role(ListenerRole::Private);
+        for req in [
+            get("/api/x"),
+            get("/no-such-route"),
+            Request::builder()
+                .uri("/api/x")
+                .header(http::header::ACCEPT, "text/event-stream")
+                .body(Full::new(Bytes::new()))
+                .unwrap(),
+            Request::builder()
+                .uri("/api/x")
+                .header(http::header::CONTENT_TYPE, "application/grpc")
+                .body(Full::new(Bytes::new()))
+                .unwrap(),
+        ] {
+            let resp = handler.handle(req).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+            let body = body_json(resp).await;
+            assert_eq!(body["error"], "not_found");
+            assert_eq!(
+                body["message"],
+                "the admin listener serves only admin, FARP, metrics and probe endpoints"
+            );
+        }
+    }
+
+    /// A FARP handler that requires a token, on a handler with the given role.
+    fn farp_token_handler(role: ListenerRole) -> RequestHandler {
+        let router = Arc::new(Router::new());
+        let client = HttpClient::with_timeout(Duration::from_secs(30));
+        let proxy = Arc::new(HttpProxy::new(client, ProxyConfig::default()));
+        let farp = Arc::new(
+            FarpApiHandler::new(Arc::new(octopus_farp::SchemaRegistry::new()))
+                .with_registration_token(Some("farp-tok")),
+        );
+        let mut handler = RequestHandler::with_features(
+            router,
+            proxy,
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new([]),
+            Some(farp),
+            Arc::new([]),
+        );
+        handler.set_listener_role(role);
+        handler
+    }
+
+    /// Every FARP alias reaches the same token check, on both roles that
+    /// serve FARP.
+    #[tokio::test]
+    async fn farp_token_is_enforced_on_every_alias() {
+        for role in [ListenerRole::Combined, ListenerRole::Private] {
+            let handler = farp_token_handler(role);
+            for prefix in ["/_farp/v1", "/__farp", "/__/farp", "/farp"] {
+                let path = format!("{prefix}/heartbeat/nope");
+                let put = |header: Option<(&str, &str)>| {
+                    let mut builder = Request::builder().method(http::Method::PUT).uri(&path);
+                    if let Some((name, value)) = header {
+                        builder = builder.header(name, value);
+                    }
+                    builder
+                        .body(Full::new(Bytes::from(r#"{"status":"healthy"}"#)))
+                        .unwrap()
+                };
+
+                let resp = handler.handle(put(None)).await.unwrap();
+                assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "{role:?} {path}");
+                assert_eq!(
+                    resp.headers().get(http::header::WWW_AUTHENTICATE).unwrap(),
+                    "Bearer realm=\"octopus-farp\""
+                );
+
+                // With the token the request reaches the handler: an unknown
+                // instance answers 404 so the caller re-registers.
+                for header in [
+                    ("authorization", "Bearer farp-tok"),
+                    ("x-octopus-farp-token", "farp-tok"),
+                ] {
+                    let resp = handler.handle(put(Some(header))).await.unwrap();
+                    assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{role:?} {path}");
+                    assert_eq!(body_json(resp).await["action"], "re-register");
+                }
+
+                let resp = handler
+                    .handle(get(&format!("{prefix}/services")))
+                    .await
+                    .unwrap();
+                assert_eq!(resp.status(), StatusCode::OK, "{role:?} {prefix}");
+            }
+        }
+    }
+
+    fn ws_upgrade(path: &str) -> Request<Full<Bytes>> {
+        Request::builder()
+            .method(http::Method::GET)
+            .uri(path)
+            .header(http::header::UPGRADE, "websocket")
+            .header(http::header::CONNECTION, "Upgrade")
+            .header(http::header::SEC_WEBSOCKET_VERSION, "13")
+            .header(http::header::SEC_WEBSOCKET_KEY, "dGhlIHNhbXBsZSBub25jZQ==")
+            .body(Full::new(Bytes::new()))
+            .unwrap()
+    }
+
+    /// The admin WebSocket is an admin path, so on the public role an upgrade
+    /// to it goes through the router like any other request and, with no
+    /// route, answers 404 (the accept loop maps `RouteNotFound` to 404).
+    #[tokio::test]
+    async fn public_role_routes_admin_websocket_upgrade() {
+        let mut handler = farp_test_handler();
+
+        // Combined: the admin handler takes it, so it is never a route miss.
+        let combined = handler.handle(ws_upgrade("/admin/ws")).await.unwrap();
+        assert_ne!(combined.status(), StatusCode::NOT_FOUND);
+
+        handler.set_listener_role(ListenerRole::Public);
+        for path in ["/admin/ws", "/__admin/ws"] {
+            match handler.handle(ws_upgrade(path)).await {
+                Err(e @ Error::RouteNotFound(_)) => {
+                    assert_eq!(e.to_status_code(), StatusCode::NOT_FOUND, "{path}")
+                }
+                Err(e) => panic!("{path}: expected a route miss, got {e}"),
+                Ok(resp) => panic!("{path}: expected a route miss, got {}", resp.status()),
+            }
+        }
+    }
+
+    /// A WebSocket upgrade is proxied traffic, which the private role never
+    /// serves: it gets the JSON 404 fallback, not the WebSocket proxy.
+    #[tokio::test]
+    async fn private_role_rejects_websocket_upgrade_to_proxy_path() {
+        let mut handler = farp_test_handler();
+        let mut cluster = UpstreamCluster::new("up");
+        cluster.add_instance(UpstreamInstance::new("u1", "127.0.0.1", 1));
+        handler.router.register_upstream(cluster);
+        handler
+            .router
+            .add_route(
+                octopus_router::RouteBuilder::new()
+                    .method(http::Method::GET)
+                    .path("/ws")
+                    .upstream_name("up")
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+        handler.set_listener_role(ListenerRole::Private);
+
+        let resp = handler.handle(ws_upgrade("/ws")).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        let body = body_json(resp).await;
+        assert_eq!(body["error"], "not_found");
+        assert_eq!(body["message"], PRIVATE_NOT_FOUND_MESSAGE);
+    }
+
+    #[tokio::test]
+    async fn private_role_serves_admin_and_metrics() {
+        let mut handler = farp_test_handler();
+        handler.set_listener_role(ListenerRole::Private);
+
+        let resp = handler.handle(get("/admin/api/routes")).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let resp = handler.handle(get("/metrics")).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        for path in INTERNAL_PATHS {
+            let resp = handler.handle(get(path)).await.unwrap();
+            assert_ne!(resp.status(), StatusCode::NOT_FOUND, "Private {path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn probes_answer_on_every_role() {
+        let mut handler = create_test_handler();
+        let lifecycle = LifecycleState::new(false);
+        lifecycle.mark_running();
+        handler.set_lifecycle(lifecycle, ProbeRoutes::default());
+
+        for role in [
+            ListenerRole::Combined,
+            ListenerRole::Public,
+            ListenerRole::Private,
+        ] {
+            handler.set_listener_role(role);
+            let resp = handler.handle(get("/livez")).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::OK, "{role:?}");
+        }
+    }
+
     /// The QUIC listener dispatches through the `H3Handler` trait. Wiring it
     /// to `RequestHandler` is what makes an HTTP/3 request traverse the same
     /// routing, auth and proxy pipeline as an HTTP/2 one.
@@ -2082,6 +2506,29 @@ mod tests {
             "evil.com",
             "foo.acme.com"
         ));
+    }
+
+    fn host_of(uri: &str, host_header: Option<&str>) -> String {
+        let mut builder = Request::builder().uri(uri);
+        if let Some(h) = host_header {
+            builder = builder.header("host", h);
+        }
+        RequestHandler::request_host(&builder.body(()).unwrap())
+    }
+
+    #[test]
+    fn request_host_is_lowercased_without_port_or_trailing_dot() {
+        // The Host header shapes Caddy and ingress controllers send.
+        assert_eq!(host_of("/", Some("API.Acme.Dev.:8443")), "api.acme.dev");
+        assert_eq!(host_of("/", Some("api.acme.dev")), "api.acme.dev");
+        assert_eq!(host_of("/", Some("[::1]:8080")), "[::1]");
+        assert_eq!(host_of("/", None), "");
+        // An absolute URI (HTTP/2 `:authority`) goes through the same rules.
+        assert_eq!(
+            host_of("https://API.Acme.Dev.:8443/x", Some("other.dev")),
+            "api.acme.dev"
+        );
+        assert_eq!(host_of("http://[::1]:8080/x", None), "[::1]");
     }
 
     #[test]

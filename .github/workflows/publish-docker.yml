@@ -50,6 +50,8 @@ jobs:
         with:
           images: ${{ env.GHCR_IMAGE }}
           tags: type=semver,pattern={{version}}
+          flavor: |
+            latest=false
           labels: |
             org.opencontainers.image.title=octopus
             org.opencontainers.image.description=Octopus API Gateway
@@ -98,9 +100,14 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     permissions:
-      contents: read
+      # contents: write lets the digest step attach octopus-image-digests.json
+      # to the GitHub Release.
+      contents: write
       packages: write
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Prepare Docker Hub config
         id: prep
         env:
@@ -154,6 +161,8 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha
+          flavor: |
+            latest=false
 
       - name: Create and push manifest list
         working-directory: ${{ runner.temp }}/digests
@@ -168,3 +177,33 @@ jobs:
       - name: Inspect
         run: |
           docker buildx imagetools inspect "${{ env.GHCR_IMAGE }}:${{ steps.meta.outputs.version }}"
+
+      - name: Record per-arch image digests
+        env:
+          IMAGE: ${{ env.GHCR_IMAGE }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IS_TAG: ${{ github.ref_type == 'tag' }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # Fails the job if either linux/amd64 or linux/arm64 is missing.
+          bash scripts/image-digests.sh "$IMAGE" "$VERSION" > octopus-image-digests.json
+
+          {
+            echo "### Image digests for ${IMAGE}:${VERSION}"
+            echo
+            echo '```json'
+            jq . octopus-image-digests.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Attach to the release only for a tag run (workflow_call from
+          # release.yml inherits the caller's ref). Anything else has no
+          # release to attach to.
+          if [ "$IS_TAG" = "true" ]; then
+            gh release upload "$RELEASE_TAG" octopus-image-digests.json --clobber
+            echo "Uploaded octopus-image-digests.json to release ${RELEASE_TAG}." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Not a tag run, so there is no release to attach octopus-image-digests.json to. Skipped the upload." >> "$GITHUB_STEP_SUMMARY"
+          fi

@@ -41,6 +41,8 @@ impl Default for LoggingConfig {
                 "cookie".to_string(),
                 "set-cookie".to_string(),
                 "x-api-key".to_string(),
+                "x-octopus-admin-token".to_string(),
+                "x-octopus-farp-token".to_string(),
             ],
             log_response: true,
         }
@@ -283,6 +285,14 @@ mod tests {
             "[REDACTED]"
         );
         assert_eq!(logger.redact_value("Cookie", "session=abc"), "[REDACTED]");
+        assert_eq!(
+            logger.redact_value("X-Octopus-Admin-Token", "tok"),
+            "[REDACTED]"
+        );
+        assert_eq!(
+            logger.redact_value("X-Octopus-Farp-Token", "tok"),
+            "[REDACTED]"
+        );
         assert_eq!(
             logger.redact_value("Content-Type", "application/json"),
             "application/json"

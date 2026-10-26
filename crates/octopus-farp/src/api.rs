@@ -2,10 +2,11 @@
 
 use crate::client::FarpClient;
 use crate::federation::SchemaFederation;
-use crate::manifest::SchemaManifest;
+use crate::manifest::{manifest_from_metadata, SchemaManifest};
 use crate::registry::SchemaRegistry;
 use crate::route_generator::{GeneratedRoute, RouteGenerator};
 use crate::schema::{SchemaDescriptor, SchemaFormat};
+use crate::types::LocationType;
 use crate::validation::ManifestValidator;
 use bytes::Bytes;
 use http::{Method, Request, Response, StatusCode};
@@ -13,9 +14,105 @@ use http_body_util::{BodyExt, Full};
 use octopus_core::{Error, Result};
 use octopus_router::Router;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
+
+/// Header that carries the FARP registration token, for clients whose
+/// `Authorization` header does not survive the trip (the Kubernetes API service
+/// proxy strips it after authenticating the caller).
+pub const FARP_TOKEN_HEADER: &str = "x-octopus-farp-token";
+
+/// SHA-256 digest of the FARP registration token. Only the digest is kept, and
+/// the `Debug` output never shows it.
+#[derive(Clone, Copy)]
+struct TokenDigest([u8; 32]);
+
+impl std::fmt::Debug for TokenDigest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TokenDigest(..)")
+    }
+}
+
+fn sha256(data: &[u8]) -> [u8; 32] {
+    Sha256::digest(data).into()
+}
+
+/// The credential of an `Authorization: Bearer <credential>` value.
+fn bearer_token(value: &str) -> Option<&str> {
+    let (scheme, credential) = value.trim().split_once(' ')?;
+    let credential = credential.trim();
+    (scheme.eq_ignore_ascii_case("bearer") && !credential.is_empty()).then_some(credential)
+}
+
+/// `http://host:port` for a pushed instance. The address may already carry the
+/// port (`host:port` with `port` 0); this never doubles it.
+fn push_instance_base(instance: &PushInstanceInfo) -> String {
+    if instance.port > 0 && !instance.address.contains(':') {
+        format!("http://{}:{}", instance.address, instance.port)
+    } else {
+        format!("http://{}", instance.address)
+    }
+}
+
+/// Where a pushed instance serves its manifest: `metadata["farp.manifest"]`
+/// when set, else `/_farp/manifest` on the instance.
+fn push_manifest_url(instance: &PushInstanceInfo) -> String {
+    instance
+        .metadata
+        .as_ref()
+        .and_then(|m| m.get("farp.manifest"))
+        .cloned()
+        .unwrap_or_else(|| format!("{}/_farp/manifest", push_instance_base(instance)))
+}
+
+/// The single-instance upstream cluster a push registration installs, named
+/// after the service.
+fn push_upstream_cluster(
+    service_name: &str,
+    instance: &PushInstanceInfo,
+) -> octopus_core::UpstreamCluster {
+    let mut cluster = octopus_core::UpstreamCluster::new(service_name);
+    let inst_address = if instance.port > 0 && !instance.address.contains(':') {
+        instance.address.clone()
+    } else {
+        instance
+            .address
+            .split(':')
+            .next()
+            .unwrap_or(&instance.address)
+            .to_string()
+    };
+    let inst_port = if instance.port > 0 {
+        instance.port
+    } else {
+        instance
+            .address
+            .split(':')
+            .nth(1)
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(80)
+    };
+    cluster.add_instance(octopus_core::UpstreamInstance::new(
+        &instance.id,
+        &inst_address,
+        inst_port,
+    ));
+    cluster
+}
+
+/// Give a manifest the identity of the instance that pushed it, so the
+/// registry, heartbeat, deregister, upstream and routes all agree on it.
+fn adopt_instance_identity(
+    manifest: &mut SchemaManifest,
+    instance_id: &str,
+    service_name: &str,
+) -> Result<()> {
+    instance_id.clone_into(&mut manifest.instance_id);
+    service_name.clone_into(&mut manifest.service_name);
+    manifest.update_checksum()
+}
 
 /// FARP API handler
 #[derive(Clone, Debug)]
@@ -32,6 +129,9 @@ pub struct FarpApiHandler {
     /// (e.g. `api.example.cloud`) and attach them to that gateway. Shared cell so
     /// the k8s controller can update it from the `OctopusGateway` CRD at runtime.
     binding: crate::binding::BindingCell,
+    /// SHA-256 digest of the registration token. When set, every request other
+    /// than GET and HEAD must present the token.
+    registration_token: Option<TokenDigest>,
 }
 
 /// Registration request
@@ -168,6 +268,7 @@ impl FarpApiHandler {
             farp_client: Arc::new(FarpClient::default()),
             router: None,
             binding: crate::binding::new_binding_cell(),
+            registration_token: None,
         }
     }
 
@@ -185,7 +286,53 @@ impl FarpApiHandler {
             farp_client: Arc::new(FarpClient::default()),
             router: None,
             binding: crate::binding::new_binding_cell(),
+            registration_token: None,
         }
+    }
+
+    /// Require a token on every request that changes state (anything other than
+    /// GET and HEAD). The token travels as `Authorization: Bearer <token>` or in
+    /// the [`FARP_TOKEN_HEADER`] header. `None` or an empty string leaves
+    /// registration open. Only the SHA-256 digest is stored.
+    #[must_use]
+    pub fn with_registration_token(mut self, token: Option<&str>) -> Self {
+        self.registration_token = token
+            .filter(|t| !t.is_empty())
+            .map(|t| TokenDigest(sha256(t.as_bytes())));
+        self
+    }
+
+    /// Whether `req` presents the configured registration token.
+    fn token_presented(&self, req: &Request<Full<Bytes>>, expected: &TokenDigest) -> bool {
+        let headers = req.headers();
+        let bearer = headers
+            .get(http::header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(bearer_token);
+        let custom = headers
+            .get(FARP_TOKEN_HEADER)
+            .and_then(|v| v.to_str().ok())
+            .map(str::trim)
+            .filter(|t| !t.is_empty());
+        // Fixed-size digest comparison avoids leaking the token length.
+        [bearer, custom]
+            .into_iter()
+            .flatten()
+            .any(|presented| sha256(presented.as_bytes()) == expected.0)
+    }
+
+    /// The 401 answer for a request that lacks a valid registration token.
+    fn unauthorized(&self) -> Result<Response<Full<Bytes>>> {
+        let json = serde_json::json!({
+            "error": "unauthorized",
+            "message": "FARP registration requires a token"
+        });
+        let mut response = self.json_response(StatusCode::UNAUTHORIZED, &json)?;
+        response.headers_mut().insert(
+            http::header::WWW_AUTHENTICATE,
+            http::HeaderValue::from_static("Bearer realm=\"octopus-farp\""),
+        );
+        Ok(response)
     }
 
     /// Set the router for supplementing the federated spec with registered routes
@@ -234,6 +381,18 @@ impl FarpApiHandler {
         let path = req.uri().path().to_string();
 
         debug!(method = %method, path = %path, "FARP API request");
+
+        // Every alias (`/_farp/v1/*`, `/__farp/*`, `/farp/*`) is rewritten to
+        // `/farp/*` before it gets here, so this one check covers them all.
+        if let Some(expected) = &self.registration_token {
+            if method != Method::GET
+                && method != Method::HEAD
+                && !self.token_presented(&req, expected)
+            {
+                debug!(method = %method, path = %path, "FARP request rejected: missing or wrong token");
+                return self.unauthorized();
+            }
+        }
 
         match (method, path.as_str()) {
             // Service registration (supports both legacy and FARP v1 push payloads)
@@ -314,7 +473,10 @@ impl FarpApiHandler {
             let instance = &push_req.instance;
             let service_name = instance.service_name.clone();
 
-            let manifest = if let Some(m) = push_req.manifest {
+            // A failed manifest fetch with no schema to fall back on means the
+            // gateway does not know the service's routes yet.
+            let mut manifest_fetch_failed = false;
+            let mut manifest = if let Some(m) = push_req.manifest {
                 m
             } else {
                 // Per FARP spec 17.5: services expose GET /_farp/manifest
@@ -323,17 +485,7 @@ impl FarpApiHandler {
                 // Note: Address may be "host:port" (port field = 0) or just "host"
                 // (port field > 0). Avoid double-port like "host:7900:0".
                 let metadata = instance.metadata.as_ref();
-                let manifest_url = metadata
-                    .and_then(|m| m.get("farp.manifest"))
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        let base = if instance.port > 0 && !instance.address.contains(':') {
-                            format!("http://{}:{}", instance.address, instance.port)
-                        } else {
-                            format!("http://{}", instance.address)
-                        };
-                        format!("{base}/_farp/manifest")
-                    });
+                let manifest_url = push_manifest_url(instance);
 
                 info!(
                     service = %service_name,
@@ -350,21 +502,28 @@ impl FarpApiHandler {
                             error = %e,
                             "Failed to fetch manifest from service, registering with instance info only"
                         );
-                        let mut m = SchemaManifest::new(
-                            &service_name,
-                            instance.service_version.as_deref().unwrap_or("0.0.0"),
-                            &instance.id,
-                        );
-                        let base = if instance.port > 0 && !instance.address.contains(':') {
-                            format!("http://{}:{}", instance.address, instance.port)
+                        manifest_fetch_failed = true;
+                        let version = instance.service_version.as_deref().unwrap_or("0.0.0");
+                        let base = push_instance_base(instance);
+                        // A service that opted in with `farp.openapi.path` gets the
+                        // same manifest discovery would build from that metadata.
+                        // Without the key, only the instance info is registered.
+                        if let Some(m) = metadata.filter(|m| m.contains_key("farp.openapi.path")) {
+                            manifest_from_metadata(&service_name, version, &instance.id, &base, m)?
                         } else {
-                            format!("http://{}", instance.address)
-                        };
-                        m.endpoints.health = format!("{base}/_farp/health");
-                        m
+                            let mut m = SchemaManifest::new(&service_name, version, &instance.id);
+                            m.endpoints.health = format!("{base}/_farp/health");
+                            m
+                        }
                     }
                 }
             };
+
+            // The push body names the instance. A manifest the service serves
+            // (or sends) may carry other ids, but heartbeat and deregister look
+            // the registration up by `instance.id`, and the upstream and routes
+            // are keyed by `instance.service_name`.
+            adopt_instance_identity(&mut manifest, &instance.id, &service_name)?;
 
             self.validator.validate(&manifest)?;
             info!(service = %service_name, instance_id = %instance.id, "Registering service (FARP v1 push)");
@@ -382,161 +541,46 @@ impl FarpApiHandler {
             self.registry.register_service(manifest.clone()).await?;
 
             // Store manifest_url for heartbeat retry (§17.4.1)
-            let manifest_url = instance
-                .metadata
-                .as_ref()
-                .and_then(|m| m.get("farp.manifest"))
-                .cloned()
-                .unwrap_or_else(|| {
-                    let base = if instance.port > 0 && !instance.address.contains(':') {
-                        format!("http://{}:{}", instance.address, instance.port)
-                    } else {
-                        format!("http://{}", instance.address)
-                    };
-                    format!("{base}/_farp/manifest")
-                });
+            let manifest_url = push_manifest_url(instance);
             if let Some(mut reg) = self.registry.services_mut().get_mut(&service_name) {
                 reg.manifest_url = Some(manifest_url);
             }
 
             // Fetch actual schema content from the service's endpoints
             // (per FARP spec, the manifest lists schema URLs; the gateway fetches them)
-            crate::schema_ops::fetch_manifest_schemas(&self.farp_client, &self.registry, &manifest)
-                .await;
+            let outcome = crate::schema_ops::fetch_manifest_schemas(
+                &self.farp_client,
+                &self.registry,
+                &manifest,
+            )
+            .await;
+
+            // Routes come from the route table when there is one, else from the
+            // fetched schemas. When the schemas were listed but none arrived (or
+            // the manifest itself never did), replacing the routes would wipe
+            // the service's working routes over a transient failure.
+            let schemas_missing = !manifest.has_route_table()
+                && (outcome.all_failed() || (manifest_fetch_failed && outcome.attempted == 0));
 
             // Register upstream and routes in the gateway router (if available)
             if let Some(ref router) = self.router {
-                // Register upstream cluster
-                let mut cluster = octopus_core::UpstreamCluster::new(&service_name);
-                let inst_address = if instance.port > 0 && !instance.address.contains(':') {
-                    instance.address.clone()
-                } else {
-                    instance
-                        .address
-                        .split(':')
-                        .next()
-                        .unwrap_or(&instance.address)
-                        .to_string()
-                };
-                let inst_port = if instance.port > 0 {
-                    instance.port
-                } else {
-                    instance
-                        .address
-                        .split(':')
-                        .nth(1)
-                        .and_then(|p| p.parse().ok())
-                        .unwrap_or(80)
-                };
-                let upstream_inst =
-                    octopus_core::UpstreamInstance::new(&instance.id, &inst_address, inst_port);
-                cluster.add_instance(upstream_inst);
-                router.register_upstream(cluster);
+                router.register_upstream(push_upstream_cluster(&service_name, instance));
 
-                let service_name_lower = service_name.to_lowercase();
-
-                // Prefer pre-computed route table from manifest (FARP v1.1.0).
-                // This uses the exact routes the service declared, already validated.
-                if manifest.has_route_table() {
-                    for route_desc in &manifest.route_table {
-                        // Skip introspection endpoints
-                        if crate::schema_ops::should_exclude_introspection()
-                            && crate::schema_ops::is_introspection_path(&route_desc.path)
-                        {
-                            continue;
-                        }
-                        for method_str in &route_desc.methods {
-                            let method = match method_str.to_uppercase().as_str() {
-                                "GET" => Method::GET,
-                                "POST" => Method::POST,
-                                "PUT" => Method::PUT,
-                                "DELETE" => Method::DELETE,
-                                "PATCH" => Method::PATCH,
-                                "HEAD" => Method::HEAD,
-                                "OPTIONS" => Method::OPTIONS,
-                                _ => continue,
-                            };
-                            let prefixed_path = format!("/{service_name_lower}{}", route_desc.path);
-                            let builder = octopus_router::RouteBuilder::new()
-                                .path(&prefixed_path)
-                                .method(method)
-                                .upstream_name(&service_name)
-                                .priority(100);
-                            let binding = self.binding.load();
-                            let builder = crate::binding::apply_gateway_binding(
-                                builder,
-                                (**binding).as_ref(),
-                                false,
-                            );
-                            if let Ok(route) = builder.build() {
-                                let _ = router.add_route(route);
-                            }
-                        }
-                    }
-                    debug!(
+                if schemas_missing {
+                    warn!(
                         service = %service_name,
-                        route_count = manifest.route_table.len(),
-                        "Routes registered from manifest route_table"
+                        instance_id = %instance.id,
+                        "No schema could be fetched; keeping the service's existing FARP routes and retrying on heartbeat"
                     );
                 } else {
-                    // Fallback: parse OpenAPI schema paths
-                    if let Ok(schemas) = self.registry.get_schemas(&service_name) {
-                        for schema in &schemas {
-                            if schema.format == SchemaFormat::OpenApi {
-                                if let Ok(schema_json) =
-                                    serde_json::from_str::<serde_json::Value>(&schema.content)
-                                {
-                                    if let Some(paths) =
-                                        schema_json.get("paths").and_then(|p| p.as_object())
-                                    {
-                                        for (path, operations) in paths {
-                                            if crate::schema_ops::should_exclude_introspection()
-                                                && crate::schema_ops::is_introspection_path(path)
-                                            {
-                                                continue;
-                                            }
-                                            if let Some(ops) = operations.as_object() {
-                                                for method_str in ops.keys() {
-                                                    let method =
-                                                        match method_str.to_uppercase().as_str() {
-                                                            "GET" => Method::GET,
-                                                            "POST" => Method::POST,
-                                                            "PUT" => Method::PUT,
-                                                            "DELETE" => Method::DELETE,
-                                                            "PATCH" => Method::PATCH,
-                                                            "HEAD" => Method::HEAD,
-                                                            "OPTIONS" => Method::OPTIONS,
-                                                            _ => continue,
-                                                        };
-                                                    let prefixed_path =
-                                                        format!("/{service_name_lower}{path}");
-                                                    let builder =
-                                                        octopus_router::RouteBuilder::new()
-                                                            .path(&prefixed_path)
-                                                            .method(method)
-                                                            .upstream_name(&service_name)
-                                                            .priority(100);
-                                                    let binding = self.binding.load();
-                                                    let builder =
-                                                        crate::binding::apply_gateway_binding(
-                                                            builder,
-                                                            (**binding).as_ref(),
-                                                            false,
-                                                        );
-                                                    if let Ok(route) = builder.build() {
-                                                        let _ = router.add_route(route);
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    self.apply_service_routes(router, &service_name, &manifest);
+                    info!(service = %service_name, "Upstream and routes registered in gateway router");
                 }
-
-                info!(service = %service_name, "Upstream and routes registered in gateway router");
+            }
+            if schemas_missing {
+                if let Some(mut reg) = self.registry.services_mut().get_mut(&service_name) {
+                    reg.schema_retry_pending = true;
+                }
             }
 
             // Trigger federation to merge all registered schemas
@@ -546,7 +590,7 @@ impl FarpApiHandler {
             }
 
             // Return ack with gateway state (§17.4.1)
-            let (routes_checksum, schemas_applied) = self.get_instance_state(&manifest.instance_id);
+            let (routes_checksum, schemas_applied) = self.get_instance_state(&instance.id);
 
             return self.json_response(
                 StatusCode::CREATED,
@@ -648,6 +692,10 @@ impl FarpApiHandler {
             );
         }
 
+        // A registration that kept its old routes because no schema arrived
+        // retries the fetch on every heartbeat until it works.
+        self.retry_pending_schemas(instance_id).await;
+
         // §17.4.1 Reconciliation: if service sent a checksum and it doesn't
         // match what the gateway has (or gateway has 0 schemas), retry the
         // manifest fetch so schemas converge.
@@ -679,6 +727,161 @@ impl FarpApiHandler {
                 schemas_applied: gw_schemas,
             },
         )
+    }
+
+    /// Build the service's FARP routes from the manifest's route table, or
+    /// from its fetched `OpenAPI` schemas, and swap them in for the service's
+    /// current FARP routes in one step. Returns how many router entries the
+    /// service now has.
+    fn apply_service_routes(
+        &self,
+        router: &Router,
+        service_name: &str,
+        manifest: &SchemaManifest,
+    ) -> usize {
+        // Prefer pre-computed route table from manifest (FARP v1.1.0).
+        // This uses the exact routes the service declared, already validated.
+        let mut builders = Vec::new();
+        if manifest.has_route_table() {
+            for route_desc in &manifest.route_table {
+                // Skip introspection endpoints
+                if crate::schema_ops::should_exclude_introspection()
+                    && crate::schema_ops::is_introspection_path(&route_desc.path)
+                {
+                    continue;
+                }
+                for method_str in &route_desc.methods {
+                    let Some(method) = crate::routes::http_method(method_str) else {
+                        continue;
+                    };
+                    builders.push(crate::routes::service_route_builder(
+                        service_name,
+                        &route_desc.path,
+                        method,
+                    ));
+                }
+            }
+        } else if let Ok(schemas) = self.registry.get_schemas(service_name) {
+            // Fallback: parse OpenAPI schema paths
+            for schema in &schemas {
+                if schema.format != SchemaFormat::OpenApi {
+                    continue;
+                }
+                let Ok(schema_json) = serde_json::from_str::<serde_json::Value>(&schema.content)
+                else {
+                    continue;
+                };
+                let Some(paths) = schema_json.get("paths").and_then(|p| p.as_object()) else {
+                    continue;
+                };
+                for (path, operations) in paths {
+                    if crate::schema_ops::should_exclude_introspection()
+                        && crate::schema_ops::is_introspection_path(path)
+                    {
+                        continue;
+                    }
+                    let Some(ops) = operations.as_object() else {
+                        continue;
+                    };
+                    for method in ops.keys().filter_map(|m| crate::routes::http_method(m)) {
+                        builders.push(crate::routes::service_route_builder(
+                            service_name,
+                            path,
+                            method,
+                        ));
+                    }
+                }
+            }
+        }
+
+        // Replace the service's FARP routes in one step, so a
+        // re-registration drops routes the service no longer declares.
+        let binding = self.binding.load();
+        let route_count = crate::routes::replace_service_routes(
+            router,
+            service_name,
+            builders,
+            (**binding).as_ref(),
+            false,
+        );
+        debug!(
+            service = %service_name,
+            route_count,
+            from_route_table = manifest.has_route_table(),
+            "FARP routes registered"
+        );
+        route_count
+    }
+
+    /// Retry the schema fetch for a registration that kept its old routes
+    /// because no schema arrived. One short attempt per location, so the
+    /// heartbeat that triggers it never waits out a backoff. On success the
+    /// service's routes are replaced and the retry flag is cleared.
+    async fn retry_pending_schemas(&self, instance_id: &str) {
+        let pending = self.registry.services_mut().iter().find_map(|entry| {
+            (entry.manifest.instance_id == instance_id && entry.schema_retry_pending).then(|| {
+                (
+                    entry.key().clone(),
+                    entry.manifest.clone(),
+                    entry.manifest_url.clone(),
+                )
+            })
+        });
+        let Some((service_name, mut manifest, manifest_url)) = pending else {
+            return;
+        };
+        let client = self.farp_client.single_attempt();
+
+        // The stored manifest lists the schema locations to retry, the ones
+        // built from `farp.*` metadata included. When it lists none, the
+        // manifest itself never arrived: fetch it again first.
+        let has_locations = manifest
+            .schemas
+            .iter()
+            .any(|s| s.location.location_type == LocationType::HTTP && s.location.url.is_some());
+        if !has_locations {
+            let Some(url) = manifest_url else {
+                return;
+            };
+            match client.fetch_manifest(&url).await {
+                Ok(mut fetched) => {
+                    if let Err(e) =
+                        adopt_instance_identity(&mut fetched, instance_id, &service_name)
+                            .and_then(|()| self.validator.validate(&fetched))
+                    {
+                        warn!(service = %service_name, error = %e, "Retried manifest is invalid");
+                        return;
+                    }
+                    if let Err(e) = self.registry.update_service(fetched.clone()).await {
+                        warn!(service = %service_name, error = %e, "Failed to store retried manifest");
+                        return;
+                    }
+                    manifest = fetched;
+                }
+                Err(e) => {
+                    debug!(service = %service_name, error = %e, "Manifest still unavailable");
+                    return;
+                }
+            }
+        }
+
+        let outcome =
+            crate::schema_ops::fetch_manifest_schemas(&client, &self.registry, &manifest).await;
+        if outcome.all_failed() && !manifest.has_route_table() {
+            debug!(service = %service_name, "Schemas still unavailable; keeping existing FARP routes");
+            return;
+        }
+
+        if let Some(ref router) = self.router {
+            self.apply_service_routes(router, &service_name, &manifest);
+        }
+        if let Some(mut reg) = self.registry.services_mut().get_mut(&service_name) {
+            reg.schema_retry_pending = false;
+        }
+        if let Err(e) = crate::schema_ops::trigger_federation(&self.registry, &self.federation) {
+            warn!(service = %service_name, error = %e, "Federation failed after schema retry");
+        }
+        info!(service = %service_name, instance_id = %instance_id, "Schema retry succeeded; FARP routes refreshed");
     }
 
     /// Get the `routes_checksum` and schema count for an instance.
@@ -714,7 +917,13 @@ impl FarpApiHandler {
         };
 
         match self.farp_client.fetch_manifest(&manifest_url).await {
-            Ok(new_manifest) => {
+            Ok(mut new_manifest) => {
+                if let Err(e) =
+                    adopt_instance_identity(&mut new_manifest, instance_id, &service_name)
+                {
+                    warn!(error = %e, "Failed to adopt the instance identity after retry");
+                    return;
+                }
                 info!(
                     service = %service_name,
                     instance_id = %instance_id,
@@ -754,7 +963,8 @@ impl FarpApiHandler {
     async fn deregister_by_id(&self, instance_id: &str) -> Result<Response<Full<Bytes>>> {
         info!(instance_id = %instance_id, "Deregistering service instance");
 
-        if self.registry.deregister_by_instance_id(instance_id).is_ok() {
+        if let Ok(service_name) = self.registry.deregister_by_instance_id(instance_id) {
+            self.remove_service_from_router(&service_name);
             self.json_response(
                 StatusCode::OK,
                 &serde_json::json!({"status": "deregistered"}),
@@ -764,6 +974,15 @@ impl FarpApiHandler {
                 StatusCode::NOT_FOUND,
                 &serde_json::json!({"error": "instance not found"}),
             )
+        }
+    }
+
+    /// Drop a deregistered service's FARP routes and its upstream.
+    fn remove_service_from_router(&self, service_name: &str) {
+        if let Some(ref router) = self.router {
+            let removed = crate::routes::remove_service_routes(router, service_name);
+            router.remove_upstream(service_name);
+            info!(service = %service_name, routes_removed = removed, "Service removed from gateway router");
         }
     }
 
@@ -802,6 +1021,7 @@ impl FarpApiHandler {
         info!(service = %service_name, "Deregistering service");
 
         self.registry.deregister_service(service_name).await?;
+        self.remove_service_from_router(service_name);
 
         let response = serde_json::json!({
             "success": true,
@@ -1718,5 +1938,703 @@ mod tests {
         assert!(!paths.is_empty(), "Federated schema should have paths");
         // Verify it's a valid OpenAPI 3.1.0 schema
         assert_eq!(json["openapi"], "3.1.0");
+    }
+
+    fn token_handler(token: &str) -> FarpApiHandler {
+        FarpApiHandler::new(Arc::new(SchemaRegistry::new())).with_registration_token(Some(token))
+    }
+
+    fn register_request(header: Option<(&str, &str)>) -> Request<Full<Bytes>> {
+        let registration = RegistrationRequest {
+            manifest: create_test_manifest("test-service", "1.0.0", "test-instance"),
+            schemas: None,
+        };
+        let mut builder = Request::builder()
+            .method(Method::POST)
+            .uri("/farp/register");
+        if let Some((name, value)) = header {
+            builder = builder.header(name, value);
+        }
+        builder
+            .body(Full::new(Bytes::from(
+                serde_json::to_string(&registration).unwrap(),
+            )))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn register_requires_token_when_configured() {
+        let res = token_handler("t")
+            .handle(register_request(None))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            res.headers().get("www-authenticate").unwrap(),
+            "Bearer realm=\"octopus-farp\""
+        );
+        assert_eq!(
+            res.headers().get("content-type").unwrap(),
+            "application/json"
+        );
+        let body = res.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "error": "unauthorized",
+                "message": "FARP registration requires a token"
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn register_accepts_bearer_token() {
+        let res = token_handler("t")
+            .handle(register_request(Some(("authorization", "Bearer t"))))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn register_accepts_custom_header_token() {
+        let res = token_handler("t")
+            .handle(register_request(Some((FARP_TOKEN_HEADER, "t"))))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn wrong_token_is_rejected() {
+        let handler = token_handler("t");
+        for header in [
+            ("authorization", "Bearer x"),
+            ("authorization", "Basic t"),
+            ("authorization", "Bearer "),
+            (FARP_TOKEN_HEADER, "x"),
+            (FARP_TOKEN_HEADER, ""),
+        ] {
+            let res = handler
+                .handle(register_request(Some(header)))
+                .await
+                .unwrap();
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED, "{header:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn every_write_method_needs_the_token() {
+        let handler = token_handler("t");
+        for (method, uri) in [
+            (Method::PUT, "/farp/services/svc"),
+            (Method::DELETE, "/farp/services/svc"),
+            (Method::PUT, "/farp/heartbeat/inst"),
+            (Method::DELETE, "/farp/deregister/inst"),
+            (Method::POST, "/farp/federate"),
+            (Method::PATCH, "/farp/services/svc"),
+        ] {
+            let req = Request::builder()
+                .method(method.clone())
+                .uri(uri)
+                .body(Full::new(Bytes::new()))
+                .unwrap();
+            let res = handler.handle(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED, "{method} {uri}");
+        }
+    }
+
+    #[tokio::test]
+    async fn reads_stay_open_with_token_configured() {
+        let handler = token_handler("t");
+        let get = Request::builder()
+            .method(Method::GET)
+            .uri("/farp/services")
+            .body(Full::new(Bytes::new()))
+            .unwrap();
+        assert_eq!(handler.handle(get).await.unwrap().status(), StatusCode::OK);
+
+        // HEAD is not routed to any endpoint, but the token check lets it through.
+        let head = Request::builder()
+            .method(Method::HEAD)
+            .uri("/farp/services")
+            .body(Full::new(Bytes::new()))
+            .unwrap();
+        assert_ne!(
+            handler.handle(head).await.unwrap().status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+
+    #[tokio::test]
+    async fn no_token_configured_keeps_registration_open() {
+        let handler = FarpApiHandler::new(Arc::new(SchemaRegistry::new()));
+        let res = handler.handle(register_request(None)).await.unwrap();
+        assert_eq!(res.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn empty_token_means_no_token() {
+        let handler =
+            FarpApiHandler::new(Arc::new(SchemaRegistry::new())).with_registration_token(Some(""));
+        let res = handler.handle(register_request(None)).await.unwrap();
+        assert_eq!(res.status(), StatusCode::CREATED);
+    }
+
+    #[tokio::test]
+    async fn heartbeat_for_unknown_instance_returns_404() {
+        let req = Request::builder()
+            .method(Method::PUT)
+            .uri("/farp/heartbeat/nope")
+            .header("authorization", "Bearer t")
+            .body(Full::new(Bytes::from(r#"{"status":"healthy"}"#)))
+            .unwrap();
+        let res = token_handler("t").handle(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+        let body = res.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["action"], "re-register");
+    }
+
+    /// The `billing` manifest a push registration sends: one route-table entry
+    /// (`GET /invoices`) and a schema on a closed port, so the schema fetch
+    /// fails fast and the route table drives the routes.
+    fn billing_manifest() -> SchemaManifest {
+        let mut manifest = SchemaManifest::new("billing", "1.0.0", "billing-1");
+        manifest.endpoints.health = "http://127.0.0.1:1/health".to_string();
+        manifest.add_schema(crate::types::SchemaDescriptor::new(
+            crate::types::SchemaType::OpenAPI,
+            "3.1.0",
+            crate::types::SchemaLocation::http("http://127.0.0.1:1/openapi.json"),
+            "application/json",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            1024,
+        ));
+        manifest.set_route_table(vec![serde_json::from_value(serde_json::json!({
+            "path": "/invoices",
+            "methods": ["GET"],
+            "protocol": "rest"
+        }))
+        .unwrap()]);
+        manifest
+            .update_checksum()
+            .expect("failed to compute manifest checksum");
+        manifest
+    }
+
+    /// A handler wired to `router` with FARP routes bound to `a.dev` and
+    /// `*.b.dev`.
+    fn bound_handler(router: &Arc<Router>) -> FarpApiHandler {
+        FarpApiHandler::new(Arc::new(SchemaRegistry::new()))
+            .with_router(Arc::clone(router))
+            .with_binding(crate::binding::GatewayBinding::for_hostnames(&[
+                "a.dev".into(),
+                "*.b.dev".into(),
+            ]))
+    }
+
+    async fn push_register(handler: &FarpApiHandler) -> StatusCode {
+        let body = serde_json::json!({
+            "instance": {
+                "id": "billing-1",
+                "service_name": "billing",
+                "address": "127.0.0.1",
+                "port": 1
+            },
+            "manifest": billing_manifest(),
+        });
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/farp/register")
+            .body(Full::new(Bytes::from(body.to_string())))
+            .unwrap();
+        handler.handle(req).await.unwrap().status()
+    }
+
+    #[tokio::test]
+    async fn push_registration_binds_routes_to_every_hostname() {
+        let router = Arc::new(Router::new());
+        let handler = bound_handler(&router);
+        assert_eq!(push_register(&handler).await, StatusCode::CREATED);
+
+        for host in ["a.dev", "x.b.dev"] {
+            let m = router
+                .match_route(host, &Method::GET, "/billing/invoices")
+                .unwrap_or_else(|_| panic!("no FARP route on {host}"));
+            assert_eq!(m.route.upstream_name, "billing");
+            assert_eq!(m.route.origin, octopus_router::RouteOrigin::Farp);
+            assert_eq!(m.route.id.as_deref(), Some("farp:billing"));
+            assert_eq!(m.route.strip_prefix.as_deref(), Some("/billing"));
+            assert_eq!(m.route.priority, 100);
+        }
+        assert!(router
+            .match_route("c.dev", &Method::GET, "/billing/invoices")
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn reregistration_keeps_manual_route_at_the_same_path() {
+        let router = Arc::new(Router::new());
+        router.register_upstream(octopus_core::UpstreamCluster::new("lp-manual"));
+        router
+            .add_route(
+                octopus_router::RouteBuilder::new()
+                    .id(Some("lpr-1"))
+                    .origin(octopus_router::RouteOrigin::Admin)
+                    .method(Method::GET)
+                    .path("/billing/invoices")
+                    .host(octopus_router::HostMatch::Exact("a.dev".into()))
+                    .upstream_name("lp-manual")
+                    .build()
+                    .unwrap(),
+            )
+            .unwrap();
+        let handler = bound_handler(&router);
+
+        for _ in 0..2 {
+            assert_eq!(push_register(&handler).await, StatusCode::CREATED);
+            let m = router
+                .match_route("a.dev", &Method::GET, "/billing/invoices")
+                .unwrap();
+            assert_eq!(m.route.upstream_name, "lp-manual");
+            assert_eq!(router.routes_by_id("lpr-1").len(), 1);
+            // The FARP route still serves the other bound host, and the
+            // re-registration replaced it instead of adding a second copy.
+            assert_eq!(router.routes_by_id("farp:billing").len(), 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn deregister_removes_service_routes_and_upstream() {
+        let router = Arc::new(Router::new());
+        let handler = bound_handler(&router);
+        assert_eq!(push_register(&handler).await, StatusCode::CREATED);
+        assert!(router.get_upstream("billing").is_some());
+
+        let req = Request::builder()
+            .method(Method::DELETE)
+            .uri("/farp/deregister/billing-1")
+            .body(Full::new(Bytes::new()))
+            .unwrap();
+        assert_eq!(handler.handle(req).await.unwrap().status(), StatusCode::OK);
+
+        assert!(router
+            .match_route("a.dev", &Method::GET, "/billing/invoices")
+            .is_err());
+        assert!(router.routes_by_id("farp:billing").is_empty());
+        assert!(router.get_upstream("billing").is_none());
+    }
+
+    #[tokio::test]
+    async fn deregister_service_by_name_removes_routes_and_upstream() {
+        let router = Arc::new(Router::new());
+        let handler = bound_handler(&router);
+        assert_eq!(push_register(&handler).await, StatusCode::CREATED);
+
+        let req = Request::builder()
+            .method(Method::DELETE)
+            .uri("/farp/services/billing")
+            .body(Full::new(Bytes::new()))
+            .unwrap();
+        assert_eq!(handler.handle(req).await.unwrap().status(), StatusCode::OK);
+
+        assert!(router.routes_by_id("farp:billing").is_empty());
+        assert!(router.get_upstream("billing").is_none());
+    }
+
+    // Paused time lets the client's retry backoff elapse instantly.
+    #[tokio::test(start_paused = true)]
+    async fn push_without_manifest_uses_openapi_path_metadata() {
+        let registry = Arc::new(SchemaRegistry::new());
+        let handler = FarpApiHandler::new(Arc::clone(&registry));
+        // Nothing listens on 127.0.0.1:1, so the manifest fetch fails at once
+        // and the handler falls back to the opt-in metadata.
+        let body = serde_json::json!({
+            "instance": {
+                "id": "web-1",
+                "service_name": "web",
+                "service_version": "2.0.0",
+                "address": "127.0.0.1",
+                "port": 1,
+                "metadata": {"farp.openapi.path": "/openapi.json"}
+            }
+        });
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/farp/register")
+            .body(Full::new(Bytes::from(body.to_string())))
+            .unwrap();
+        assert_eq!(
+            handler.handle(req).await.unwrap().status(),
+            StatusCode::CREATED
+        );
+
+        let registered = registry.get_service("web").unwrap();
+        assert_eq!(registered.manifest.service_version, "2.0.0");
+        assert_eq!(registered.manifest.schemas.len(), 1);
+        assert_eq!(
+            registered.manifest.schemas[0].location.url.as_deref(),
+            Some("http://127.0.0.1:1/openapi.json")
+        );
+    }
+
+    /// Push a registration with no manifest and metadata that has no
+    /// `farp.openapi.path`.
+    fn push_without_openapi_path() -> Request<Full<Bytes>> {
+        let body = serde_json::json!({
+            "instance": {
+                "id": "web-1",
+                "service_name": "web",
+                "address": "127.0.0.1",
+                "port": 1,
+                "metadata": {"unrelated": "x"}
+            }
+        });
+        Request::builder()
+            .method(Method::POST)
+            .uri("/farp/register")
+            .body(Full::new(Bytes::from(body.to_string())))
+            .unwrap()
+    }
+
+    // With the `validation` feature the empty manifest (no checksum) is
+    // rejected, as it was before the metadata fallback existed.
+    #[cfg(feature = "validation")]
+    #[tokio::test(start_paused = true)]
+    async fn push_without_manifest_or_openapi_path_is_rejected_with_validation() {
+        let registry = Arc::new(SchemaRegistry::new());
+        let handler = FarpApiHandler::new(Arc::clone(&registry));
+        assert!(handler.handle(push_without_openapi_path()).await.is_err());
+        assert!(registry.get_service("web").is_err());
+    }
+
+    // Without it the empty manifest registers and no schema is invented from
+    // metadata that has no OpenAPI path.
+    #[cfg(not(feature = "validation"))]
+    #[tokio::test(start_paused = true)]
+    async fn push_without_manifest_or_openapi_path_registers_the_empty_manifest() {
+        let registry = Arc::new(SchemaRegistry::new());
+        let handler = FarpApiHandler::new(Arc::clone(&registry));
+        let res = handler.handle(push_without_openapi_path()).await.unwrap();
+        assert_eq!(res.status(), StatusCode::CREATED);
+        assert!(registry
+            .get_service("web")
+            .unwrap()
+            .manifest
+            .schemas
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn push_fallback_serves_routes_from_the_metadata_openapi_path() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/_farp/manifest"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/openapi.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "openapi": "3.0.0",
+                "info": {"title": "Web", "version": "1.0.0"},
+                "paths": {"/items": {"get": {"summary": "List items"}}}
+            })))
+            .mount(&server)
+            .await;
+
+        let router = Arc::new(Router::new());
+        let registry = Arc::new(SchemaRegistry::new());
+        let mut handler =
+            FarpApiHandler::new(Arc::clone(&registry)).with_router(Arc::clone(&router));
+        // Retry the 404 manifest fetch without the default one second backoff.
+        handler.farp_client = Arc::new(FarpClient::new(crate::client::FarpClientConfig {
+            retry_backoff: std::time::Duration::from_millis(1),
+            ..Default::default()
+        }));
+
+        let addr = server.address();
+        let body = serde_json::json!({
+            "instance": {
+                "id": "Web-1",
+                "service_name": "Web",
+                "address": addr.ip().to_string(),
+                "port": addr.port(),
+                "metadata": {"farp.openapi.path": "/openapi.json"}
+            },
+            "manifest": null
+        });
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri("/farp/register")
+            .body(Full::new(Bytes::from(body.to_string())))
+            .unwrap();
+        assert_eq!(
+            handler.handle(req).await.unwrap().status(),
+            StatusCode::CREATED
+        );
+
+        let registered = registry.get_service("Web").unwrap();
+        assert_eq!(
+            registered.manifest.schemas[0].location.url,
+            Some(format!("http://{addr}/openapi.json"))
+        );
+        // The OpenAPI document was fetched and turned into a FARP route under
+        // the lowercase service prefix.
+        let m = router
+            .match_route("any.host", &Method::GET, "/web/items")
+            .expect("FARP route for /web/items");
+        assert_eq!(m.route.upstream_name, "Web");
+        assert_eq!(m.route.origin, octopus_router::RouteOrigin::Farp);
+        assert_eq!(m.route.id.as_deref(), Some("farp:Web"));
+    }
+
+    /// A handler wired to `router` whose client retries after 1ms instead of
+    /// the default one second backoff.
+    fn fast_handler(registry: &Arc<SchemaRegistry>, router: &Arc<Router>) -> FarpApiHandler {
+        let mut handler = FarpApiHandler::new(Arc::clone(registry)).with_router(Arc::clone(router));
+        handler.farp_client = Arc::new(FarpClient::new(crate::client::FarpClientConfig {
+            retry_backoff: std::time::Duration::from_millis(1),
+            ..Default::default()
+        }));
+        handler
+    }
+
+    /// A push registration for `id`/`name` at `addr` with no manifest, so the
+    /// gateway fetches one (or falls back to `metadata`).
+    fn push_request(
+        id: &str,
+        name: &str,
+        addr: std::net::SocketAddr,
+        metadata: serde_json::Value,
+    ) -> Request<Full<Bytes>> {
+        let body = serde_json::json!({
+            "instance": {
+                "id": id,
+                "service_name": name,
+                "address": addr.ip().to_string(),
+                "port": addr.port(),
+                "metadata": metadata
+            },
+            "manifest": null
+        });
+        Request::builder()
+            .method(Method::POST)
+            .uri("/farp/register")
+            .body(Full::new(Bytes::from(body.to_string())))
+            .unwrap()
+    }
+
+    fn heartbeat_request(id: &str) -> Request<Full<Bytes>> {
+        Request::builder()
+            .method(Method::PUT)
+            .uri(format!("/farp/heartbeat/{id}"))
+            .body(Full::new(Bytes::from(r#"{"status":"healthy"}"#)))
+            .unwrap()
+    }
+
+    async fn json_of(res: Response<Full<Bytes>>) -> serde_json::Value {
+        let body = res.into_body().collect().await.unwrap().to_bytes();
+        serde_json::from_slice(&body).unwrap()
+    }
+
+    #[tokio::test]
+    async fn fetched_manifest_takes_the_pushed_instance_identity() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        // The service serves a manifest that names a different instance and
+        // service than the push body.
+        let mut served = SchemaManifest::new("billing-svc", "1.0.0", "pod-xyz");
+        served.endpoints.health = format!("{}/health", server.uri());
+        // One listed schema gives the manifest a checksum, which the
+        // `validation` feature requires. Its URL answers 404; the route table
+        // drives the routes.
+        served.add_openapi_http(&format!("{}/openapi.json", server.uri()));
+        served.set_route_table(vec![serde_json::from_value(serde_json::json!({
+            "path": "/invoices",
+            "methods": ["GET"],
+            "protocol": "rest"
+        }))
+        .unwrap()]);
+        served.update_checksum().unwrap();
+        Mock::given(method("GET"))
+            .and(path("/_farp/manifest"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&served))
+            .mount(&server)
+            .await;
+
+        let router = Arc::new(Router::new());
+        let registry = Arc::new(SchemaRegistry::new());
+        let handler = fast_handler(&registry, &router);
+
+        let req = push_request(
+            "billing-1",
+            "billing",
+            *server.address(),
+            serde_json::json!({}),
+        );
+        assert_eq!(
+            handler.handle(req).await.unwrap().status(),
+            StatusCode::CREATED
+        );
+        let registered = registry
+            .get_service("billing")
+            .expect("keyed by service_name");
+        assert_eq!(registered.manifest.instance_id, "billing-1");
+        assert_eq!(registered.manifest.service_name, "billing");
+        assert!(registry.get_service("billing-svc").is_err());
+        let m = router
+            .match_route("any.host", &Method::GET, "/billing/invoices")
+            .expect("FARP route from the fetched route table");
+        assert_eq!(m.route.upstream_name, "billing");
+
+        let res = handler
+            .handle(heartbeat_request("billing-1"))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+
+        let req = Request::builder()
+            .method(Method::DELETE)
+            .uri("/farp/deregister/billing-1")
+            .body(Full::new(Bytes::new()))
+            .unwrap();
+        assert_eq!(handler.handle(req).await.unwrap().status(), StatusCode::OK);
+        assert!(router.routes_by_id("farp:billing").is_empty());
+        assert!(router.get_upstream("billing").is_none());
+        assert_eq!(registry.service_count(), 0);
+    }
+
+    /// Mount `/_farp/manifest` as a 404 and `/openapi.json` with `status` and
+    /// one GET operation per path in `paths`.
+    async fn mount_openapi(server: &wiremock::MockServer, status: u16, paths: &[&str]) {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+
+        server.reset().await;
+        Mock::given(method("GET"))
+            .and(path("/_farp/manifest"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(server)
+            .await;
+        let ops: serde_json::Map<String, serde_json::Value> = paths
+            .iter()
+            .map(|p| {
+                (
+                    (*p).to_string(),
+                    serde_json::json!({"get": {"summary": "op"}}),
+                )
+            })
+            .collect();
+        Mock::given(method("GET"))
+            .and(path("/openapi.json"))
+            .respond_with(
+                ResponseTemplate::new(status).set_body_json(serde_json::json!({
+                    "openapi": "3.0.0",
+                    "info": {"title": "Web", "version": "1.0.0"},
+                    "paths": ops
+                })),
+            )
+            .mount(server)
+            .await;
+    }
+
+    async fn openapi_hits(server: &wiremock::MockServer) -> usize {
+        server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter(|r| r.url.path() == "/openapi.json")
+            .count()
+    }
+
+    #[tokio::test]
+    async fn failed_schema_fetch_on_reregistration_keeps_routes_until_a_heartbeat_retry() {
+        let server = wiremock::MockServer::start().await;
+        let router = Arc::new(Router::new());
+        let registry = Arc::new(SchemaRegistry::new());
+        let handler = fast_handler(&registry, &router);
+        let addr = *server.address();
+        let meta = serde_json::json!({"farp.openapi.path": "/openapi.json"});
+        let has = |p: &str| router.match_route("any.host", &Method::GET, p).is_ok();
+
+        // A working schema produces the route.
+        mount_openapi(&server, 200, &["/items"]).await;
+        let res = handler
+            .handle(push_request("web-1", "web", addr, meta.clone()))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::CREATED);
+        assert_eq!(json_of(res).await["schemas_applied"], 1);
+        assert!(has("/web/items"));
+
+        // The schema endpoint fails on re-registration: the routes stay.
+        mount_openapi(&server, 500, &[]).await;
+        let res = handler
+            .handle(push_request("web-1", "web", addr, meta.clone()))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::CREATED);
+        assert_eq!(json_of(res).await["schemas_applied"], 0);
+        assert!(
+            has("/web/items"),
+            "a failed fetch must not wipe FARP routes"
+        );
+
+        // While it still fails, a heartbeat answers 200 and keeps the routes.
+        let res = handler.handle(heartbeat_request("web-1")).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        assert!(has("/web/items"));
+
+        // The schema comes back: the next heartbeat refreshes the routes.
+        mount_openapi(&server, 200, &["/items", "/orders"]).await;
+        let res = handler.handle(heartbeat_request("web-1")).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(json_of(res).await["schemas_applied"], 1);
+        assert!(has("/web/items"));
+        assert!(
+            has("/web/orders"),
+            "heartbeat retry must refresh the routes"
+        );
+
+        // The retry flag is cleared: later heartbeats fetch nothing.
+        let before = openapi_hits(&server).await;
+        let res = handler.handle(heartbeat_request("web-1")).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(openapi_hits(&server).await, before);
+    }
+
+    #[tokio::test]
+    async fn fetched_schema_with_no_paths_still_replaces_routes() {
+        let server = wiremock::MockServer::start().await;
+        let router = Arc::new(Router::new());
+        let registry = Arc::new(SchemaRegistry::new());
+        let handler = fast_handler(&registry, &router);
+        let addr = *server.address();
+        let meta = serde_json::json!({"farp.openapi.path": "/openapi.json"});
+
+        mount_openapi(&server, 200, &["/items"]).await;
+        let res = handler
+            .handle(push_request("web-1", "web", addr, meta.clone()))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::CREATED);
+        assert!(router.match_route("h", &Method::GET, "/web/items").is_ok());
+
+        // Fetched fine, zero routes: that is the service's real answer.
+        mount_openapi(&server, 200, &[]).await;
+        let res = handler
+            .handle(push_request("web-1", "web", addr, meta))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::CREATED);
+        assert!(router.routes_by_id("farp:web").is_empty());
     }
 }

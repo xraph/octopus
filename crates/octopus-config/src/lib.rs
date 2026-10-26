@@ -25,7 +25,7 @@ pub mod watcher;
 pub use builder::ConfigBuilder;
 pub use loader::{load_and_merge, load_config, load_from_file, load_from_str};
 pub use merger::merge_configs;
-pub use types::{Config, GatewayConfig, PluginConfig, UpstreamConfig};
+pub use types::{Config, GatewayConfig, PluginConfig, UpstreamConfig, ALL_METHODS};
 pub use validator::validate_config;
 pub use watcher::ConfigWatcher;
 

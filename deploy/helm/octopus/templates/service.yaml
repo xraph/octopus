@@ -20,13 +20,30 @@ spec:
       port: {{ .Values.service.port }}
       targetPort: http
       protocol: TCP
-    - name: admin
-      port: {{ .Values.service.adminPort }}
-      targetPort: admin
-      protocol: TCP
     {{- if .Values.http3.enabled }}
     - name: http3
       port: {{ .Values.http3.port | default .Values.service.port }}
       targetPort: http3
       protocol: UDP
     {{- end }}
+{{- if include "octopus.adminListenPort" . }}
+---
+# The private admin listener (admin UI/API, FARP registration, metrics). Always
+# ClusterIP whatever service.type says: never publish this port.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "octopus.fullname" . }}-admin
+  labels:
+    {{- include "octopus.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admin
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "octopus.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: admin
+      port: {{ .Values.service.adminPort }}
+      targetPort: admin
+      protocol: TCP
+{{- end }}
