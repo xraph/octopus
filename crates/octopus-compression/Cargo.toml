@@ -17,7 +17,7 @@ serde = { version = "1.0", features = ["derive"] }
 # Compression algorithms
 flate2 = "1.0"
 brotli = "6.0"
-zstd = "0.13"
+zstd = "0.14"
 
 [dev-dependencies]
 tokio-test = "0.4"

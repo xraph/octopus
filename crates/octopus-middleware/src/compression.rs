@@ -439,6 +439,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_zstd_compression_round_trips() {
+        let config = CompressionConfig {
+            min_size: 0,
+            ..Default::default()
+        };
+        let compression = Compression::with_config(config);
+
+        let original = "Hello, this is a test string that should be compressed! ".repeat(50);
+        let compressed = compression
+            .compress_body(Bytes::from(original.clone()), CompressionAlgorithm::Zstd)
+            .unwrap();
+
+        assert!(compressed.len() < original.len());
+        let decompressed = zstd::decode_all(compressed.as_ref()).unwrap();
+        assert_eq!(decompressed, original.as_bytes());
+    }
+
+    #[tokio::test]
     async fn test_full_middleware_gzip_compression() {
         let config = CompressionConfig {
             min_size: 0, // Compress everything
