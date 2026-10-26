@@ -13,7 +13,7 @@ You can now scope routes to hostnames, run admin and FARP on a private port, and
 - Admin routes are addressed by id. `PUT /admin/api/routes/{id}` is an idempotent upsert that writes one entry per method and host, `GET` and `DELETE` answer 404 for a missing id, and `POST` generates an id when you leave it out. A conflict with another declared route on the same method, path and host answers 409 with the other route's id. `GET /admin/api/routes` reports `route_id`, `host` and `origin` for every entry.
 - A route you declare, in config or through the admin API, shadows a FARP route on the same host and path whatever the priorities. Delete it and the FARP route comes back.
 - `admin.listen` starts a second, plain-HTTP listener (9090 in the bundled manifests) for the admin UI, admin API, FARP and `/metrics`. With it set, the gateway port serves only proxied traffic and probes, which answer on both ports.
-- `OCTOPUS_ADMIN_API_TOKEN`, accepted as `Authorization: Bearer <token>` or `X-Octopus-Admin-Token: <token>`. Use the header through the Kubernetes API service proxy, which strips `Authorization`.
+- `OCTOPUS_ADMIN_API_TOKEN`, accepted as a bearer token in the `Authorization` header or as the `X-Octopus-Admin-Token` header. Use `X-Octopus-Admin-Token` through the Kubernetes API service proxy, which strips `Authorization`.
 - `admin.require_auth: true` refuses to start without admin credentials.
 - A sign-in form on the admin 401 page when password login is enabled.
 - `farp.registration_token`. With it set, every FARP request other than GET and HEAD needs the token as a bearer token or `X-Octopus-Farp-Token`.
