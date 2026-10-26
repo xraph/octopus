@@ -52,4 +52,5 @@ You can now scope routes to hostnames, run admin and FARP on a private port, and
 ### Security
 
 - Cleared every open RustSec advisory without new audit ignores (h2, quinn-proto, rustls, rustls-webpki, webpki-roots). h2 0.3, hyper 0.14, reqwest 0.11 and tonic 0.11 are gone from the dependency tree.
+- Moved zstd to 0.14.3, zstd-safe to 8.2.0 and zstd-sys to 2.1.2, past RUSTSEC-2026-0391, RUSTSEC-2026-0398, RUSTSEC-2026-0403 and RUSTSEC-2026-0410. octopus-compression and octopus-middleware now depend on zstd 0.14 directly, and async-compression 0.4.51 (compression-codecs 0.4.46) puts the tower-http compression path on the same fixed versions.
 - Admin and FARP tokens are compared by SHA-256 digest, redacted from debug output and request logs, and never serialized.

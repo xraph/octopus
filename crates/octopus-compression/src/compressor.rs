@@ -164,6 +164,8 @@ mod tests {
         let compressed =
             Compressor::compress(data.as_bytes(), CompressionAlgorithm::Zstd, 6).unwrap();
         assert!(compressed.len() < data.len());
+        let decompressed = zstd::decode_all(compressed.as_ref()).unwrap();
+        assert_eq!(decompressed, data.as_bytes());
     }
 
     #[test]

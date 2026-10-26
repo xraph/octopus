@@ -33,7 +33,7 @@ tower-http.workspace = true
 async-compression = { version = "0.4", features = ["tokio", "gzip", "brotli", "zstd"] }
 flate2 = "1.0"
 brotli = "7.0"
-zstd = "0.13"
+zstd = "0.14"
 
 # Pattern matching
 regex = "1.10"
