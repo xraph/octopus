@@ -3737,6 +3737,7 @@ dependencies = [
  "brotli 7.0.0",
  "bytes",
  "chrono",
+ "criterion",
  "dashmap 5.5.3",
  "flate2",
  "futures",
