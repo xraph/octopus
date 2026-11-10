@@ -468,7 +468,11 @@ bench: bench-compare ## Run all benchmarks (Octopus vs Bastion)
 
 bench-criterion: ## Run Criterion micro-benchmarks (CI, no external deps)
 	@echo "$(COLOR_BLUE)Running Criterion benchmarks...$(COLOR_RESET)"
-	$(CARGO) bench $(CARGO_WORKSPACE) $(CARGO_ALL_FEATURES)
+	@# --bench '*' builds only the benches/ targets. Plain `cargo bench` also
+	@# links every lib and bin test harness under the bench profile (fat LTO,
+	@# full debuginfo), dozens of links that only run #[bench] fns we don't
+	@# have, and enough memory pressure to get the CI runner killed.
+	$(CARGO) bench $(CARGO_WORKSPACE) $(CARGO_ALL_FEATURES) --bench '*'
 
 bench-octopus: ## Benchmark Octopus only
 	@./benchmarks/run.sh octopus

@@ -152,13 +152,16 @@ jobs:
           fail_ci_if_error: false
 
   # ===========================================================================
-  # Benchmarks  (main pushes only)
+  # Benchmarks  (main pushes and manual runs)
   # ===========================================================================
 
   bench:
     name: Benchmarks
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    # A fat-LTO build of the bench targets takes ~20 minutes cold. The cap
+    # turns a wedged build into a clear timeout instead of a six-hour hang.
+    timeout-minutes: 60
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
