@@ -45,7 +45,9 @@ impl PostgresBackend {
 
     /// Initialize database schema
     async fn init_schema(&self) -> Result<()> {
-        let query = format!(
+        // One statement per query: `sqlx::query` prepares its SQL, and
+        // PostgreSQL refuses to prepare more than one command at a time.
+        let create_table = format!(
             r#"
             CREATE TABLE IF NOT EXISTS {} (
                 key TEXT PRIMARY KEY,
@@ -53,16 +55,32 @@ impl PostgresBackend {
                 expires_at TIMESTAMPTZ,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            );
-            
-            CREATE INDEX IF NOT EXISTS idx_{}_expires_at 
-            ON {} (expires_at) 
-            WHERE expires_at IS NOT NULL;
+            )
             "#,
-            self.table_name, self.table_name, self.table_name
+            self.table_name
+        );
+        let create_index = format!(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_{}_expires_at
+            ON {} (expires_at)
+            WHERE expires_at IS NOT NULL
+            "#,
+            self.table_name, self.table_name
         );
 
-        sqlx::query(&query).execute(&self.pool).await?;
+        // `IF NOT EXISTS` doesn't make concurrent DDL safe: two connections
+        // creating the same table at once race on the catalog and one fails
+        // with a unique violation. That happens when several gateways start
+        // against an empty database, so take a transaction-scoped advisory
+        // lock and let the rest wait for the first to finish.
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+            .bind(&self.table_name)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(&create_table).execute(&mut *tx).await?;
+        sqlx::query(&create_index).execute(&mut *tx).await?;
+        tx.commit().await?;
 
         debug!(table = %self.table_name, "Schema initialized");
 
@@ -291,19 +309,31 @@ mod tests {
     // Run with: docker run -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:16-alpine
 
     async fn setup() -> Option<PostgresBackend> {
-        PostgresBackend::new(
+        // Fail fast if PostgreSQL isn't reachable so the test skips instead of
+        // hanging. sqlx retries a refused connection until its 30s acquire
+        // timeout, which is longer than tarpaulin waits for a test to answer.
+        let connect = PostgresBackend::new(
             "postgresql://postgres:postgres@localhost:5432/postgres",
             5,
             "octopus_test_state".to_string(),
-        )
-        .await
-        .ok()
+        );
+        match tokio::time::timeout(Duration::from_secs(5), connect).await {
+            Ok(Ok(backend)) => Some(backend),
+            // Say why, so a broken backend can't pass as a missing server.
+            Ok(Err(e)) => {
+                eprintln!("Skipping PostgreSQL test - {e}");
+                None
+            }
+            Err(_) => {
+                eprintln!("Skipping PostgreSQL test - no server at localhost:5432");
+                None
+            }
+        }
     }
 
     #[tokio::test]
     async fn test_postgres_get_set() {
         let Some(backend) = setup().await else {
-            eprintln!("Skipping PostgreSQL tests - PostgreSQL not available");
             return;
         };
 

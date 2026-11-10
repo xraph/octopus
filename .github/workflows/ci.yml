@@ -9,6 +9,9 @@ on:
     # Nightly: exercise the expensive legs (macOS, nightly toolchain, coverage)
     # off the PR path so per-PR feedback stays fast.
     - cron: '0 6 * * *'
+  # Manual runs exercise the same legs as the nightly cron (coverage,
+  # benchmarks, the extended matrix) without waiting for the schedule.
+  workflow_dispatch:
 
 # Cancel superseded runs on the same ref so rapid pushes don't pile up full
 # pipelines. Never cancel on the default branch (we want every main build).
@@ -40,7 +43,7 @@ jobs:
     uses: xraph/workflows/.github/workflows/rust-ci.yml@v1
     with:
       only-extended: true
-      run-extended: ${{ github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+      run-extended: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
       build-docs: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
       system-deps-ubuntu: 'pkg-config libssl-dev protobuf-compiler'
       system-deps-macos: 'protobuf'
@@ -93,8 +96,31 @@ jobs:
 
   coverage:
     name: Code Coverage
-    if: github.event_name == 'schedule' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
+    # The octopus-state backend tests skip when they can't reach a server, so
+    # without these the Postgres and Redis backends would show as uncovered.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -126,13 +152,16 @@ jobs:
           fail_ci_if_error: false
 
   # ===========================================================================
-  # Benchmarks  (main pushes only)
+  # Benchmarks  (main pushes and manual runs)
   # ===========================================================================
 
   bench:
     name: Benchmarks
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    # A fat-LTO build of the bench targets takes ~20 minutes cold. The cap
+    # turns a wedged build into a clear timeout instead of a six-hour hang.
+    timeout-minutes: 60
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
