@@ -75,4 +75,9 @@ tokio = { workspace = true, features = ["test-util", "macros", "rt", "fs"] }
 serde_json.workspace = true
 tempfile = "3"
 octopus-state = { path = "../octopus-state" }
+criterion.workspace = true
+
+[[bench]]
+name = "gateway_benchmarks"
+harness = false
 
